@@ -1,0 +1,47 @@
+# Constructions Java, Flutter et Android
+**/target/
+**/build/
+**/.dart_tool/
+**/.gradle/
+**/.idea/
+*.iml
+**/.flutter-plugins*
+**/android/local.properties
+**/android/key.properties
+**/ios/Pods/
+**/ios/.symlinks/
+# Configuration locale et secrets : les exemples non secrets restent possibles
+.env
+.env.*
+!.env.example
+!.env.sample
+**/application-local.yml
+**/application-local.yaml
+**/application-local.properties
+*.kdbx
+*.dpapi
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+# Donnees personnelles, exports, copies et journaux
+**/[Ss]ecrets/
+**/[Pp]rivate/
+**/[Pp]rive/
+**/WAKA_confidentiel/
+**/[Cc]onfidentiel/
+**/[Ee]xports/
+**/[Bb]ackups/
+**/[Ss]auvegardes/
+**/[Dd]umps/
+**/storage-private/
+*.log
+*.dump
+*.bak
+# Fichiers temporaires du poste
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
