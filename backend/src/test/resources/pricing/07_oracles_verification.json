@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "client_date": "2026-10-15",
+  "python_version": "3.12.14",
+  "scope": "preparatory independent oracle data only",
+  "bands_checked_against_R04": 19,
+  "price_and_commission_configurations": 114,
+  "eligibility_allocations": 456,
+  "distance_cases": 176,
+  "manual_witnesses": 7,
+  "fraction_decimal_crosscheck": true,
+  "all_allocations_conserve_XAF": true,
+  "all_waka_before_costs_strictly_positive": true,
+  "minimum_waka_before_costs_xaf": 15,
+  "json_csv_roundtrip_checked": true,
+  "source_reference_sha256": "2e64d1cb2fd9be2db05347475c0c674c16705d26b918e4ddb0c49b68d7cb6434",
+  "artifacts": [
+    {
+      "file": "work/07_oracles_financiers.json",
+      "sha256": "2088aaf89c248bd37d72321658425989312cc2a654797e4110499f75384807a4"
+    },
+    {
+      "file": "work/07_oracles_repartitions.csv",
+      "sha256": "03249f273c3bbf8fccecc87b1a3e9444cab56af87903a3e723a5e9993372ed91"
+    },
+    {
+      "file": "work/07_oracles_distances.csv",
+      "sha256": "954c911ff0111bee021bed49194c06da0d7e7955739338b559ab3d1d21f4474b"
+    }
+  ],
+  "historical_proof_rewritten": false,
+  "production_code_read_or_imported": false,
+  "application_code_created": false,
+  "application_test_executed": false,
+  "account_or_transaction_created": false,
+  "global_plan_modified": false,
+  "step_04_08_claimed_complete": false,
+  "human_validation_claimed": false
+}

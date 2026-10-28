@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- Aucun journal fichier par defaut. Ni messages ni piles d'exception des dependances. -->
+  <appender name="SAFE_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%msg%n%nopex</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+  <logger name="com.waka.operational" level="INFO" additivity="false">
+    <appender-ref ref="SAFE_CONSOLE"/>
+  </logger>
+  <root level="OFF"/>
+</configuration>

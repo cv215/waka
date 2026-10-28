@@ -1,0 +1,11 @@
+# WAKA — consignes de realisation
+
+Lire docs/README.md, les specifications utiles et les decisions ouvertes avant de coder. Le bon depot est cv215/waka. Les messages du fondateur priment. Travailler dans VS Code, expliquer les changements au fondateur debutant, presenter chaque point puis fournir un bilan exact. Travaux gratuits autonomes autorises ; ne pas attendre une validation pour chaque point. Toute depense, achat de credits, nouvel abonnement ou service facturable exige accord humain sur son cout.
+
+Prix/regles : partage et VIP au lancement ; cinq passagers maximum hors chauffeur dans la capacite legale ; VIP =12,5 fois le prix d'une place ; memes prix/commissions taxi et particulier ; taxi sans abonnement ; particulier 3 000 XAF/30x24h apres essai adopte. Calculs intermediaires exacts et arrondi final ; bonus VIP 100/50 selon eligibilite. Consulter les regles completes, ne pas reconstruire une regle depuis ces seuls rappels.
+
+Architecture Flutter, Spring Boot modulaire, MySQL, stockage prive et administration web. Un proprietaire de modification par fichier, integration par coordinateur ; revue des finances, droits et capacites par un second agent lorsque possible. Chaque agent rapporte les controles reellement executes et leurs limites.
+
+Aucun secret, justificatif reel, export de production, historique d'un autre depot ou reference privee detaillee dans Git. Ce depot est public au constat initial. Ne pas publier de donnees privees, ne pas fusionner d'historiques sans demande. Ne jamais declarer un paiement, une autorisation, un test ou une validation humaine sans preuve. Les ambiguites commerciales sont explicites avant implementation dependante.
+
+Equipe definie dans .codex/agents : atlas coordonne ; kora traite le serveur ; naya Flutter ; sika les finances ; vigie la qualite/securite ; scribe la documentation. Lire docs/equipe/README.md. Deux specialistes actifs par defaut, proprietaire unique par fichier, integration par le coordinateur. Les profils fixent des choix de modele et d'effort adaptes aux futures sous-taches ; ils ne modifient pas le modele de la session actuelle. Le coordinateur peut utiliser un modele plus capable pour un probleme difficile a fort impact uniquement s'il est deja disponible, sans achat ni escalade recursive.
