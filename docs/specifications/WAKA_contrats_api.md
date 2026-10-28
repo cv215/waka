@@ -358,3 +358,26 @@ Comportement :
 - les champs véhicule et les résultats de reprise sont chiffrés avec des clés dédiées, liés au compte, au dossier et à la version.
 
 Refusés jusqu'à leur point : `documentRefs` et `photoRefs` (06.03), l'envoi A29, les décisions A38 et les habilitations D02 (05.05), et tout état ou approbation transmis par le client. Un brouillon ne donne ni admission, ni rôle chauffeur, ni accès commercial.
+### K15 — Accès administrateur nominatif (05.05)
+
+Routes réalisées côté serveur, non assemblées par défaut :
+
+| Route | Corps | Réponse |
+|---|---|---|
+| `POST /api/v1/admin/second-factor/enrollments` | sans corps | 201 avec `secret` et `otpauthUri`, montrés une seule fois |
+| `POST /api/v1/admin/second-factor/confirmations` | `{code}` | 204 |
+| `POST /api/v1/admin/sessions` | `{code}` | 201 avec adminSessionToken, adminSessionId, functions, idleExpiresAt, absoluteExpiresAt, serverTime |
+| `GET /api/v1/admin/me` | sans corps | 200 avec les fonctions actuelles |
+| `POST /api/v1/admin/sessions/current/revocations` | sans corps | 204 |
+
+Un code doit faire exactement six chiffres ; un code mal formé est refusé en 400 et ne compte pas comme un échec. La session administrative se présente dans l'en-tête `X-Waka-Admin-Session` (43 caractères base64url), en plus de la session client.
+
+Codes d'erreur :
+- 403 `ACTION_NOT_ALLOWED` : aucune habilitation active ;
+- 409 `ENROLLMENT_REQUIRED` ou `ALREADY_ENROLLED` ;
+- 401 `INVALID_SECOND_FACTOR` (code faux ou déjà utilisé) ou `INVALID_ADMIN_SESSION` ;
+- 429 `RATE_LIMITED` après des échecs répétés.
+
+**Exception explicite à l'Idempotency-Key :** l'ouverture de session administrative n'est pas rejouable. Un code TOTP ne sert qu'une fois, aucun jeton n'est conservé de façon récupérable, et une réponse perdue se résout avec un nouveau code ; la session orpheline expire par inactivité.
+
+Aucune attribution d'habilitation par HTTP dans ce point. Le premier accès du fondateur est une opération de maintenance locale, unique et documentée (`identity/admin/README.md`). Les fonctions sont relues à chaque requête : un retrait d'habilitation prend effet immédiatement.
