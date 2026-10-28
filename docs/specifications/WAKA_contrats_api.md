@@ -381,3 +381,27 @@ Codes d'erreur :
 **Exception explicite à l'Idempotency-Key :** l'ouverture de session administrative n'est pas rejouable. Un code TOTP ne sert qu'une fois, aucun jeton n'est conservé de façon récupérable, et une réponse perdue se résout avec un nouveau code ; la session orpheline expire par inactivité.
 
 Aucune attribution d'habilitation par HTTP dans ce point. Le premier accès du fondateur est une opération de maintenance locale, unique et documentée (`identity/admin/README.md`). Les fonctions sont relues à chaque requête : un retrait d'habilitation prend effet immédiatement.
+### K16 — Photos du véhicule et stockage privé (06.03/06.04)
+
+Routes réalisées côté serveur, non assemblées par défaut :
+
+| Route | Rôle |
+|---|---|
+| `POST /api/v1/driver-applications/{applicationId}/photos/{PH01..PH06}` | Corps brut `image/jpeg` ou `image/png` de 10 Mo au plus, avec Idempotency-Key ; réponse 201 (fileId, applicationId, view, state, width, height, byteSize, createdAt, idempotentReplay). |
+| `GET /api/v1/driver-applications/{applicationId}/photos` | État des six vues, `missing` ou `received`. |
+| `GET /api/v1/private-files/{fileId}/content` | A31, titulaire seulement. Réponse `image/jpeg` avec `no-store`, `nosniff` et une CSP fermée. |
+
+Pour les photos, cette route remplace le multipart prévu par A30 : le corps est lu avec une limite stricte, et aucun analyseur générique n'est ouvert.
+
+Contrôles appliqués :
+- le format est reconnu par ses octets de signature, en accord avec le type annoncé ;
+- les dimensions vont de 320 × 240 à 8 000 × 8 000 (40 mégapixels au plus) et sont contrôlées avant le décodage ;
+- l'image est réencodée en JPEG sans métadonnées (le GPS est retiré), et seule cette version nettoyée est conservée ;
+- le stockage est chiffré en AES-GCM avec une clé dédiée, sous un nom aléatoire, dans un dossier injecté hors de Git.
+
+Refus :
+- 400 `FILE_REJECTED` (fichier invalide), 415 (type non accepté), 413 (trop gros) ;
+- 404 `RESOURCE_NOT_FOUND`, aussi bien pour un dossier ou un fichier d'un autre compte ;
+- 409 `IDEMPOTENCY_KEY_REUSED` ou `NOT_EDITABLE`.
+
+Un dépôt n'est jamais une approbation. Une nouvelle photo d'une vue remplace la précédente, qui reste dans l'historique comme `replaced`. Pas d'antivirus à ce stade : c'est une limite à lever avant les vraies données. Les justificatifs (familles de pièces à qualifier) ne passent pas par ces routes.
