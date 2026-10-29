@@ -48,6 +48,8 @@ class LoginFlow extends ChangeNotifier {
   ProfileSnapshot? _profile;
   bool profileNeedsReview = false;
   String? notice;
+  /// Identifier of this installation's context, sent with every authenticated request.
+  String? get clientInstance => _snapshot?.client;
   LoginAttempt? get attempt => _snapshot?.attempt;
   LoginSession? get session => _snapshot?.session;
   bool get logoutPending => _snapshot?.logoutKey != null;

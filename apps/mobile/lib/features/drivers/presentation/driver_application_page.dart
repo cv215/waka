@@ -1,15 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/presentation/waka_page.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/driver_application_models.dart';
+import '../../identity/data/login_client.dart';
+import '../../identity/data/vehicle_photo_models.dart';
+import '../application/vehicle_photo_flow.dart';
+
+/// Returns the chosen photo's bytes, or null when the person cancels.
+typedef PhotoPicker = Future<List<int>?> Function({required bool camera});
+
+/// Bounded on the phone to keep uploads small; the server still checks and re-encodes everything.
+Future<List<int>?> pickWithDevice({required bool camera}) async {
+  final file = await ImagePicker().pickImage(
+    source: camera ? ImageSource.camera : ImageSource.gallery,
+    maxWidth: 3000,
+    maxHeight: 3000,
+    imageQuality: 85,
+  );
+  return file?.readAsBytes();
+}
 
 /// The owner's draft candidature. It shows no admission, no driver role and no access:
-/// files, submission and decisions come with their own points.
+/// documents, submission and decisions come with their own points.
 class DriverApplicationPage extends StatefulWidget {
-  const DriverApplicationPage({super.key, required this.flow});
+  const DriverApplicationPage({super.key, required this.flow, this.pickPhoto = pickWithDevice});
   final LoginFlow flow;
+  final PhotoPicker pickPhoto;
 
   @override
   State<DriverApplicationPage> createState() => _DriverApplicationPageState();
@@ -22,11 +41,17 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
   final _total = TextEditingController(), _seats = TextEditingController();
   String? _usageRight;
   int? _shownVersion;
+  late final VehiclePhotoFlow? _photos =
+      _flow.gateway is VehiclePhotoGateway ? VehiclePhotoFlow(_flow, _flow.gateway as VehiclePhotoGateway) : null;
 
   @override
   void initState() {
     super.initState();
-    if (_flow.application == null && !_flow.noApplication) _reload();
+    if (_flow.application == null && !_flow.noApplication) {
+      _reload();
+    } else if (_flow.application != null) {
+      _photos?.refresh();
+    }
   }
 
   @override
@@ -34,12 +59,88 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     for (final c in [_brand, _model, _year, _color, _plate, _total, _seats]) {
       c.dispose();
     }
+    _photos?.dispose();
     super.dispose();
   }
 
   Future<void> _reload() async {
     await _flow.refreshApplication();
     if (mounted) _fill();
+    if (mounted && _flow.application != null) await _photos?.refresh();
+  }
+
+  Future<void> _pick(String view, {required bool camera}) async {
+    final bytes = await widget.pickPhoto(camera: camera);
+    if (bytes != null && mounted) await _photos?.upload(view, bytes);
+  }
+
+  String? get _photoError => switch (_photos?.failure) {
+    PhotoFailure.denied => 'La session est refusée. Reconnecte-toi.',
+    PhotoFailure.notFound => 'Ce dossier n’est pas accessible.',
+    PhotoFailure.rejectedFile => 'Cette photo a été refusée : utilise une photo JPEG ou PNG nette, d’au moins 320 × 240 pixels.',
+    PhotoFailure.keyReused => 'Cette demande ne correspond plus au serveur. Choisis la photo à nouveau.',
+    PhotoFailure.notEditable => 'Le dossier ne peut plus être modifié.',
+    PhotoFailure.tooLarge => 'La photo dépasse 10 Mo. Choisis une photo plus légère.',
+    PhotoFailure.unsupported => 'Format non accepté : seules les photos JPEG ou PNG sont possibles.',
+    PhotoFailure.unavailable => 'L’envoi des photos est momentanément indisponible. Réessaie plus tard.',
+    PhotoFailure.uncertain => 'La réponse n’est pas arrivée. Réessaie le même envoi pour connaître son résultat.',
+    PhotoFailure.invalidResponse => 'La réponse n’a pas pu être vérifiée. Réessaie ou relis l’état des photos.',
+    PhotoFailure.invalid => 'Cette action n’est pas possible maintenant.',
+    null => null,
+  };
+
+  List<Widget> _photoSection() {
+    final photos = _photos;
+    if (photos == null) return const [];
+    return [
+      const Divider(height: 32),
+      Text('Photos du véhicule', style: Theme.of(context).textTheme.titleMedium),
+      const Text('Six vues du même véhicule. Une photo reçue n’est pas encore vérifiée par un agent.'),
+      const SizedBox(height: 8),
+      AnimatedBuilder(
+        animation: photos,
+        builder: (context, _) {
+          final views = photos.views;
+          if (views == null) {
+            return OutlinedButton(onPressed: photos.busy ? null : photos.refresh, child: const Text('Relire l’état des photos'));
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final status in views)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(status.received ? Icons.check_circle_outline : Icons.radio_button_unchecked),
+                  title: Text('${status.view} — ${vehiclePhotoLabels[status.view]}'),
+                  subtitle: Text(photos.busyView == status.view
+                      ? 'Envoi en cours…'
+                      : status.received ? 'Reçue, non examinée' : 'Manquante'),
+                  trailing: Wrap(spacing: 4, children: [
+                    if (photos.hasPending(status.view))
+                      IconButton(
+                        tooltip: 'Réessayer l’envoi',
+                        onPressed: photos.busy ? null : () => photos.retry(status.view),
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    IconButton(
+                      tooltip: 'Prendre une photo',
+                      onPressed: photos.busy ? null : () => _pick(status.view, camera: true),
+                      icon: const Icon(Icons.photo_camera_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Choisir dans la galerie',
+                      onPressed: photos.busy ? null : () => _pick(status.view, camera: false),
+                      icon: const Icon(Icons.photo_library_outlined),
+                    ),
+                  ]),
+                ),
+              if (_photoError != null)
+                Semantics(liveRegion: true, child: Text(_photoError!)),
+            ],
+          );
+        },
+      ),
+    ];
   }
 
   /// Copies the server state into the form only when a new version is shown.
@@ -58,6 +159,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       _usageRight = v.usageRight;
       _shownVersion = current.version;
     });
+    if (_photos?.views == null) _photos?.refresh();
   }
 
   String? _text(TextEditingController c) => c.text.trim().isEmpty ? null : c.text;
@@ -182,6 +284,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       const Text('Ces informations sont une déclaration : la capacité et le droit réels seront vérifiés avec les pièces.'),
       gap(),
       FilledButton(onPressed: editable ? _save : null, child: const Text('Enregistrer le véhicule')),
+      ..._photoSection(),
     ];
   }
 }
