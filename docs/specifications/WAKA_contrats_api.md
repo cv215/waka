@@ -480,3 +480,32 @@ Règles :
 - Le journal ne renvoie que des références opaques et des codes : jamais le contenu d'une pièce, un nom, un téléphone ou un secret.
 - La fonction AUDIT n'accorde ni l'admission ni la finance, et inversement.
 - Paramètres inconnus, répétés ou encodés : 400, sans appel au service.
+
+### K20 — Devis A08 (préparé, non assemblé)
+
+`POST /api/v1/quotes`, réservé au client connecté, exige `Idempotency-Key`. Corps exact : `{mode, passengerCount, origin:{latitude, longitude}, destination:{latitude, longitude}}`.
+
+- `mode` vaut `shared` ou `vip`.
+- `passengerCount` va de 1 à 5. En partagé, c'est le nombre de places payées. En VIP, ce sont les occupants : ils ne changent jamais le prix, égal à 25/2 fois une place.
+- Les coordonnées sont des nombres décimaux simples, avec six décimales au plus. Une notation exponentielle, une chaîne de caractères, une valeur hors bornes ou deux points identiques sont refusées (400).
+- **Aucun prix, aucune distance, aucune version de grille ni aucune tranche n'est accepté du client** : un champ en plus est refusé (400).
+
+Calcul côté serveur, dans cet ordre :
+1. Vérification que les deux points sont dans le territoire servi.
+2. Distance routière de référence fournie par le fournisseur d'itinéraire du serveur, demandée hors de la transaction de session.
+3. Arrondi au mètre, moitié vers le haut (R04).
+4. Prix tiré de la version de grille **configurée explicitement** (aucune version « active » implicite).
+5. Arrondi au franc seulement à la fin.
+
+Réponse 201 : `quoteId, mode, passengerCount, distanceMetres, fareVersion, bandCode, placePriceXaf, totalXaf, currency, createdAt, expiresAt (+300 s), idempotentReplay`. Les points ne sont jamais renvoyés ; ils sont stockés chiffrés.
+
+Même clé, même demande : le même devis est rendu en 200, même s'il a expiré. Son prix et son échéance ne changent pas, et le fournisseur n'est pas rappelé. Même clé avec une autre demande : 409 `IDEMPOTENCY_KEY_REUSED`.
+
+Refus :
+- 422 `OUTSIDE_SERVICE_AREA` : point hors du territoire, sans appel au fournisseur ;
+- 422 `NO_ROUTE` : aucun itinéraire entre les deux points ;
+- 422 `DISTANCE_OUT_OF_RANGE` : plus de 17 900 m après arrondi ;
+- 503 `ROUTE_UNAVAILABLE` : fournisseur sans réponse fiable ;
+- 503 : service non assemblé.
+
+**Non assemblé** tant que trois points restent ouverts : le fournisseur d'itinéraire (API cartographique externe, reportée à la fin par le fondateur), le territoire servi (R10) et la version de grille mise en vente (aucune date de vente adoptée). Le devis ne réserve rien. A09 et la suite restent à faire.
