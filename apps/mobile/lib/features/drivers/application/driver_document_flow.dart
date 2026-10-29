@@ -28,9 +28,10 @@ class DriverDocumentFlow extends ChangeNotifier {
   bool get _visible => login.confirmedNow && login.application != null;
   bool get busy => busyCode != null;
   bool hasPending(String code) => _pending.containsKey(code);
-  /// Documents the candidate still has to provide before sending (established requirements only).
-  List<RequirementView> get missingForSubmission =>
-      (requirements ?? const []).where((r) => r.established && r.needsUpload).toList();
+  /// What blocks sending: identity or licence missing or expired, or any document the agent asked to correct.
+  List<RequirementView> get missingForSubmission => (requirements ?? const [])
+      .where((r) => (r.requiredForSubmission && (r.documentId == null || r.expired)) || r.reviewState == 'to_correct')
+      .toList();
 
   Future<void> refresh() => _run('', () async {
     final (session, client, applicationId) = _context();

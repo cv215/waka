@@ -76,7 +76,7 @@ class AdmissionReviewMySqlVerificationTest {
     private PrivateFileStore store;
     private AdmissionCrypto admissionCrypto;
     private VehiclePhotoService photos;
-    private Stack v1, established;
+    private Stack v1, established, current;
     private String gate, otpGate;
     private final String client = UUID.randomUUID().toString();
     private final String candidatePhone = "+2376" + "0".repeat(8);
@@ -111,6 +111,7 @@ class AdmissionReviewMySqlVerificationTest {
         photos = new VehiclePhotoService(sessions, jdbc, store, admin);
         v1 = stack(DocumentCatalog.V1);
         established = stack(ALL_ESTABLISHED);
+        current = stack(DocumentCatalog.CURRENT);
         BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
         var out = new ByteArrayOutputStream();
         ImageIO.write(image, "jpeg", out);
@@ -128,7 +129,7 @@ class AdmissionReviewMySqlVerificationTest {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                for (String table : List.of("admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
                         "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
                         "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
@@ -159,9 +160,11 @@ class AdmissionReviewMySqlVerificationTest {
                 UUID.randomUUID(), "image/jpeg", jpeg, LocalDate.of(2020, 1, 1)));
         for (String view : AdmissionReviewService.VIEWS) photos.upload(candidate.token, client, taxi, view, UUID.randomUUID(), "image/jpeg", jpeg);
         assertAdmission(AdmissionException.Code.INCOMPLETE, () -> v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2));
-        for (String code : List.of("IDENTITY", "DRIVING_LICENCE", "REGISTRATION_CERTIFICATE")) upload(v1, candidate, taxi, code);
-        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2));
-        upload(v1, candidate, taxi, "INSURANCE");
+        upload(v1, candidate, taxi, "IDENTITY");
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2),
+                "identity and licence are always required to send the file");
+        // Since catalogue v2, vehicle documents may be missing at submission: the agent judges or waives them.
+        upload(v1, candidate, taxi, "DRIVING_LICENCE");
         // Requirements still to be confirmed are shown, optional for submission and never satisfied.
         var statuses = v1.applications.requirements(candidate.token, client, taxi);
         assertTrue(statuses.stream().filter(s -> "to_confirm".equals(s.status())).noneMatch(RequirementStatus::requiredForSubmission));
@@ -250,6 +253,41 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(List.of("INSURANCE"), blocked.documentsToRenew());
     }
 
+    @Test void catalogueV2LetsAnAgentApproveAnIncompleteFileWithTracedWaiversButNeverForIdentityOrLicence() {
+        Login candidate = login(candidatePhone);
+        UUID app = readyFile(current, candidate, "taxi", "holder", "CD 34-EF", false);
+        assertEquals("submitted", current.applications.read(candidate.token, client, app).state(), "sent with identity and licence only");
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = current.reviews.detail(agent.token, client, adminToken, app);
+        long version = detail.application().version();
+        var personDocuments = allDocuments(detail, "acceptable");
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> current.reviews.decide(agent.token, client, adminToken, app,
+                UUID.randomUUID(), version, "approve", "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), personDocuments, List.of()),
+                "missing vehicle documents need an explicit waiver");
+        assertAdmission(AdmissionException.Code.INVALID_REQUEST, () -> current.reviews.decide(agent.token, client, adminToken, app,
+                UUID.randomUUID(), version, "approve", "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), personDocuments,
+                List.of(new AdmissionReviewService.Waiver("IDENTITY", "FOUNDER_POLICY"))), "identity is never waived");
+        assertThrows(AdmissionException.class, () -> current.reviews.decide(agent.token, client, adminToken, app,
+                UUID.randomUUID(), version, "request_correction", "DOCUMENT_TO_REPLACE", null, List.of(), List.of(),
+                List.of(new AdmissionReviewService.Waiver("INSURANCE", "LATER"))), "a waiver only goes with an approval");
+        var waivers = new ArrayList<AdmissionReviewService.Waiver>();
+        for (String code : List.of("REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION", "TRANSPORT_LICENCE", "PUBLIC_TRANSPORT_CARD")) {
+            waivers.add(new AdmissionReviewService.Waiver(code, "TO_PROVIDE_AFTER_START"));
+        }
+        var approval = current.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), version, "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), personDocuments, waivers);
+        assertEquals(5, approval.waivers().size());
+        assertEquals("approved", current.applications.read(candidate.token, client, app).state());
+        assertEquals("v2", jdbc.queryForObject("SELECT catalogue_version FROM admission_decision WHERE gate_hash=? AND action='approve'", String.class, gate));
+        assertEquals(5, jdbc.queryForObject("SELECT COUNT(*) FROM admission_waiver WHERE gate_hash=?", Integer.class, gate));
+        var access = new com.waka.drivers.DriverAccessService(sessions, current.applications).access(candidate.token, client);
+        assertEquals("active", access.access(), "waived documents do not block the taxi");
+        var mine = current.applications.requirements(candidate.token, client, app);
+        assertNull(statusOf(mine, "PUBLIC_TRANSPORT_CARD").documentId(), "a waived document stays to provide");
+        assertEquals(5, current.reviews.candidateDecisions(candidate.token, client, app).getLast().waivers().size());
+    }
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
         Login candidate = login(candidatePhone);
         UUID first = readyFile(established, candidate, "taxi", "holder", "AB 12-CD", true);

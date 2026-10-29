@@ -241,5 +241,47 @@ void main() {
       ]);
       expect(body.containsKey('documentType'), isFalse);
     });
-  });
+
+    testWidgets('v2 : approbation avec dérogation motivée, jamais pour l’identité', (tester) async {
+      tester.view.physicalSize = const Size(1200, 6000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final app = id(), identity = id();
+      final detail = detailJson(app, toConfirm: false);
+      final requirements = detail['requirements'] as List;
+      (requirements.first as Map)['requiredForSubmission'] = false;
+      requirements.insert(0, {'code': 'IDENTITY', 'document': 'Pièce d’identité', 'explanation': 'Une phrase.',
+        'status': 'established', 'requiredForSubmission': true, 'documentId': identity, 'reviewState': 'accepted',
+        'validUntil': null, 'expired': false, 'satisfied': true});
+      requirements.add({'code': 'PUBLIC_TRANSPORT_CARD', 'document': 'Carte bleue du taxi', 'explanation': 'Une phrase.',
+        'status': 'established', 'requiredForSubmission': false, 'documentId': null, 'reviewState': null,
+        'validUntil': null, 'expired': false, 'satisfied': false});
+      final (server, _) = await ready(tester, detail, app);
+      server.on('POST /api/v1/admin/driver-applications/$app/decisions', (_) => json(201, {'applicationId': app}));
+      await tester.tap(find.text('Approuver'));
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await tester.tap(find.widgetWithText(ChoiceChip, 'Acceptable').at(i));
+      }
+      await tester.enterText(find.widgetWithText(TextField, 'Motif (code)'), 'ALL_CONDITIONS_MET');
+      await tester.pump();
+      expect(find.textContaining('juge chaque pièce fournie « acceptable », ou déroge'), findsOneWidget);
+      expect(find.textContaining('Approuver sans : Pièce d’identité'), findsNothing, reason: 'identité jamais dérogeable');
+      await tester.tap(find.textContaining('Approuver sans : Carte bleue du taxi'));
+      await tester.tap(find.textContaining('Approuver sans : Attestation d’assurance'));
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, 'Motif de dérogation — PUBLIC_TRANSPORT_CARD'), 'TO_PROVIDE_LATER');
+      await tester.enterText(find.widgetWithText(TextField, 'Motif de dérogation — INSURANCE'), 'TO_PROVIDE_LATER');
+      await tester.pump();
+      final button = find.widgetWithText(FilledButton, 'Enregistrer la décision');
+      expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+      await tester.tap(button);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pumpAndSettle();
+      final body = jsonDecode(server.requests.lastWhere((r) => r.url.path.endsWith('/decisions')).body) as Map<String, dynamic>;
+      expect(body['action'], 'approve');
+      expect((body['waivers'] as List).map((w) => (w as Map)['code']).toSet(), {'PUBLIC_TRANSPORT_CARD', 'INSURANCE'});
+      expect(body['documentDecisions'], isEmpty, reason: 'la pièce dérogée n’est pas jugée en plus');
+      expect(body['photoDecisions'], hasLength(6));
+    });  });
 }

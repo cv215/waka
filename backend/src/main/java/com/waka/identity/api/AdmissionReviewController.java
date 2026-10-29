@@ -36,7 +36,8 @@ import tools.jackson.core.json.JsonFactory;
 @RestController
 public final class AdmissionReviewController {
     record DecisionInput(long expectedVersion, String action, String reasonCode, String details,
-            List<AdmissionReviewService.PhotoReview> photoDecisions, List<AdmissionReviewService.DocumentReview> documentDecisions) {
+            List<AdmissionReviewService.PhotoReview> photoDecisions, List<AdmissionReviewService.DocumentReview> documentDecisions,
+            List<AdmissionReviewService.Waiver> waivers) {
         @Override public String toString() { return "DecisionInput[REDACTED]"; }
     }
     private static final JsonFactory JSON = new JsonFactory();
@@ -82,7 +83,8 @@ public final class AdmissionReviewController {
         try {
             String client = MeRequestReader.client(request);
             var decision = invoke(() -> service().decide(token, client, adminToken, id, key, input.expectedVersion(),
-                    input.action(), input.reasonCode(), input.details(), input.photoDecisions(), input.documentDecisions()));
+                    input.action(), input.reasonCode(), input.details(), input.photoDecisions(), input.documentDecisions(),
+                    input.waivers()));
             return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(decision);
         } finally { Arrays.fill(token, '\0'); Arrays.fill(adminToken, '\0'); }
     }
@@ -128,6 +130,10 @@ public final class AdmissionReviewController {
                             if (value != JsonToken.START_ARRAY) throw LoginRequestReader.invalid();
                             fields.put(name, documentDecisions(parser));
                         }
+                        case "waivers" -> {
+                            if (value != JsonToken.START_ARRAY) throw LoginRequestReader.invalid();
+                            fields.put(name, waivers(parser));
+                        }
                         default -> throw LoginRequestReader.invalid();
                     }
                 }
@@ -138,8 +144,10 @@ public final class AdmissionReviewController {
                 var photos = (List<AdmissionReviewService.PhotoReview>) fields.getOrDefault("photoDecisions", List.of());
                 @SuppressWarnings("unchecked")
                 var documents = (List<AdmissionReviewService.DocumentReview>) fields.getOrDefault("documentDecisions", List.of());
+                @SuppressWarnings("unchecked")
+                var waivers = (List<AdmissionReviewService.Waiver>) fields.getOrDefault("waivers", List.of());
                 return new DecisionInput((Long) fields.get("expectedVersion"), (String) fields.get("action"),
-                        (String) fields.get("reasonCode"), (String) fields.get("details"), photos, documents);
+                        (String) fields.get("reasonCode"), (String) fields.get("details"), photos, documents, waivers);
             } catch (JacksonException | IllegalArgumentException | ClassCastException | IOException hidden) {
                 throw LoginRequestReader.invalid();
             }
@@ -164,6 +172,26 @@ public final class AdmissionReviewController {
                     item.get("result"), item.get("reasonCode")));
         }
         return List.copyOf(reviews);
+    }
+
+    /** Catalogue v2: {code, reasonCode} for each vehicle document approved without it; both strings required. */
+    private static List<AdmissionReviewService.Waiver> waivers(JsonParser parser) {
+        List<AdmissionReviewService.Waiver> waivers = new ArrayList<>();
+        while (parser.nextToken() != JsonToken.END_ARRAY) {
+            if (parser.currentToken() != JsonToken.START_OBJECT || waivers.size() >= 12) throw LoginRequestReader.invalid();
+            Map<String, String> item = new HashMap<>();
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String name = parser.getString();
+                JsonToken value = parser.nextToken();
+                if (!Set.of("code", "reasonCode").contains(name) || item.containsKey(name) || value != JsonToken.VALUE_STRING) {
+                    throw LoginRequestReader.invalid();
+                }
+                item.put(name, parser.getString());
+            }
+            if (item.size() != 2) throw LoginRequestReader.invalid();
+            waivers.add(new AdmissionReviewService.Waiver(item.get("code"), item.get("reasonCode")));
+        }
+        return List.copyOf(waivers);
     }
 
     /** At most one entry per catalogue document; the type is taken from the server, never from the agent. */

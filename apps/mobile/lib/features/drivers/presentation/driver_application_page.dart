@@ -349,6 +349,9 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
 
   static String _reviewLabel(RequirementView r) {
     if (!r.established && r.documentId == null) return 'En cours de confirmation par WAKA : facultatif pour l’instant';
+    if (r.documentId == null && r.established && !r.requiredForSubmission) {
+      return 'À fournir : tu peux envoyer ton dossier sans elle, WAKA décidera';
+    }
     if (r.documentId == null) return 'À fournir';
     if (r.expired) return 'Expirée : à fournir de nouveau';
     final state = switch (r.reviewState) {

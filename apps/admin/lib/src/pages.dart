@@ -199,6 +199,8 @@ class _ReviewPageState extends State<ReviewPage> {
   final Map<String, Uint8List> _images = {};
   final _reason = TextEditingController(), _details = TextEditingController();
   String _action = 'request_correction';
+  /// Catalogue v2: requirement code -> reason code, for vehicle documents approved without being covered.
+  final Map<String, String> _waivers = {};
   String? _error, _decisionKey, _decisionBody;
   bool _busy = false;
   AgentSession get s => widget.session;
@@ -230,6 +232,7 @@ class _ReviewPageState extends State<ReviewPage> {
             if (r.documentId != null) Review(label: r.document, id: r.documentId!, isPhoto: false),
         ];
         _images.clear();
+        _waivers.clear();
         _decisionKey = null;
       });
     } on Object catch (problem) {
@@ -257,8 +260,17 @@ class _ReviewPageState extends State<ReviewPage> {
     'reasonCode': _reason.text.trim(),
     if (_details.text.trim().isNotEmpty) 'details': _details.text.trim(),
     'photoDecisions': [for (final r in _reviews.where((r) => r.isPhoto && r.result != null)) r.toJson()],
-    'documentDecisions': [for (final r in _reviews.where((r) => !r.isPhoto && r.result != null)) r.toJson()],
+    'documentDecisions': [for (final r in _reviews.where((r) => !r.isPhoto && r.result != null && !_waivedDocument(r))) r.toJson()],
+    if (_action == 'approve' && _waivers.isNotEmpty)
+      'waivers': [for (final e in _waivers.entries) {'code': e.key, 'reasonCode': e.value}],
   };
+
+  bool _waivedDocument(Review review) => _action == 'approve' &&
+      _detail!.requirements.any((q) => q.documentId == review.id && _waivers.containsKey(q.code));
+
+  /// Present, still valid, and accepted earlier or judged acceptable now.
+  bool _covered(Requirement r) => r.documentId != null && !r.expired && (r.reviewState == 'accepted' ||
+      _reviews.any((v) => v.id == r.documentId && v.result == 'acceptable'));
 
   String? get _formProblem {
     if (!reasonPattern.hasMatch(_reason.text.trim())) return 'Motif : code en majuscules, par exemple DOCUMENT_UNREADABLE.';
@@ -269,8 +281,21 @@ class _ReviewPageState extends State<ReviewPage> {
     if (_action == 'approve' && _detail!.hasRequirementToConfirm) {
       return 'Approbation impossible : une exigence de ce dossier est encore à confirmer par WAKA.';
     }
-    if (_action == 'approve' && _reviews.any((r) => r.result != 'acceptable')) {
-      return 'Pour approuver, juge chaque photo et chaque pièce « acceptable ».';
+    if (_action == 'approve') {
+      if (_reviews.any((r) => r.isPhoto && r.result != 'acceptable') || _detail!.photos.length != photoViews.length) {
+        return 'Pour approuver, juge les six photos « acceptables ».';
+      }
+      // A piece already accepted earlier and still valid needs no new judgement; "to correct" blocks.
+      bool acceptedBefore(Review r) =>
+          _detail!.requirements.any((q) => q.documentId == r.id && q.reviewState == 'accepted' && !q.expired);
+      if (_reviews.any((r) => !r.isPhoto && !_waivedDocument(r) && r.result != 'acceptable' &&
+          !(r.result == null && acceptedBefore(r)))) {
+        return 'Pour approuver, juge chaque pièce fournie « acceptable », ou déroge pour une pièce du véhicule.';
+      }
+      final uncovered = _detail!.requirements.where((r) => !_covered(r) && !_waivers.containsKey(r.code)).toList();
+      if (uncovered.any((r) => !r.waivable)) return 'Approbation impossible sans pièce d’identité et permis acceptés.';
+      if (uncovered.isNotEmpty) return 'Pièce manquante ou non valable : déroge avec un motif, ou demande une correction.';
+      if (_waivers.values.any((reason) => !reasonPattern.hasMatch(reason))) return 'Chaque dérogation doit avoir un motif en majuscules.';
     }
     return null;
   }
@@ -321,6 +346,21 @@ class _ReviewPageState extends State<ReviewPage> {
               for (final r in detail.requirements.where((r) => r.documentId == null))
                 Text('• ${r.document} : ${r.established ? 'non fournie' : 'non fournie — exigence à confirmer'}'),
               for (final review in _reviews) _reviewCard(detail, review),
+              if (_action == 'approve' && detail.requirements.any((r) => r.waivable && !_covered(r))) ...[
+                const SizedBox(height: 12),
+                Text('Dérogations', style: Theme.of(context).textTheme.titleSmall),
+                const Text('Tu peux approuver sans une pièce du véhicule, avec un motif inscrit au journal. '
+                    'La pièce reste « à fournir » pour le chauffeur. Jamais pour l’identité ni le permis.'),
+                for (final r in detail.requirements.where((r) => r.waivable && !_covered(r)))
+                  Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    SwitchListTile(contentPadding: EdgeInsets.zero, title: Text('Approuver sans : ${r.document}'),
+                        value: _waivers.containsKey(r.code),
+                        onChanged: (on) => setState(() => on ? _waivers[r.code] = '' : _waivers.remove(r.code))),
+                    if (_waivers.containsKey(r.code))
+                      TextField(onChanged: (value) => setState(() => _waivers[r.code] = value.trim()),
+                          decoration: InputDecoration(labelText: 'Motif de dérogation — ${r.code}', border: const OutlineInputBorder())),
+                  ]))),
+              ],
               const Divider(height: 32),
               Text('Décision', style: Theme.of(context).textTheme.titleMedium),
               SegmentedButton<String>(

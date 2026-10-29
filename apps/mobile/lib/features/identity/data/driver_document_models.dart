@@ -27,9 +27,12 @@ class RequirementView {
     required this.validUntil,
     required this.expired,
     required this.satisfied,
+    this.requiredForSubmission = false,
   });
   final String code, document, explanation;
   final bool established, expired, satisfied;
+  /// Identity and licence (catalogue v2): needed to send the file. Vehicle documents may follow; WAKA decides.
+  final bool requiredForSubmission;
   final String? documentId, reviewState;
   final DateTime? validUntil;
 
@@ -51,7 +54,7 @@ class RequirementView {
             m['document'] is! String || (m['document'] as String).isEmpty ||
             m['explanation'] is! String || (m['explanation'] as String).isEmpty ||
             (m['status'] != 'established' && m['status'] != 'to_confirm') ||
-            m['requiredForSubmission'] != established ||
+            m['requiredForSubmission'] is! bool || (m['requiredForSubmission'] == true && !established) ||
             (hasDocument && !isLoginUuid(m['documentId'])) ||
             (hasDocument != (m['reviewState'] != null)) ||
             (hasDocument && !{'received', 'accepted', 'to_correct'}.contains(m['reviewState'])) ||
@@ -71,6 +74,7 @@ class RequirementView {
           validUntil: _date(m['validUntil']),
           expired: m['expired'] as bool,
           satisfied: m['satisfied'] as bool,
+          requiredForSubmission: m['requiredForSubmission'] as bool,
         );
       }));
     } on FormatException {
