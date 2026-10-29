@@ -32,6 +32,8 @@ Le dossier adopté prévoit les familles ci-dessous. Les intitulés précis, tit
 
 Les conditions de WAKA comme plateforme, du transport par particuliers et de l’assurance restent à qualifier. Les cas de parcours supposent ces conditions réunies pour illustrer la suite ; ils n’activent aucun vrai chauffeur. Une pièce inconnue ou une réponse administrative manquante reste visible comme telle, sans validation automatique.
 
+**Mise en œuvre (29 octobre 2026) :** le catalogue opérationnel par parcours (taxi ou voiture personnelle), avec les noms précis des pièces, les sources camerounaises consultées et le statut « établie » ou « à confirmer » de chaque exigence, figure dans [WAKA_pieces_chauffeur.md](WAKA_pieces_chauffeur.md). Une exigence à confirmer n'est jamais satisfaite et empêche l'approbation tant qu'elle s'applique.
+
 ## C03 — Véhicule et six photos
 
 | Champ obligatoire | Ce qui doit correspondre au dossier |

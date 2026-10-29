@@ -23,6 +23,10 @@ enum ApplicationFailure {
 
   /// The server refused the request itself (400, 413, 415): it was not applied.
   rejected,
+  /// Submission refused: a vehicle field, a photo or a required document is missing or to correct.
+  incomplete,
+  /// The file is under examination or closed: nothing can be changed now.
+  notEditable,
 }
 
 const vehicleFieldNames = [
@@ -131,7 +135,12 @@ class VehicleData {
 bool _sameMap(Map<String, Object?> a, Map<String, Object?> b) =>
     a.length == b.length && a.keys.every((k) => b.containsKey(k) && a[k] == b[k]);
 
-/// A draft candidature; it is never an admission, a driver role or an access.
+/// States of a candidature; only an explicit agent decision can lead to `approved`.
+const applicationStates = {'draft', 'submitted', 'correction_requested', 'refused', 'approved'};
+/// States in which the candidate may still change the vehicle, photos and documents.
+const editableApplicationStates = {'draft', 'correction_requested'};
+
+/// A candidature as read from the server; submitting it is never an admission or an access.
 class DriverApplicationSnapshot {
   const DriverApplicationSnapshot({
     required this.applicationId,
@@ -142,8 +151,10 @@ class DriverApplicationSnapshot {
     required this.missing,
     required this.updatedAt,
     required this.replay,
+    this.state = 'draft',
   });
-  final String applicationId, accountId, requestedCategory;
+  final String applicationId, accountId, requestedCategory, state;
+  bool get editable => editableApplicationStates.contains(state);
   final int version;
   final VehicleData vehicle;
   final List<String> missing;
@@ -177,7 +188,7 @@ class DriverApplicationSnapshot {
       if (!isLoginUuid(m['applicationId']) ||
           m['accountId'] != session.accountId ||
           (m['requestedCategory'] != 'taxi' && m['requestedCategory'] != 'private') ||
-          m['state'] != 'draft' ||
+          !applicationStates.contains(m['state']) ||
           m['version'] is! int ||
           (m['version'] as int) < 1 ||
           (m['version'] as int) > 9007199254740991 ||
@@ -194,7 +205,12 @@ class DriverApplicationSnapshot {
       final id = m['applicationId'] as String;
       if (command == null && replay) throw const FormatException();
       if (command is CreateApplicationCommand &&
-          (version != 1 || vehicle != VehicleData.empty || m['requestedCategory'] != command.requestedCategory)) {
+          (version != 1 || vehicle != VehicleData.empty || m['requestedCategory'] != command.requestedCategory ||
+              m['state'] != 'draft')) {
+        throw const FormatException();
+      }
+      if (command is SubmitApplicationCommand &&
+          (version != command.expectedVersion + 1 || id != command.applicationId || m['state'] != 'submitted')) {
         throw const FormatException();
       }
       if (command is VehicleApplicationCommand &&
@@ -211,6 +227,7 @@ class DriverApplicationSnapshot {
         missing: vehicle.missing,
         updatedAt: updatedAt,
         replay: replay,
+        state: m['state'] as String,
       );
     } on LoginProblem {
       throw const ApplicationProblem(ApplicationFailure.invalidResponse);
@@ -236,14 +253,24 @@ sealed class ApplicationCommand {
       final kind = value is Map ? value['kind'] : null;
       final m = exactObject(
         value,
-        kind == 'create'
-            ? {'kind', 'key', 'accountId', 'requestedCategory'}
-            : {'kind', 'key', 'accountId', 'applicationId', 'expectedVersion', 'vehicleFields'},
+        switch (kind) {
+          'create' => {'kind', 'key', 'accountId', 'requestedCategory'},
+          'submit' => {'kind', 'key', 'accountId', 'applicationId', 'expectedVersion'},
+          _ => {'kind', 'key', 'accountId', 'applicationId', 'expectedVersion', 'vehicleFields'},
+        },
       );
       if (!isLoginUuid(m['key']) || !isLoginUuid(m['accountId'])) throw const FormatException();
       if (kind == 'create') {
         if (m['requestedCategory'] != 'taxi' && m['requestedCategory'] != 'private') throw const FormatException();
         return CreateApplicationCommand(m['key'] as String, m['accountId'] as String, m['requestedCategory'] as String);
+      }
+      if (kind == 'submit') {
+        if (!isLoginUuid(m['applicationId']) || m['expectedVersion'] is! int ||
+            (m['expectedVersion'] as int) < 1 || (m['expectedVersion'] as int) > 9007199254740991) {
+          throw const FormatException();
+        }
+        return SubmitApplicationCommand(m['key'] as String, m['accountId'] as String, m['applicationId'] as String,
+            m['expectedVersion'] as int);
       }
       if (kind != 'vehicle' ||
           !isLoginUuid(m['applicationId']) ||
@@ -281,6 +308,21 @@ class CreateApplicationCommand extends ApplicationCommand {
     'key': key,
     'accountId': accountId,
     'requestedCategory': requestedCategory,
+  };
+}
+
+/// Sends the exact version to examination; never an approval.
+class SubmitApplicationCommand extends ApplicationCommand {
+  const SubmitApplicationCommand(super.key, super.accountId, this.applicationId, this.expectedVersion);
+  final String applicationId;
+  final int expectedVersion;
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': 'submit',
+    'key': key,
+    'accountId': accountId,
+    'applicationId': applicationId,
+    'expectedVersion': expectedVersion,
   };
 }
 

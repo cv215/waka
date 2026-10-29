@@ -30,11 +30,12 @@ Map<String, Object?> applicationJson(
   int version = 1,
   VehicleData vehicle = VehicleData.empty,
   bool replay = false,
+  String state = 'draft',
 }) => {
   'applicationId': id,
   'accountId': session.accountId,
   'requestedCategory': category,
-  'state': 'draft',
+  'state': state,
   'version': version,
   'vehicleFields': vehicle.toJson(),
   'missingVehicleFields': vehicle.missing,
@@ -66,6 +67,7 @@ class Gateway implements LoginGateway, DriverApplicationGateway, ProfileGateway 
   Gateway(this.session);
   final LoginSession session;
   String? id, category;
+  String state = 'draft';
   int version = 0;
   VehicleData vehicle = VehicleData.empty;
   final sent = <ApplicationCommand>[];
@@ -73,9 +75,11 @@ class Gateway implements LoginGateway, DriverApplicationGateway, ProfileGateway 
   final applied = <String>{};
   int reads = 0, disposed = 0;
   LoginFailure? accountFailure;
+  /// When false, a submission is refused as the server would with missing pieces.
+  bool complete = true;
 
   Map<String, Object?> _json(LoginSession s, {bool replay = false}) =>
-      applicationJson(s, id: id!, category: category!, version: version, vehicle: vehicle, replay: replay);
+      applicationJson(s, id: id!, category: category!, version: version, vehicle: vehicle, replay: replay, state: state);
 
   @override
   Future<DriverApplicationSnapshot?> currentApplication(LoginSession s, String client) async {
@@ -97,8 +101,14 @@ class Gateway implements LoginGateway, DriverApplicationGateway, ProfileGateway 
           if (id != null) throw const ApplicationProblem(ApplicationFailure.alreadyOpen);
           id = randomLoginId(); category = c.requestedCategory; version = 1;
         case VehicleApplicationCommand c:
+          if (state != 'draft' && state != 'correction_requested') throw const ApplicationProblem(ApplicationFailure.notEditable);
           if (c.expectedVersion != version) throw const ApplicationProblem(ApplicationFailure.versionConflict);
           version++; vehicle = c.vehicle;
+        case SubmitApplicationCommand c:
+          if (state != 'draft' && state != 'correction_requested') throw const ApplicationProblem(ApplicationFailure.notEditable);
+          if (c.expectedVersion != version) throw const ApplicationProblem(ApplicationFailure.versionConflict);
+          if (!complete) throw const ApplicationProblem(ApplicationFailure.incomplete);
+          version++; state = 'submitted';
       }
       applied.add(command.key);
     }
@@ -314,6 +324,57 @@ void main() {
       expect(flow.canEditVehicle, isFalse);
       flow.dispose();
     });
+
+    test('Envoi : version exacte, plus aucune modification pendant l’examen', () async {
+      final (flow, gateway, store) = await confirmed();
+      await flow.startApplication('private');
+      await flow.saveVehicle(car);
+      await flow.submitApplication();
+      expect(flow.applicationFailure, isNull);
+      expect(flow.application!.state, 'submitted');
+      expect(flow.application!.editable, isFalse);
+      expect(flow.canEditVehicle, isFalse);
+      expect((gateway.sent.last as SubmitApplicationCommand).expectedVersion, 2);
+      expect(store.command, isNull);
+      await flow.saveVehicle(car);
+      expect(flow.applicationFailure, ApplicationFailure.invalid, reason: 'rien n’est envoyé pendant l’examen');
+      expect(gateway.sent.whereType<VehicleApplicationCommand>(), hasLength(1));
+      flow.dispose();
+    });
+
+    test('Envoi incomplet refusé définitivement ; envoi perdu repris avec la même clé', () async {
+      final (flow, gateway, store) = await confirmed();
+      await flow.startApplication('taxi');
+      gateway.complete = false;
+      await flow.submitApplication();
+      expect(flow.applicationFailure, ApplicationFailure.incomplete);
+      expect(store.command, isNull, reason: 'un refus définitif oublie la commande');
+      expect(flow.application!.state, 'draft');
+      gateway.complete = true;
+      gateway.answers.add(#lose);
+      await flow.submitApplication();
+      expect(flow.applicationFailure, ApplicationFailure.uncertain);
+      final kept = store.command!;
+      expect(kept, isA<SubmitApplicationCommand>());
+      await flow.resumeApplication();
+      expect(gateway.sent.whereType<SubmitApplicationCommand>().map((c) => c.key).toSet(), hasLength(2));
+      expect(gateway.sent.last.key, kept.key);
+      expect(flow.application!.state, 'submitted');
+      flow.dispose();
+    });
+
+    test('Correction demandée : le dossier redevient modifiable', () async {
+      final (flow, gateway, _) = await confirmed();
+      await flow.startApplication('taxi');
+      gateway..state = 'correction_requested'..version = 3;
+      await flow.refreshApplication();
+      expect(flow.application!.editable, isTrue);
+      expect(flow.canEditVehicle, isTrue);
+      gateway.state = 'approved';
+      await flow.refreshApplication();
+      expect(flow.canEditVehicle, isFalse);
+      flow.dispose();
+    });
   });
 
   group('Modèles et stockage', () {
@@ -324,10 +385,14 @@ void main() {
       throwsA(isA<ApplicationProblem>().having((p) => p.failure, 'f', ApplicationFailure.invalidResponse)),
     );
 
-    test('Réponse stricte : brouillon seulement, propre compte, champs cohérents', () {
+    test('Réponse stricte : états connus seulement, propre compte, champs cohérents', () {
       final valid = applicationJson(session, id: id);
       expect(DriverApplicationSnapshot.parse(valid, session).version, 1);
-      refused({...valid, 'state': 'approved'});
+      refused({...valid, 'state': 'admitted'});
+      refused({...valid, 'state': 'APPROVED'});
+      expect(DriverApplicationSnapshot.parse({...valid, 'state': 'approved'}, session).editable, isFalse);
+      // A creation can only answer with a draft.
+      refused({...valid, 'state': 'submitted'}, command: CreateApplicationCommand(randomLoginId(), session.accountId, 'taxi'));
       refused({...valid, 'accountId': randomLoginId()});
       refused({...valid, 'requestedCategory': 'vip'});
       refused({...valid, 'role': 'DRIVER'});

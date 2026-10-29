@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../../../core/config/local_api_configuration.dart';
 import 'driver_application_models.dart';
+import 'driver_document_models.dart';
 import 'login_models.dart';
 import 'profile_models.dart';
 import 'vehicle_photo_models.dart';
@@ -38,7 +39,17 @@ abstract interface class VehiclePhotoGateway {
   void dispose();
 }
 
-class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway {
+/// Catalogue documents of the owner's file, and the decisions about it (K17, K18).
+abstract interface class DriverDocumentGateway {
+  Future<List<RequirementView>> requirements(LoginSession session, String client, String applicationId);
+  Future<List<DecisionView>> decisions(LoginSession session, String client, String applicationId);
+  Future<DocumentUpload> uploadDocument(LoginSession session, String client, String applicationId, String code,
+      String key, List<int> bytes, String contentType, DateTime? validUntil);
+  void dispose();
+}
+
+class LoginClient
+    implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -62,8 +73,34 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
     );
   }
 
+  @override
+  Future<List<RequirementView>> requirements(LoginSession session, String client, String applicationId) async =>
+      RequirementView.parseList(await _photoSend(session, client, 'GET',
+          '/api/v1/driver-applications/$applicationId/requirements', 200, maxBytes: 32768));
+
+  @override
+  Future<List<DecisionView>> decisions(LoginSession session, String client, String applicationId) async =>
+      DecisionView.parseList(await _photoSend(session, client, 'GET',
+          '/api/v1/driver-applications/$applicationId/decisions', 200, maxBytes: 65536));
+
+  @override
+  Future<DocumentUpload> uploadDocument(LoginSession session, String client, String applicationId, String code,
+      String key, List<int> bytes, String contentType, DateTime? validUntil) async {
+    if (!RegExp(r'^[A-Z][A-Z0-9_]{2,47}$').hasMatch(code) || photoContentType(bytes) != contentType ||
+        bytes.length > maxPhotoBytes) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return DocumentUpload.parse(
+      await _photoSend(session, client, 'POST', '/api/v1/driver-applications/$applicationId/documents/$code', 201,
+          key: key, bytes: bytes, contentType: contentType,
+          extra: {if (validUntil != null) 'X-Waka-Valid-Until': dayText(validUntil)}),
+      code,
+    );
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
-      {String? key, List<int>? bytes, String? contentType}) async {
+      {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
+      int maxBytes = 8192}) async {
     if (_closed || !configuration.isConfigured) throw const PhotoProblem(PhotoFailure.unavailable);
     final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
     _active.add(http);
@@ -75,6 +112,7 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
         request.headers.set(HttpHeaders.acceptHeader, 'application/json, application/problem+json');
         request.headers.set('Authorization', 'Bearer ${session.token}');
         request.headers.set('X-Waka-Client-Instance', client);
+        extra.forEach(request.headers.set);
         if (bytes != null) {
           request.headers.set('Idempotency-Key', key!);
           request.headers.set(HttpHeaders.contentTypeHeader, contentType!);
@@ -84,7 +122,7 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
         final response = await request.close();
         final received = <int>[];
         await for (final chunk in response) {
-          if (received.length + chunk.length > 8192) throw const PhotoProblem(PhotoFailure.invalidResponse);
+          if (received.length + chunk.length > maxBytes) throw const PhotoProblem(PhotoFailure.invalidResponse);
           received.addAll(chunk);
         }
         if (response.headers.value(HttpHeaders.cacheControlHeader) != 'no-store') {
@@ -104,6 +142,9 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
           (401 || 403, _) => PhotoFailure.denied,
           (404, _) => PhotoFailure.notFound,
           (400, 'FILE_REJECTED') => PhotoFailure.rejectedFile,
+          (400, 'DOCUMENT_EXPIRED') => PhotoFailure.expired,
+          (409, 'DOCUMENT_NOT_APPLICABLE') => PhotoFailure.notApplicable,
+          (409, 'REGISTRATION_REQUIRED') => PhotoFailure.registrationRequired,
           (409, 'IDEMPOTENCY_KEY_REUSED') => PhotoFailure.keyReused,
           (409, 'NOT_EDITABLE') => PhotoFailure.notEditable,
           (413, _) => PhotoFailure.tooLarge,
@@ -142,6 +183,9 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
       VehicleApplicationCommand c => await _applicationSend(session, client, 'PATCH',
           '/api/v1/driver-applications/${c.applicationId}',
           command: c, body: {'expectedVersion': c.expectedVersion, 'vehicleFields': c.vehicle.toJson()}),
+      SubmitApplicationCommand c => await _applicationSend(session, client, 'POST',
+          '/api/v1/driver-applications/${c.applicationId}/submissions',
+          command: c, body: {'expectedVersion': c.expectedVersion}),
     };
     if (status != (command is CreateApplicationCommand ? 201 : 200)) {
       throw const ApplicationProblem(ApplicationFailure.invalidResponse);
@@ -203,6 +247,8 @@ class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGate
           (409, 'VERSION_CONFLICT') => ApplicationFailure.versionConflict,
           (409, 'IDEMPOTENCY_KEY_REUSED') => ApplicationFailure.keyReused,
           (409, 'APPLICATION_ALREADY_OPEN') => ApplicationFailure.alreadyOpen,
+          (409, 'INCOMPLETE') => ApplicationFailure.incomplete,
+          (409, 'NOT_EDITABLE') => ApplicationFailure.notEditable,
           (410, 'REPLAY_EXPIRED') => ApplicationFailure.replayExpired,
           (>= 500, _) => ApplicationFailure.unavailable,
           _ => ApplicationFailure.invalidResponse,

@@ -7,10 +7,24 @@ import '../../identity/application/login_flow.dart';
 import '../../identity/data/driver_application_models.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/vehicle_photo_models.dart';
+import '../../identity/data/driver_document_models.dart';
+import '../application/driver_document_flow.dart';
 import '../application/vehicle_photo_flow.dart';
 
 /// Returns the chosen photo's bytes, or null when the person cancels.
 typedef PhotoPicker = Future<List<int>?> Function({required bool camera});
+/// Asks for the end date printed on a document; null when there is none (or the person skips it).
+typedef ValidityPicker = Future<DateTime?> Function(BuildContext context);
+
+Future<DateTime?> pickValidity(BuildContext context) {
+  final today = DateTime.now();
+  return showDatePicker(
+    context: context,
+    firstDate: today,
+    lastDate: DateTime(today.year + 20),
+    helpText: 'Date de fin de validité (Annuler s’il n’y en a pas)',
+  );
+}
 
 /// Bounded on the phone to keep uploads small; the server still checks and re-encodes everything.
 Future<List<int>?> pickWithDevice({required bool camera}) async {
@@ -26,9 +40,11 @@ Future<List<int>?> pickWithDevice({required bool camera}) async {
 /// The owner's draft candidature. It shows no admission, no driver role and no access:
 /// documents, submission and decisions come with their own points.
 class DriverApplicationPage extends StatefulWidget {
-  const DriverApplicationPage({super.key, required this.flow, this.pickPhoto = pickWithDevice});
+  const DriverApplicationPage({super.key, required this.flow, this.pickPhoto = pickWithDevice,
+      this.pickDate = pickValidity});
   final LoginFlow flow;
   final PhotoPicker pickPhoto;
+  final ValidityPicker pickDate;
 
   @override
   State<DriverApplicationPage> createState() => _DriverApplicationPageState();
@@ -43,6 +59,8 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
   int? _shownVersion;
   late final VehiclePhotoFlow? _photos =
       _flow.gateway is VehiclePhotoGateway ? VehiclePhotoFlow(_flow, _flow.gateway as VehiclePhotoGateway) : null;
+  late final DriverDocumentFlow? _documents =
+      _flow.gateway is DriverDocumentGateway ? DriverDocumentFlow(_flow, _flow.gateway as DriverDocumentGateway) : null;
 
   @override
   void initState() {
@@ -50,7 +68,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     if (_flow.application == null && !_flow.noApplication) {
       _reload();
     } else if (_flow.application != null) {
-      _photos?.refresh();
+      _refreshParts();
     }
   }
 
@@ -60,13 +78,35 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       c.dispose();
     }
     _photos?.dispose();
+    _documents?.dispose();
     super.dispose();
   }
 
   Future<void> _reload() async {
     await _flow.refreshApplication();
     if (mounted) _fill();
-    if (mounted && _flow.application != null) await _photos?.refresh();
+    if (mounted && _flow.application != null) await _refreshParts();
+  }
+
+  /// Photos, applicable documents and decisions follow the file state (category, use right, version).
+  Future<void> _refreshParts() async {
+    await _photos?.refresh();
+    if (mounted) await _documents?.refresh();
+  }
+
+  Future<void> _pickDocument(String code, {required bool camera}) async {
+    final bytes = await widget.pickPhoto(camera: camera);
+    if (bytes == null || !mounted) return;
+    final validUntil = await widget.pickDate(context);
+    if (mounted) await _documents?.upload(code, bytes, validUntil);
+  }
+
+  Future<void> _submit() async {
+    await _flow.submitApplication();
+    if (mounted) {
+      _fill();
+      await _documents?.refresh();
+    }
   }
 
   Future<void> _pick(String view, {required bool camera}) async {
@@ -86,6 +126,9 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.uncertain => 'La réponse n’est pas arrivée. Réessaie le même envoi pour connaître son résultat.',
     PhotoFailure.invalidResponse => 'La réponse n’a pas pu être vérifiée. Réessaie ou relis l’état des photos.',
     PhotoFailure.invalid => 'Cette action n’est pas possible maintenant.',
+    PhotoFailure.notApplicable => 'Cette pièce n’est pas demandée pour ta situation.',
+    PhotoFailure.registrationRequired => 'Renseigne d’abord l’immatriculation du véhicule.',
+    PhotoFailure.expired => 'La date de fin de validité est déjà passée : il faut une pièce en cours de validité.',
     null => null,
   };
 
@@ -122,16 +165,18 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
                         onPressed: photos.busy ? null : () => photos.retry(status.view),
                         icon: const Icon(Icons.refresh),
                       ),
-                    IconButton(
-                      tooltip: 'Prendre une photo',
-                      onPressed: photos.busy ? null : () => _pick(status.view, camera: true),
-                      icon: const Icon(Icons.photo_camera_outlined),
-                    ),
-                    IconButton(
-                      tooltip: 'Choisir dans la galerie',
-                      onPressed: photos.busy ? null : () => _pick(status.view, camera: false),
-                      icon: const Icon(Icons.photo_library_outlined),
-                    ),
+                    if (_flow.application?.editable ?? false) ...[
+                      IconButton(
+                        tooltip: 'Prendre une photo',
+                        onPressed: photos.busy ? null : () => _pick(status.view, camera: true),
+                        icon: const Icon(Icons.photo_camera_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Choisir dans la galerie',
+                        onPressed: photos.busy ? null : () => _pick(status.view, camera: false),
+                        icon: const Icon(Icons.photo_library_outlined),
+                      ),
+                    ],
                   ]),
                 ),
               if (_photoError != null)
@@ -192,6 +237,8 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     ApplicationFailure.storage => 'Le stockage protégé n’a pas accepté la demande. Rien n’a été envoyé.',
     ApplicationFailure.invalid => 'Vérifie les informations : années, capacité et places, immatriculation (lettres, chiffres, espace ou tiret).',
     ApplicationFailure.rejected => 'Le serveur a refusé ces informations sans les enregistrer. Le dossier a été relu.',
+    ApplicationFailure.incomplete => 'Le dossier n’est pas encore complet : vérifie les informations, les six photos et les pièces marquées « à fournir ».',
+    ApplicationFailure.notEditable => 'Le dossier est en cours d’examen ou fermé : il ne peut pas être modifié maintenant.',
     null => null,
   };
 
@@ -255,7 +302,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     final digits = [FilteringTextInputFormatter.digitsOnly];
     return [
       Text(
-        'Dossier ${current.requestedCategory == 'taxi' ? 'taxi' : 'particulier'} — brouillon, non examiné',
+        'Dossier ${current.requestedCategory == 'taxi' ? 'taxi' : 'voiture personnelle'} — ${_stateLabel(current.state)}',
         style: Theme.of(context).textTheme.titleMedium,
       ),
       Text(current.missing.isEmpty
@@ -285,6 +332,143 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       gap(),
       FilledButton(onPressed: editable ? _save : null, child: const Text('Enregistrer le véhicule')),
       ..._photoSection(),
+      ..._documentSection(current),
+    ];
+  }
+
+  static String _stateLabel(String state) => switch (state) {
+    'draft' => 'brouillon, non envoyé',
+    'submitted' => 'envoyé, en attente d’examen',
+    'correction_requested' => 'correction demandée',
+    'refused' => 'refusé',
+    'approved' => 'approuvé',
+    _ => state,
+  };
+
+  static String _reviewLabel(RequirementView r) {
+    if (!r.established && r.documentId == null) return 'En cours de confirmation par WAKA : facultatif pour l’instant';
+    if (r.documentId == null) return 'À fournir';
+    if (r.expired) return 'Expirée : à fournir de nouveau';
+    final state = switch (r.reviewState) {
+      'accepted' => 'Acceptée',
+      'to_correct' => 'À corriger : dépose une nouvelle pièce',
+      _ => 'Reçue, en attente d’examen',
+    };
+    final until = r.validUntil == null ? '' : ' (valable jusqu’au ${dayText(r.validUntil!)})';
+    return r.established ? '$state$until' : '$state$until — exigence en cours de confirmation par WAKA';
+  }
+
+  String? get _documentError {
+    final failure = _documents?.failure;
+    if (failure == null) return null;
+    return switch (failure) {
+      PhotoFailure.rejectedFile => 'Cette image a été refusée : photographie le document en entier, net et lisible (JPEG ou PNG).',
+      PhotoFailure.uncertain => 'La réponse n’est pas arrivée. Réessaie le même envoi pour connaître son résultat.',
+      _ => _photoErrorFor(failure),
+    };
+  }
+
+  String? _photoErrorFor(PhotoFailure failure) => switch (failure) {
+    PhotoFailure.notApplicable => 'Cette pièce n’est pas demandée pour ta situation.',
+    PhotoFailure.registrationRequired => 'Renseigne d’abord l’immatriculation du véhicule.',
+    PhotoFailure.expired => 'La date de fin de validité est déjà passée : il faut une pièce en cours de validité.',
+    PhotoFailure.tooLarge => 'L’image dépasse 10 Mo. Choisis une image plus légère.',
+    PhotoFailure.unsupported => 'Format non accepté : seules les images JPEG ou PNG sont possibles.',
+    PhotoFailure.notEditable => 'Le dossier ne peut plus être modifié.',
+    PhotoFailure.unavailable => 'Les pièces sont momentanément indisponibles. Réessaie plus tard.',
+    _ => 'Cette action n’a pas abouti. Relis l’état des pièces.',
+  };
+
+  List<Widget> _documentSection(DriverApplicationSnapshot current) {
+    final documents = _documents;
+    if (documents == null) return const [];
+    return [
+      const Divider(height: 32),
+      Text('Pièces justificatives', style: Theme.of(context).textTheme.titleMedium),
+      const Text('Seules les pièces de ta situation sont demandées. Une pièce déjà acceptée et encore valide est réutilisée.'),
+      const SizedBox(height: 8),
+      AnimatedBuilder(
+        animation: documents,
+        builder: (context, _) {
+          final requirements = documents.requirements;
+          if (requirements == null) {
+            return OutlinedButton(onPressed: documents.busy ? null : documents.refresh, child: const Text('Relire mes pièces'));
+          }
+          final editable = current.editable && !_flow.busy;
+          final missing = documents.missingForSubmission;
+          final photosMissing = (_photos?.views ?? const []).where((v) => !v.received).length;
+          final ready = current.missing.isEmpty && photosMissing == 0 && missing.isEmpty && _photos?.views != null;
+          final decisions = documents.decisions ?? const <DecisionView>[];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final r in requirements)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(r.document, style: Theme.of(context).textTheme.titleSmall),
+                        Text(r.explanation),
+                        const SizedBox(height: 4),
+                        Text(documents.busyCode == r.code ? 'Envoi en cours…' : _reviewLabel(r)),
+                        if (editable && (r.needsUpload || r.reviewState == 'received'))
+                          Wrap(spacing: 4, children: [
+                            if (documents.hasPending(r.code))
+                              TextButton.icon(
+                                onPressed: documents.busy ? null : () => documents.retry(r.code),
+                                icon: const Icon(Icons.refresh), label: const Text('Réessayer'),
+                              ),
+                            TextButton.icon(
+                              onPressed: documents.busy ? null : () => _pickDocument(r.code, camera: true),
+                              icon: const Icon(Icons.photo_camera_outlined), label: const Text('Photographier'),
+                            ),
+                            TextButton.icon(
+                              onPressed: documents.busy ? null : () => _pickDocument(r.code, camera: false),
+                              icon: const Icon(Icons.photo_library_outlined), label: const Text('Choisir une image'),
+                            ),
+                          ]),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_documentError != null) Semantics(liveRegion: true, child: Text(_documentError!)),
+              if (current.editable) ...[
+                const SizedBox(height: 16),
+                Text(ready
+                    ? 'Tout ce qui est demandé est prêt. Tu peux envoyer le dossier à l’examen.'
+                    : 'Avant l’envoi : ${[
+                        if (current.missing.isNotEmpty) '${current.missing.length} information(s) du véhicule',
+                        if (photosMissing > 0) '$photosMissing photo(s)',
+                        if (missing.isNotEmpty) '${missing.length} pièce(s) à fournir ou corriger',
+                      ].join(', ')}. Tu peux enregistrer et terminer plus tard.'),
+                FilledButton(
+                  onPressed: editable && ready && _flow.canEditVehicle ? _submit : null,
+                  child: const Text('Envoyer mon dossier à l’examen'),
+                ),
+              ],
+              if (current.state == 'submitted')
+                const Text('Ton dossier est en cours d’examen. Tu seras informé de la décision ici.'),
+              if (current.state == 'approved')
+                const Text('Ton dossier est approuvé. L’accès au service dépend encore des autres conditions (abonnement, validités).'),
+              if (decisions.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text('Dernière décision', style: Theme.of(context).textTheme.titleSmall),
+                Text('${switch (decisions.last.action) {
+                  'approve' => 'Dossier approuvé',
+                  'refuse' => 'Dossier refusé',
+                  _ => 'Correction demandée',
+                }} — motif : ${decisions.last.reasonCode}'),
+                if (decisions.last.details != null) Text(decisions.last.details!),
+                for (final item in decisions.last.reviews.where((i) => i.toCorrect))
+                  Text('• À corriger : ${requirements.where((r) => r.code == item.label).firstOrNull?.document ?? item.label}'
+                      ' (${item.reasonCode})'),
+              ],
+            ],
+          );
+        },
+      ),
     ];
   }
 }
