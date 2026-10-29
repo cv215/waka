@@ -27,6 +27,9 @@ String voyageMessage(PhotoFailure failure) => switch (failure) {
   PhotoFailure.ownVoyage => 'Tu ne peux pas réserver ton propre voyage.',
   PhotoFailure.departed => 'Ce départ est déjà passé.',
   PhotoFailure.tooManySeats => 'Ton véhicule approuvé ne propose pas autant de places.',
+  PhotoFailure.wrongCode => 'Ce code ne correspond à aucun passager de ce voyage.',
+  PhotoFailure.notPaid => 'Cette réservation n’est pas encore payée : le passager ne peut pas embarquer.',
+  PhotoFailure.boardingLocked => 'Trop de codes erronés : l’embarquement de ce voyage est bloqué. Contacte l’assistance WAKA.',
   PhotoFailure.notFound => 'Ce voyage n’est plus disponible.',
   PhotoFailure.keyReused => 'Cette demande ne correspond plus au serveur. Recommence.',
   PhotoFailure.unavailable => 'Les voyages sont momentanément indisponibles. Réessaie plus tard.',
@@ -175,7 +178,8 @@ class _VoyagesPageState extends State<VoyagesPage> {
         Card(child: ListTile(
           title: Text('${r.seats} place(s) · ${r.totalXaf} F · ${_stateLabel(r.state)}'),
           subtitle: Text('Embarquement prévu ${_when(r.boardingAt)}'
-              '${r.refundXaf == null ? '' : ' · remboursé ${r.refundXaf} F (frais ${r.feePercent} %)'}'),
+              '${r.refundXaf == null || r.state == 'boarded' ? '' : ' · remboursé ${r.refundXaf} F (frais ${r.feePercent} %)'}'
+              '${r.boardingCode == null ? '' : '\nCode d’embarquement : ${r.boardingCode} — à donner au chauffeur au départ, à personne d’autre.'}'),
           trailing: {'awaiting_payment', 'confirmed'}.contains(r.state)
               ? TextButton(onPressed: _busy ? null : () => _confirmCancel(r), child: const Text('Annuler'))
               : null,
@@ -214,7 +218,11 @@ class _VoyagesPageState extends State<VoyagesPage> {
           subtitle: Text('Départ ${_when(v.stops.first.plannedAt)} · ${v.state == 'published' ? 'publié' : 'annulé'} · '
               '${v.availableSeats['0-${v.stops.length - 1}']} place(s) libre(s) sur ${v.seats}'),
           trailing: v.state == 'published'
-              ? TextButton(onPressed: _busy ? null : () => _cancelVoyage(v), child: const Text('Annuler'))
+              ? Wrap(spacing: 4, children: [
+                  TextButton(onPressed: _busy ? null : () => Navigator.of(context).push<void>(MaterialPageRoute<void>(
+                      builder: (_) => PassengersPage(login: widget.login, voyage: v))), child: const Text('Passagers')),
+                  TextButton(onPressed: _busy ? null : () => _cancelVoyage(v), child: const Text('Annuler')),
+                ])
               : null,
         )),
     ]);
@@ -370,6 +378,100 @@ class _PublishVoyagePageState extends State<PublishVoyagePage> {
           },
           child: const Text('Publier'),
         ),
+      ]),
+    );
+  }
+}
+
+/// The driver's passengers (K27): sections and seats only; boarding with the code the passenger gives.
+class PassengersPage extends StatefulWidget {
+  const PassengersPage({super.key, required this.login, required this.voyage});
+  final LoginFlow login;
+  final VoyageView voyage;
+  @override
+  State<PassengersPage> createState() => _PassengersPageState();
+}
+
+class _PassengersPageState extends State<PassengersPage> {
+  VoyageGateway get _gateway => widget.login.gateway as VoyageGateway;
+  final _code = TextEditingController();
+  List<PassengerView>? _passengers;
+  String? _message;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _run(_load);
+  }
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final session = widget.login.session, client = widget.login.clientInstance;
+    if (session == null || client == null) throw const PhotoProblem(PhotoFailure.invalid);
+    final list = await _gateway.voyagePassengers(session, client, widget.voyage.voyageId);
+    if (mounted) setState(() => _passengers = list);
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() { _busy = true; _message = null; });
+    try {
+      await action();
+    } on PhotoProblem catch (problem) {
+      if (mounted) setState(() => _message = voyageMessage(problem.failure));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _board() => _run(() async {
+    final session = widget.login.session, client = widget.login.clientInstance;
+    final code = _code.text.trim();
+    if (session == null || client == null || !RegExp(r'^[0-9]{6}$').hasMatch(code)) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    final passenger = await _gateway.boardPassenger(session, client, widget.voyage.voyageId, code);
+    _code.clear();
+    _message = 'Passager embarqué : ${passenger.seats} place(s). Tu recevras ${passenger.driverXaf} F.';
+    await _load();
+  });
+
+  String _section(PassengerView p) => '${widget.voyage.stops[p.fromIndex].place} → ${widget.voyage.stops[p.toIndex].place}';
+
+  @override
+  Widget build(BuildContext context) {
+    final passengers = _passengers;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Passagers')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        Text(_route(widget.voyage), style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        const Text('Au départ, demande à chaque passager son code à 6 chiffres. Seul un passager qui a payé peut embarquer.'),
+        const SizedBox(height: 8),
+        TextField(controller: _code, keyboardType: TextInputType.number, maxLength: 6,
+            decoration: const InputDecoration(labelText: 'Code du passager', border: OutlineInputBorder())),
+        FilledButton(onPressed: _busy ? null : _board, child: const Text('Embarquer')),
+        if (_message != null) Padding(padding: const EdgeInsets.only(top: 12),
+            child: Semantics(liveRegion: true, child: Text(_message!))),
+        const Divider(height: 32),
+        if (passengers == null) const Text('Chargement…'),
+        if (passengers != null && passengers.isEmpty) const Text('Aucun passager pour l’instant.'),
+        for (final p in passengers ?? const <PassengerView>[])
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('${_section(p)} · ${p.seats} place(s)'),
+            subtitle: Text(switch (p.state) {
+              'awaiting_payment' => 'En attente de paiement',
+              'confirmed' => 'Payé, à embarquer',
+              _ => 'Embarqué · ${p.driverXaf} F pour toi',
+            }),
+          ),
       ]),
     );
   }

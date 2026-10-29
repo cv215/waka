@@ -60,6 +60,8 @@ abstract interface class VoyageGateway {
       int seats);
   Future<List<ReservationView>> myVoyageReservations(LoginSession session, String client);
   Future<ReservationView> cancelVoyageReservation(LoginSession session, String client, String reservationId);
+  Future<List<PassengerView>> voyagePassengers(LoginSession session, String client, String voyageId);
+  Future<PassengerView> boardPassenger(LoginSession session, String client, String voyageId, String code);
   void dispose();
 }
 
@@ -213,6 +215,19 @@ class LoginClient
         200, bytes: const [], contentType: 'application/json'));
   }
 
+  @override
+  Future<List<PassengerView>> voyagePassengers(LoginSession session, String client, String voyageId) async {
+    if (!isLoginUuid(voyageId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return PassengerView.parseList(await _photoSend(session, client, 'GET', '/api/v1/voyages/$voyageId/passengers', 200, maxBytes: 65536));
+  }
+
+  @override
+  Future<PassengerView> boardPassenger(LoginSession session, String client, String voyageId, String code) async {
+    if (!isLoginUuid(voyageId) || !RegExp(r'^[0-9]{6}$').hasMatch(code)) throw const PhotoProblem(PhotoFailure.invalid);
+    return PassengerView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages/$voyageId/boardings', 200,
+        contentType: 'application/json', bytes: utf8.encode(jsonEncode({'boardingCode': code}))));
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
       int maxBytes = 8192, int? alsoExpected}) async {
@@ -270,6 +285,9 @@ class LoginClient
           (422, 'OWN_VOYAGE') => PhotoFailure.ownVoyage,
           (422, 'DEPARTED') => PhotoFailure.departed,
           (422, 'TOO_MANY_SEATS') => PhotoFailure.tooManySeats,
+          (422, 'WRONG_CODE') => PhotoFailure.wrongCode,
+          (409, 'NOT_PAID') => PhotoFailure.notPaid,
+          (429, 'BOARDING_LOCKED') => PhotoFailure.boardingLocked,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

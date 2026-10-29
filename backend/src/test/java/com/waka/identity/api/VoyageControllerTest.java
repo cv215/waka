@@ -101,6 +101,34 @@ class VoyageControllerTest {
         mvc.perform(own(post("/api/v1/voyage-reservations/" + voyage + "/cancellations")).content("{}")).andExpect(status().isBadRequest());
     }
 
+    @Test void boardingTakesOnlySixDigitsAndRefusalsAreDistinct() throws Exception {
+        var service = mock(PersistentVoyageService.class);
+        MockMvc mvc = mvc(service);
+        UUID voyage = UUID.randomUUID();
+        for (String body : new String[] { "{\"boardingCode\":\"12345\"}", "{\"boardingCode\":\"12345a\"}", "{\"boardingCode\":123456}",
+                "{\"boardingCode\":\"123456\",\"reservationId\":\"x\"}" }) {
+            mvc.perform(own(post("/api/v1/voyages/" + voyage + "/boardings")).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(service);
+        when(service.board(any(), eq(client), eq(voyage), eq("123456")))
+                .thenThrow(new VoyageException(VoyageException.Code.WRONG_CODE))
+                .thenThrow(new VoyageException(VoyageException.Code.NOT_PAID))
+                .thenThrow(new VoyageException(VoyageException.Code.BOARDING_LOCKED));
+        String body = "{\"boardingCode\":\"123456\"}";
+        mvc.perform(own(post("/api/v1/voyages/" + voyage + "/boardings")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnprocessableContent()).andExpect(jsonPath("$.code").value("WRONG_CODE"));
+        mvc.perform(own(post("/api/v1/voyages/" + voyage + "/boardings")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("NOT_PAID"));
+        mvc.perform(own(post("/api/v1/voyages/" + voyage + "/boardings")).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("BOARDING_LOCKED"));
+        when(service.passengers(any(), eq(client), eq(voyage))).thenReturn(List.of(new PersistentVoyageService.PassengerView(
+                UUID.randomUUID(), 0, 1, 2, "confirmed", Instant.parse("2026-11-15T06:00:00Z"), null)));
+        mvc.perform(own(get("/api/v1/voyages/" + voyage + "/passengers"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].seats").value(2)).andExpect(jsonPath("$[0].clientAccountId").doesNotExist())
+                .andExpect(jsonPath("$[0].boardingCode").doesNotExist());
+    }
+
     private MockHttpServletRequestBuilder publish(String body) {
         return own(post("/api/v1/voyages")).header("Idempotency-Key", key.toString()).contentType(MediaType.APPLICATION_JSON).content(body);
     }

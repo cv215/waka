@@ -29,7 +29,8 @@ Map<String, Object?> reservationJson(String voyage, {String state = 'awaiting_pa
   'reservationId': randomLoginId(), 'voyageId': voyage, 'fromIndex': 0, 'toIndex': 2, 'seats': 2, 'seatPriceXaf': 6000,
   'totalXaf': 12000, 'state': state, 'holdExpiresAt': iso(departure), 'boardingAt': iso(departure),
   'refundXaf': refund, 'driverXaf': refund == null ? null : (12000 - refund) ~/ 2,
-  'wakaXaf': refund == null ? null : 12000 - refund - (12000 - refund) ~/ 2, 'feePercent': fee, 'idempotentReplay': false,
+  'wakaXaf': refund == null ? null : 12000 - refund - (12000 - refund) ~/ 2, 'feePercent': fee,
+  'boardingCode': {'awaiting_payment', 'confirmed'}.contains(state) ? '482913' : null, 'idempotentReplay': false,
 };
 
 class VoyageFixture extends fixture.Gateway implements VoyageGateway {
@@ -38,11 +39,28 @@ class VoyageFixture extends fixture.Gateway implements VoyageGateway {
   final reserved = <String>[];
   final published = <(List<VoyageStop>, int, Map<String, int>)>[];
   final reservations = <Map<String, Object?>>[];
+  final boardings = <String>[];
+  bool mineHasVoyage = false;
+
+  @override
+  Future<List<PassengerView>> voyagePassengers(LoginSession s, String c, String voyage) async => [
+    PassengerView.parse({'reservationId': randomLoginId(), 'fromIndex': 0, 'toIndex': 2, 'seats': 2,
+      'state': boardings.isEmpty ? 'confirmed' : 'boarded', 'boardingAt': iso(departure),
+      'driverXaf': boardings.isEmpty ? null : 10800}),
+  ];
+  @override
+  Future<PassengerView> boardPassenger(LoginSession s, String c, String voyage, String code) async {
+    if (code != '482913') throw const PhotoProblem(PhotoFailure.wrongCode);
+    boardings.add(code);
+    return PassengerView.parse({'reservationId': randomLoginId(), 'fromIndex': 0, 'toIndex': 2, 'seats': 2, 'state': 'boarded',
+      'boardingAt': iso(departure), 'driverXaf': 10800});
+  }
 
   @override
   Future<List<VoyageView>> upcomingVoyages(LoginSession s, String c) async => [VoyageView.parse(voyageJson(voyageId))];
   @override
-  Future<List<VoyageView>> myVoyages(LoginSession s, String c) async => const [];
+  Future<List<VoyageView>> myVoyages(LoginSession s, String c) async =>
+      mineHasVoyage ? [VoyageView.parse(voyageJson(voyageId))] : const [];
   @override
   Future<VoyageView> publishVoyage(LoginSession s, String c, String key, List<VoyageStop> stops, int seats, Map<String, int> prices) async {
     published.add((stops, seats, prices));
@@ -61,8 +79,11 @@ class VoyageFixture extends fixture.Gateway implements VoyageGateway {
   Future<List<ReservationView>> myVoyageReservations(LoginSession s, String c) async =>
       ReservationView.parseList(reservations);
   @override
-  Future<ReservationView> cancelVoyageReservation(LoginSession s, String c, String id) async =>
-      ReservationView.parse(reservationJson(voyageId, state: 'cancelled_by_client', refund: 10200, fee: 15));
+  Future<ReservationView> cancelVoyageReservation(LoginSession s, String c, String id) async {
+    final cancelled = reservationJson(voyageId, state: 'cancelled_by_client', refund: 10200, fee: 15);
+    reservations..clear()..add(cancelled);
+    return ReservationView.parse(cancelled);
+  }
 }
 
 Future<(LoginFlow, VoyageFixture)> show(WidgetTester tester, {PickDateTime? pick}) async {
@@ -126,6 +147,7 @@ void main() {
     await tester.tap(find.text('Annuler la réservation'));
     await settle(tester);
     expect(find.text('Réservation annulée : 10200 F remboursés (frais 15 %).'), findsOneWidget);
+    expect(find.textContaining('482913'), findsNothing, reason: 'a cancelled reservation no longer shows its code');
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });
@@ -156,6 +178,33 @@ void main() {
     expect(seats, 1);
     expect(prices, {'0-1': 6000});
     expect(find.text('Voyage publié.'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+  testWidgets('le client voit son code ; le chauffeur embarque avec ce code et voit son gain', (tester) async {
+    final (login, gateway) = await show(tester);
+    gateway.reservations.add(reservationJson(gateway.voyageId, state: 'confirmed'));
+    gateway.mineHasVoyage = true;
+    await tester.tap(find.byIcon(Icons.refresh));
+    await settle(tester);
+    await tester.tap(find.text('Mes réservations'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Code d’embarquement : 482913'), findsOneWidget);
+    await tester.tap(find.text('Mes voyages'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Passagers'));
+    await settle(tester);
+    expect(find.text('Yaoundé → Douala · 2 place(s)'), findsOneWidget);
+    expect(find.text('Payé, à embarquer'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Code du passager'), '111111');
+    await tester.tap(find.widgetWithText(FilledButton, 'Embarquer'));
+    await settle(tester);
+    expect(find.text('Ce code ne correspond à aucun passager de ce voyage.'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Code du passager'), '482913');
+    await tester.tap(find.widgetWithText(FilledButton, 'Embarquer'));
+    await settle(tester);
+    expect(find.text('Passager embarqué : 2 place(s). Tu recevras 10800 F.'), findsOneWidget);
+    expect(find.text('Embarqué · 10800 F pour toi'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

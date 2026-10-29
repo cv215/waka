@@ -85,16 +85,18 @@ class VoyageView {
 
 class ReservationView {
   const ReservationView(this.reservationId, this.voyageId, this.fromIndex, this.toIndex, this.seats, this.totalXaf, this.state,
-      this.boardingAt, this.refundXaf, this.feePercent);
+      this.boardingAt, this.refundXaf, this.feePercent, this.boardingCode);
   final String reservationId, voyageId, state;
   final int fromIndex, toIndex, seats, totalXaf;
   final DateTime boardingAt;
   final int? refundXaf, feePercent;
+  /// Six digits to give the driver at boarding; shown only while the reservation can still board.
+  final String? boardingCode;
 
   static ReservationView parse(Object? value) {
     try {
       final m = _exact(value, {'reservationId', 'voyageId', 'fromIndex', 'toIndex', 'seats', 'seatPriceXaf', 'totalXaf', 'state',
-        'holdExpiresAt', 'boardingAt', 'refundXaf', 'driverXaf', 'wakaXaf', 'feePercent', 'idempotentReplay'});
+        'holdExpiresAt', 'boardingAt', 'refundXaf', 'driverXaf', 'wakaXaf', 'feePercent', 'boardingCode', 'idempotentReplay'});
       final from = m['fromIndex'], to = m['toIndex'], seats = m['seats'], price = m['seatPriceXaf'], total = m['totalXaf'];
       if (from is! int || to is! int || from < 0 || to <= from || to > 5 || seats is! int || seats < 1 || seats > 5 ||
           price is! int || price < 1 || price > maxSeatPriceXaf || total != price * seats ||
@@ -107,15 +109,46 @@ class ReservationView {
           !{0, 15, 30}.contains(fee))) {
         throw const FormatException();
       }
+      final code = m['boardingCode'];
+      if (code != null && (code is! String || !RegExp(r'^[0-9]{6}$').hasMatch(code))) throw const FormatException();
       _instant(m['holdExpiresAt']);
       return ReservationView(_id(m['reservationId']), _id(m['voyageId']), from, to, seats, total, m['state'] as String,
-          _instant(m['boardingAt']), refund as int?, fee as int?);
+          _instant(m['boardingAt']), refund as int?, fee as int?, code as String?);
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }
   }
 
   static List<ReservationView> parseList(Object? value) {
+    if (value is! List || value.length > 100) throw const PhotoProblem(PhotoFailure.invalidResponse);
+    return List.unmodifiable(value.map(parse));
+  }
+}
+
+/// What the driver sees of a passenger (K27): the section and seats, never who it is nor the code.
+class PassengerView {
+  const PassengerView(this.reservationId, this.fromIndex, this.toIndex, this.seats, this.state, this.driverXaf);
+  final String reservationId, state;
+  final int fromIndex, toIndex, seats;
+  final int? driverXaf;
+
+  static PassengerView parse(Object? value) {
+    try {
+      final m = _exact(value, {'reservationId', 'fromIndex', 'toIndex', 'seats', 'state', 'boardingAt', 'driverXaf'});
+      final from = m['fromIndex'], to = m['toIndex'], seats = m['seats'], driver = m['driverXaf'];
+      if (from is! int || to is! int || from < 0 || to <= from || to > 5 || seats is! int || seats < 1 || seats > 5 ||
+          !{'awaiting_payment', 'confirmed', 'boarded'}.contains(m['state']) || (driver != null && driver is! int) ||
+          ((m['state'] == 'boarded') != (driver != null))) {
+        throw const FormatException();
+      }
+      _instant(m['boardingAt']);
+      return PassengerView(_id(m['reservationId']), from, to, seats, m['state'] as String, driver as int?);
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    }
+  }
+
+  static List<PassengerView> parseList(Object? value) {
     if (value is! List || value.length > 100) throw const PhotoProblem(PhotoFailure.invalidResponse);
     return List.unmodifiable(value.map(parse));
   }
