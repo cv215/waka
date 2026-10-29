@@ -8,6 +8,7 @@ import 'driver_document_models.dart';
 import 'login_models.dart';
 import 'privacy_models.dart';
 import 'profile_models.dart';
+import 'referral_models.dart';
 import 'vehicle_photo_models.dart';
 
 abstract interface class LoginGateway {
@@ -40,6 +41,13 @@ abstract interface class VehiclePhotoGateway {
   void dispose();
 }
 
+/// Own referral code and the single referrer attachment (K22).
+abstract interface class ReferralGateway {
+  Future<ReferralView> referral(LoginSession session, String client);
+  Future<LinkageView> attachReferrer(LoginSession session, String client, String code);
+  void dispose();
+}
+
 /// Requests about one's own data and the account's own activity (K21).
 abstract interface class PrivacyGateway {
   Future<PrivacyRequestView> requestPrivacy(LoginSession session, String client, String key, String kind, String? details);
@@ -58,7 +66,7 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway {
+        PrivacyGateway, ReferralGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -123,6 +131,18 @@ class LoginClient
         '/api/v1/me/activity?limit=20${cursor == null ? '' : '&cursor=$cursor'}', 200, maxBytes: 32768));
   }
 
+  @override
+  Future<ReferralView> referral(LoginSession session, String client) async =>
+      ReferralView.parse(await _photoSend(session, client, 'GET', '/api/v1/me/referral', 200));
+
+  /// Naturally idempotent on the server: resending the same code finds the same attachment.
+  @override
+  Future<LinkageView> attachReferrer(LoginSession session, String client, String code) async {
+    if (!referralCodePattern.hasMatch(code)) throw const PhotoProblem(PhotoFailure.invalid);
+    return LinkageView.parse(await _photoSend(session, client, 'POST', '/api/v1/me/referral-linkages', 201,
+        alsoExpected: 200, contentType: 'application/json', bytes: utf8.encode(jsonEncode({'referralCode': code}))));
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
       int maxBytes = 8192, int? alsoExpected}) async {
@@ -139,7 +159,7 @@ class LoginClient
         request.headers.set('X-Waka-Client-Instance', client);
         extra.forEach(request.headers.set);
         if (bytes != null) {
-          request.headers.set('Idempotency-Key', key!);
+          if (key != null) request.headers.set('Idempotency-Key', key);
           request.headers.set(HttpHeaders.contentTypeHeader, contentType!);
           request.contentLength = bytes.length;
           request.add(bytes);
@@ -172,6 +192,9 @@ class LoginClient
           (409, 'REGISTRATION_REQUIRED') => PhotoFailure.registrationRequired,
           (409, 'IDEMPOTENCY_KEY_REUSED') => PhotoFailure.keyReused,
           (409, 'NOT_EDITABLE') => PhotoFailure.notEditable,
+          (422, 'SELF_REFERRAL') => PhotoFailure.selfReferral,
+          (422, 'CODE_NOT_RECOGNIZED') => PhotoFailure.codeNotRecognized,
+          (409, 'REFERRER_ALREADY_SET') => PhotoFailure.referrerAlreadySet,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

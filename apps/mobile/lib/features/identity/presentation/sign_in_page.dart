@@ -7,6 +7,7 @@ import '../../../core/config/local_api_configuration.dart';
 import '../../../core/presentation/waka_page.dart';
 import '../../drivers/presentation/driver_application_page.dart';
 import '../../privacy/presentation/my_data_page.dart';
+import '../../referrals/presentation/referral_page.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
 import '../data/login_models.dart';
@@ -192,6 +193,16 @@ class _SignInPageState extends State<SignInPage> {
                         ),
                   icon: const Icon(Icons.privacy_tip_outlined),
                   label: const Text('Mes données'),
+                ),
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is ReferralGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => ReferralPage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.card_giftcard_outlined),
+                  label: const Text('Parrainage'),
                 ),
               if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.profileGateway != null) ...[
                 const Divider(height: 32),
