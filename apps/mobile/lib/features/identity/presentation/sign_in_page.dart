@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/config/local_api_configuration.dart';
 import '../../../core/presentation/waka_page.dart';
+import '../../drivers/presentation/driver_access_page.dart';
 import '../../drivers/presentation/driver_application_page.dart';
 import '../../privacy/presentation/my_data_page.dart';
 import '../../referrals/presentation/referral_page.dart';
@@ -203,6 +204,16 @@ class _SignInPageState extends State<SignInPage> {
                         ),
                   icon: const Icon(Icons.card_giftcard_outlined),
                   label: const Text('Parrainage'),
+                ),
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is DriverAccessGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => DriverAccessPage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.verified_user_outlined),
+                  label: const Text('Mon accès chauffeur'),
                 ),
               if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.profileGateway != null) ...[
                 const Divider(height: 32),

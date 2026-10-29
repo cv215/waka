@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../../core/config/local_api_configuration.dart';
+import 'driver_access_models.dart';
 import 'driver_application_models.dart';
 import 'driver_document_models.dart';
 import 'login_models.dart';
@@ -41,6 +42,12 @@ abstract interface class VehiclePhotoGateway {
   void dispose();
 }
 
+/// The driver's own effective access (K23), read only.
+abstract interface class DriverAccessGateway {
+  Future<DriverAccessView> driverAccess(LoginSession session, String client);
+  void dispose();
+}
+
 /// Own referral code and the single referrer attachment (K22).
 abstract interface class ReferralGateway {
   Future<ReferralView> referral(LoginSession session, String client);
@@ -66,7 +73,7 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway, ReferralGateway {
+        PrivacyGateway, ReferralGateway, DriverAccessGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -142,6 +149,10 @@ class LoginClient
     return LinkageView.parse(await _photoSend(session, client, 'POST', '/api/v1/me/referral-linkages', 201,
         alsoExpected: 200, contentType: 'application/json', bytes: utf8.encode(jsonEncode({'referralCode': code}))));
   }
+
+  @override
+  Future<DriverAccessView> driverAccess(LoginSession session, String client) async =>
+      DriverAccessView.parse(await _photoSend(session, client, 'GET', '/api/v1/driver/access', 200));
 
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
