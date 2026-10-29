@@ -6,11 +6,14 @@ import java.net.URLEncoder;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.nio.charset.StandardCharsets;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -217,6 +220,104 @@ public final class PersistentAdminService {
             if (required != null && !context.allows(required)) return refused.apply(AdminException.Code.NOT_AUTHORIZED);
             return operation.apply(session, context);
         });
+    }
+
+    public record GrantView(UUID grantId, UUID accountId, AdminFunction function, Instant grantedAt, String grantedBy,
+            String reasonCode, Instant revokedAt, String revokedBy, String revokeReason, boolean idempotentReplay) { }
+    public record AuditView(long id, Instant occurredAt, String eventType, String actorRef, String actorScope,
+            String objectType, String objectRef, String reasonCode, String outcome) { }
+    private static final String REASON = "[A-Z][A-Z0-9_]{2,47}";
+
+    /** All grants, active and revoked, newest first; HABILITATIONS only. */
+    public List<GrantView> grants(char[] token, String client, char[] adminToken) {
+        return unwrap(withAdmin(token, client, adminToken, AdminFunction.HABILITATIONS,
+                (session, context) -> new Outcome<>(jdbc.query("SELECT * FROM admin_grant WHERE gate_hash=? ORDER BY granted_at DESC,id LIMIT 200",
+                        (rs, n) -> grantView(rs, false), gate), null),
+                code -> new Outcome<List<GrantView>>(null, code)));
+    }
+
+    /**
+     * Grants a function to another active account. Never to oneself (no self-escalation); an identical
+     * active grant is returned as is, so a repeated command has a single effect. Audited.
+     */
+    public GrantView grant(char[] token, String client, char[] adminToken, UUID accountId, AdminFunction function, String reasonCode) {
+        if (accountId == null || function == null || reasonCode == null || !reasonCode.matches(REASON)) throw invalid();
+        return unwrap(withAdmin(token, client, adminToken, AdminFunction.HABILITATIONS, (session, context) -> {
+            if (context.accountId().equals(accountId)) return new Outcome<GrantView>(null, AdminException.Code.SELF_GRANT_FORBIDDEN);
+            if (!"ACTIVE".equals(accountStatus(accountId))) return new Outcome<GrantView>(null, AdminException.Code.NOT_FOUND);
+            var existing = jdbc.query("SELECT * FROM admin_grant WHERE gate_hash=? AND account_id=? AND admin_function=? AND revoked_at IS NULL FOR UPDATE",
+                    (rs, n) -> grantView(rs, true), gate, accountId.toString(), function.name());
+            if (!existing.isEmpty()) return new Outcome<>(existing.getFirst(), null);
+            UUID id = UUID.randomUUID();
+            Instant now = session.serverTime();
+            jdbc.update("INSERT INTO admin_grant (gate_hash,id,account_id,admin_function,granted_at,granted_by,reason_code) VALUES (?,?,?,?,?,?,?)",
+                    gate, id.toString(), accountId.toString(), function.name(), sql(now), context.accountId().toString(), reasonCode);
+            audit(now, "ADMIN_GRANT", context, id, reasonCode);
+            return new Outcome<>(new GrantView(id, accountId, function, now, context.accountId().toString(), reasonCode,
+                    null, null, null, false), null);
+        }, code -> new Outcome<GrantView>(null, code)));
+    }
+
+    /**
+     * Revokes another person's grant, dated and reasoned. Never one's own, and never the last active
+     * HABILITATIONS grant (recovery would otherwise need maintenance). Repeating it changes nothing. Audited.
+     */
+    public GrantView revoke(char[] token, String client, char[] adminToken, UUID grantId, String reasonCode) {
+        if (grantId == null || reasonCode == null || !reasonCode.matches(REASON)) throw invalid();
+        return unwrap(withAdmin(token, client, adminToken, AdminFunction.HABILITATIONS, (session, context) -> {
+            var rows = jdbc.query("SELECT * FROM admin_grant WHERE gate_hash=? AND id=? FOR UPDATE",
+                    (rs, n) -> grantView(rs, true), gate, grantId.toString());
+            if (rows.isEmpty()) return new Outcome<GrantView>(null, AdminException.Code.NOT_FOUND);
+            GrantView grant = rows.getFirst();
+            if (grant.accountId().equals(context.accountId())) return new Outcome<GrantView>(null, AdminException.Code.SELF_GRANT_FORBIDDEN);
+            if (grant.revokedAt() != null) return new Outcome<>(grant, null);
+            if (grant.function() == AdminFunction.HABILITATIONS) {
+                Integer holders = jdbc.queryForObject("SELECT COUNT(*) FROM admin_grant WHERE gate_hash=? AND admin_function='HABILITATIONS' AND revoked_at IS NULL",
+                        Integer.class, gate);
+                if (holders == null || holders <= 1) return new Outcome<GrantView>(null, AdminException.Code.LAST_HABILITATIONS_HOLDER);
+            }
+            Instant now = session.serverTime();
+            jdbc.update("UPDATE admin_grant SET revoked_at=?,revoked_by=?,revoke_reason=? WHERE gate_hash=? AND id=? AND revoked_at IS NULL",
+                    sql(now), context.accountId().toString(), reasonCode, gate, grantId.toString());
+            audit(now, "ADMIN_REVOKE", context, grantId, reasonCode);
+            return new Outcome<>(new GrantView(grant.grantId(), grant.accountId(), grant.function(), grant.grantedAt(),
+                    grant.grantedBy(), grant.reasonCode(), now, context.accountId().toString(), reasonCode, false), null);
+        }, code -> new Outcome<GrantView>(null, code)));
+    }
+
+    /**
+     * A41: audit entries newest first, optionally for one object, with a cursor (entries strictly before
+     * {@code beforeId}); AUDIT only. Entries hold opaque references and codes, never content or secrets.
+     */
+    public List<AuditView> audit(char[] token, String client, char[] adminToken, String objectType, String objectRef,
+            Long beforeId, int limit) {
+        if (limit < 1 || limit > 100 || (objectType != null && !objectType.matches("[a-z_]{3,64}"))
+                || (objectRef != null && !objectRef.matches("[A-Za-z0-9-]{1,128}")) || (beforeId != null && beforeId < 1)) {
+            throw invalid();
+        }
+        return unwrap(withAdmin(token, client, adminToken, AdminFunction.AUDIT, (session, context) -> {
+            var sql = new StringBuilder("SELECT id,occurred_at,event_type,actor_ref,actor_scope,object_type,object_ref,reason_code,outcome FROM audit_event WHERE 1=1");
+            var args = new ArrayList<Object>();
+            if (objectType != null) { sql.append(" AND object_type=?"); args.add(objectType); }
+            if (objectRef != null) { sql.append(" AND object_ref=?"); args.add(objectRef); }
+            if (beforeId != null) { sql.append(" AND id<?"); args.add(beforeId); }
+            sql.append(" ORDER BY id DESC LIMIT ").append(limit);
+            return new Outcome<>(jdbc.query(sql.toString(), (rs, n) -> new AuditView(rs.getLong(1),
+                    instant(rs.getObject(2, LocalDateTime.class)), rs.getString(3), rs.getString(4), rs.getString(5),
+                    rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9)), args.toArray()), null);
+        }, code -> new Outcome<List<AuditView>>(null, code)));
+    }
+
+    private void audit(Instant now, String event, AdminContext context, UUID grantId, String reasonCode) {
+        jdbc.update("INSERT INTO audit_event (occurred_at,event_type,actor_ref,actor_scope,object_type,object_ref,reason_code,outcome,correlation_ref) VALUES (?,?,?,?,?,?,?,?,?)",
+                sql(now), event, context.accountId().toString(), "HABILITATIONS", "admin_grant", grantId.toString(), reasonCode,
+                "APPLIED", context.adminSessionId().toString());
+    }
+    private static GrantView grantView(ResultSet rs, boolean replay) throws SQLException {
+        return new GrantView(UUID.fromString(rs.getString("id")), UUID.fromString(rs.getString("account_id")),
+                AdminFunction.valueOf(rs.getString("admin_function")), instant(rs.getObject("granted_at", LocalDateTime.class)),
+                rs.getString("granted_by"), rs.getString("reason_code"), nullable(rs.getObject("revoked_at", LocalDateTime.class)),
+                rs.getString("revoked_by"), rs.getString("revoke_reason"), replay);
     }
 
     /** Explicit end of the administrative session; the client session stays open. */

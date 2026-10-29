@@ -221,3 +221,72 @@ class Review {
       ? {'view': view, 'fileId': id, 'result': result, 'reasonCode': result == 'to_correct' ? reason : null}
       : {'documentId': id, 'result': result, 'reasonCode': result == 'to_correct' ? reason : null};
 }
+
+DateTime? optionalInstant(Object? value) => value == null ? null : instant(value);
+
+String? optionalReason(Object? value) {
+  if (value == null) return null;
+  if (value is! String || !reasonPattern.hasMatch(value)) throw const ResponseShapeError();
+  return value;
+}
+
+/// One grant, active or revoked; who granted it is an account reference or FOUNDER_BOOTSTRAP.
+class GrantView {
+  const GrantView(this.grantId, this.accountId, this.function, this.grantedAt, this.grantedBy, this.reasonCode,
+      this.revokedAt, this.revokedBy, this.revokeReason);
+  final String grantId, accountId, function, grantedBy, reasonCode;
+  final DateTime grantedAt;
+  final DateTime? revokedAt;
+  final String? revokedBy, revokeReason;
+  bool get active => revokedAt == null;
+  factory GrantView.parse(Object? value) {
+    final m = exact(value, {'grantId', 'accountId', 'function', 'grantedAt', 'grantedBy', 'reasonCode', 'revokedAt',
+      'revokedBy', 'revokeReason', 'idempotentReplay'});
+    final by = m['grantedBy'];
+    if (!adminFunctions.contains(m['function']) || m['idempotentReplay'] is! bool ||
+        !(by == 'FOUNDER_BOOTSTRAP' || by is String && uuidPattern.hasMatch(by))) {
+      throw const ResponseShapeError();
+    }
+    final revokedAt = optionalInstant(m['revokedAt']);
+    final revokedBy = m['revokedBy'] == null ? null : uuid(m['revokedBy']);
+    final revokeReason = optionalReason(m['revokeReason']);
+    if ((revokedAt == null) != (revokedBy == null) || (revokedAt == null) != (revokeReason == null)) {
+      throw const ResponseShapeError();
+    }
+    return GrantView(uuid(m['grantId']), uuid(m['accountId']), m['function'] as String, instant(m['grantedAt']),
+        by as String, optionalReason(m['reasonCode'])!, revokedAt, revokedBy, revokeReason);
+  }
+  static List<GrantView> parseList(Object? value) {
+    if (value is! List || value.length > 200) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(GrantView.parse));
+  }
+}
+
+/// A41 entry: opaque references and codes only, never content or secrets.
+class AuditEntry {
+  const AuditEntry(this.id, this.occurredAt, this.eventType, this.actorRef, this.actorScope, this.objectType,
+      this.objectRef, this.reasonCode, this.outcome);
+  final int id;
+  final DateTime occurredAt;
+  final String eventType, actorScope, objectType, reasonCode, outcome;
+  final String? actorRef, objectRef;
+  factory AuditEntry.parse(Object? value) {
+    final m = exact(value, {'id', 'occurredAt', 'eventType', 'actorRef', 'actorScope', 'objectType', 'objectRef',
+      'reasonCode', 'outcome'});
+    final code = RegExp(r'^[A-Za-z0-9_.:-]{1,128}$');
+    bool text(Object? v) => v is String && code.hasMatch(v);
+    bool optional(Object? v) => v == null || text(v);
+    if (m['id'] is! int || (m['id'] as int) < 1 || !text(m['eventType']) || !text(m['actorScope']) ||
+        !text(m['objectType']) || !text(m['reasonCode']) || !text(m['outcome']) ||
+        !optional(m['actorRef']) || !optional(m['objectRef'])) {
+      throw const ResponseShapeError();
+    }
+    return AuditEntry(m['id'] as int, instant(m['occurredAt']), m['eventType'] as String, m['actorRef'] as String?,
+        m['actorScope'] as String, m['objectType'] as String, m['objectRef'] as String?, m['reasonCode'] as String,
+        m['outcome'] as String);
+  }
+  static List<AuditEntry> parseList(Object? value) {
+    if (value is! List || value.length > 100) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(AuditEntry.parse));
+  }
+}

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'agent_session.dart';
+import 'governance_pages.dart';
 import 'models.dart';
 
 /// Login steps, then the admission queue once an administrative session is open.
@@ -25,11 +26,31 @@ class AdminHome extends StatelessWidget {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 960),
-          child: session.step == AgentStep.ready ? QueuePage(session: session) : LoginPanel(session: session),
+          child: session.step == AgentStep.ready ? Workspace(session: session) : LoginPanel(session: session),
         ),
       ),
     ),
   );
+}
+
+/// One tab per function held by the session; the server checks each call again.
+class Workspace extends StatelessWidget {
+  const Workspace({super.key, required this.session});
+  final AgentSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final tabs = <(String, Widget)>[
+      if (session.canExamine || !session.canManageGrants && !session.canReadAudit) ('Candidatures', QueuePage(session: session)),
+      if (session.canManageGrants) ('Habilitations', GrantsPage(session: session)),
+      if (session.canReadAudit) ('Journal', AuditPage(session: session)),
+    ];
+    if (tabs.length == 1) return tabs.single.$2;
+    return DefaultTabController(length: tabs.length, child: Column(children: [
+      TabBar(tabs: [for (final tab in tabs) Tab(text: tab.$1)]),
+      Expanded(child: TabBarView(children: [for (final tab in tabs) tab.$2])),
+    ]));
+  }
 }
 
 class LoginPanel extends StatefulWidget {

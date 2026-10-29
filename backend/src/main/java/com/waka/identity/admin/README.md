@@ -17,11 +17,11 @@ La session administrative est liée à la session client qui l'a ouverte. Elle s
 | `GET /api/v1/admin/me` | Avec `Authorization`, `X-Waka-Client-Instance` et `X-Waka-Admin-Session` : renvoie les fonctions actuelles, relues à chaque appel. |
 | `POST /api/v1/admin/sessions/current/revocations` | Ferme la session administrative ; la session client reste ouverte. |
 
-Aucune route HTTP ne crée ni ne retire d'habilitation dans ce point.
+Depuis 06.09 (contrat K19), un titulaire de HABILITATIONS attribue et retire les habilitations des **autres** comptes par HTTP (`/api/v1/admin/grants`). Chaque attribution et chaque retrait sont datés, motivés et inscrits au journal d'audit, lisible par un titulaire de AUDIT (`/api/v1/admin/audit`). Personne ne s'attribue ni ne se retire une habilitation, et le dernier gestionnaire ne peut pas être retiré.
 
 ## Procédure du fondateur seul (à faire avant activation réelle)
 
-Ces opérations de **maintenance locale** passent par `PersistentAdminService`, jamais par HTTP :
+Ces deux opérations de **maintenance locale** passent par `PersistentAdminService`, jamais par HTTP :
 
 - `bootstrapFounder(accountId, fonctions)` : première attribution, possible **une seule fois**, tant qu'aucune habilitation n'a jamais existé, pour un compte actif. Elle est enregistrée avec le motif `FOUNDER_BOOTSTRAP`.
 - `resetSecondFactor(accountId)` : en cas de téléphone perdu, retire le second facteur et ferme les sessions administratives ouvertes. Les habilitations sont conservées ; la personne s'enrôle ensuite à nouveau.

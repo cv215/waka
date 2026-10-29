@@ -83,6 +83,7 @@ class AdminAccessMySqlVerificationTest {
     @AfterEach void cleanOnlyRandomNamespacesAndRespectForeignKeys() {
         try {
             if (jdbc != null && gate != null) {
+                jdbc.update("DELETE FROM audit_event WHERE object_type='admin_grant' AND object_ref IN (SELECT id FROM admin_grant WHERE gate_hash=?)", gate);
                 for (String table : List.of("admin_session", "admin_totp", "admin_grant", "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
                 }
@@ -196,6 +197,72 @@ class AdminAccessMySqlVerificationTest {
         assertFailure(AdminException.Code.INVALID_ADMIN_SESSION, () -> admin.authenticate(founder.token, client, second));
         assertFailure(AdminException.Code.ENROLLMENT_REQUIRED, () -> admin.open(founder.token, client, current(secret)));
         assertNotNull(admin.enroll(founder.token, client).secret());
+    }
+
+
+    @Test void grantsAreDatedReasonedNeverSelfGrantedAndAudited() {
+        Login founder = login(contact);
+        admin.bootstrapFounder(founder.account, EnumSet.allOf(AdminFunction.class));
+        byte[] secret = decode(admin.enroll(founder.token, client).secret());
+        admin.confirmEnrollment(founder.token, client, current(secret));
+        clock.advance(30);
+        char[] adminToken;
+        try (var grant = admin.open(founder.token, client, current(secret))) { adminToken = grant.token(); }
+        clock.advance(31);
+        Login other = login(otherContact);
+        assertFailure(AdminException.Code.SELF_GRANT_FORBIDDEN,
+                () -> admin.grant(founder.token, client, adminToken, founder.account, AdminFunction.FINANCE, "STAFFING"));
+        assertFailure(AdminException.Code.NOT_FOUND,
+                () -> admin.grant(founder.token, client, adminToken, UUID.randomUUID(), AdminFunction.ADMISSION, "STAFFING"));
+        assertFailure(AdminException.Code.INVALID_REQUEST,
+                () -> admin.grant(founder.token, client, adminToken, other.account, AdminFunction.ADMISSION, "free text"));
+        var granted = admin.grant(founder.token, client, adminToken, other.account, AdminFunction.ADMISSION, "STAFFING");
+        assertFalse(granted.idempotentReplay());
+        assertEquals(founder.account.toString(), granted.grantedBy());
+        var again = admin.grant(founder.token, client, adminToken, other.account, AdminFunction.ADMISSION, "STAFFING");
+        assertTrue(again.idempotentReplay());
+        assertEquals(granted.grantId(), again.grantId(), "a repeated command has a single effect");
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM admin_grant WHERE gate_hash=? AND account_id=?",
+                Integer.class, gate, other.account.toString()));
+        assertTrue(admin.grants(founder.token, client, adminToken).stream().anyMatch(g -> g.grantId().equals(granted.grantId())));
+
+        UUID own = jdbc.queryForObject("SELECT id FROM admin_grant WHERE gate_hash=? AND account_id=? AND admin_function='HABILITATIONS'",
+                (rs, n) -> UUID.fromString(rs.getString(1)), gate, founder.account.toString());
+        assertFailure(AdminException.Code.SELF_GRANT_FORBIDDEN, () -> admin.revoke(founder.token, client, adminToken, own, "LEFT"));
+        assertFailure(AdminException.Code.NOT_FOUND, () -> admin.revoke(founder.token, client, adminToken, UUID.randomUUID(), "LEFT"));
+        clock.advance(5);
+        var revoked = admin.revoke(founder.token, client, adminToken, granted.grantId(), "LEFT_TEAM");
+        assertEquals("LEFT_TEAM", revoked.revokeReason());
+        assertNotNull(revoked.revokedAt());
+        var repeated = admin.revoke(founder.token, client, adminToken, granted.grantId(), "OTHER_REASON");
+        assertEquals(revoked.revokedAt(), repeated.revokedAt(), "already revoked: unchanged");
+        assertEquals("LEFT_TEAM", repeated.revokeReason());
+
+        var entries = admin.audit(founder.token, client, adminToken, "admin_grant", granted.grantId().toString(), null, 10);
+        assertEquals(List.of("ADMIN_REVOKE", "ADMIN_GRANT"), entries.stream().map(PersistentAdminService.AuditView::eventType).toList());
+        assertTrue(entries.stream().allMatch(e -> founder.account.toString().equals(e.actorRef())));
+        var first = admin.audit(founder.token, client, adminToken, "admin_grant", granted.grantId().toString(), null, 1);
+        var next = admin.audit(founder.token, client, adminToken, "admin_grant", granted.grantId().toString(), first.getFirst().id(), 1);
+        assertEquals("ADMIN_REVOKE", first.getFirst().eventType());
+        assertEquals("ADMIN_GRANT", next.getFirst().eventType());
+        assertFailure(AdminException.Code.INVALID_REQUEST,
+                () -> admin.audit(founder.token, client, adminToken, "admin grant", null, null, 10));
+        assertFailure(AdminException.Code.INVALID_REQUEST,
+                () -> admin.audit(founder.token, client, adminToken, null, null, null, 101));
+    }
+
+    @Test void grantsAndAuditNeedTheirOwnFunction() {
+        Login founder = login(contact);
+        admin.bootstrapFounder(founder.account, Set.of(AdminFunction.ADMISSION));
+        byte[] secret = decode(admin.enroll(founder.token, client).secret());
+        admin.confirmEnrollment(founder.token, client, current(secret));
+        clock.advance(30);
+        char[] adminToken;
+        try (var grant = admin.open(founder.token, client, current(secret))) { adminToken = grant.token(); }
+        assertFailure(AdminException.Code.NOT_AUTHORIZED, () -> admin.grants(founder.token, client, adminToken));
+        assertFailure(AdminException.Code.NOT_AUTHORIZED,
+                () -> admin.grant(founder.token, client, adminToken, UUID.randomUUID(), AdminFunction.AUDIT, "STAFFING"));
+        assertFailure(AdminException.Code.NOT_AUTHORIZED, () -> admin.audit(founder.token, client, adminToken, null, null, null, 10));
     }
 
     private byte[] enrolled(Login founder) {

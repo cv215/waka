@@ -459,3 +459,24 @@ Décision A38 : elle accepte `documentDecisions: [{documentId, result, reasonCod
 - La version du catalogue est enregistrée avec chaque décision.
 
 Avec le catalogue v1, chaque parcours compte au moins une exigence à confirmer : aucune approbation n'est donc possible avant la décision datée du fondateur.
+### K19 — Habilitations et journal d'audit (06.09)
+
+K15 réservait l'attribution des habilitations à la maintenance locale. L'attribution initiale du fondateur y reste : elle n'est possible qu'une fois, tant qu'aucune habilitation n'existe. Toutes les suivantes passent par HTTP, entre agents déjà habilités. Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+| Route | Fonction exigée | Rôle |
+|---|---|---|
+| `GET /api/v1/admin/grants` | HABILITATIONS | Habilitations actives et retirées, les plus récentes d'abord (200 au plus). |
+| `POST /api/v1/admin/grants` | HABILITATIONS | Corps `{accountId, function, reasonCode}`. Répond 201 pour une nouvelle habilitation. Si une habilitation identique est déjà active, la même est rendue en 200 : une commande répétée n'a qu'un seul effet. |
+| `POST /api/v1/admin/grants/{grantId}/revocations` | HABILITATIONS | Corps `{reasonCode}`. Retrait daté et motivé. Une habilitation déjà retirée est rendue telle quelle, avec son premier motif. |
+| `GET /api/v1/admin/audit` | AUDIT | A41. Paramètres facultatifs `objectType`, `objectId`, `cursor` (identifiant de la dernière entrée déjà lue) et `limit` (1 à 100, 50 par défaut). Entrées de la plus récente à la plus ancienne. |
+
+Règles :
+- `reasonCode` est un code en majuscules (`[A-Z][A-Z0-9_]{2,47}`), jamais un texte libre.
+- Personne ne s'attribue ni ne se retire une habilitation : refus 403 `SELF_GRANT_FORBIDDEN`. Un agent ne peut donc pas élever ses propres droits.
+- Le compte cible doit exister et être actif, sinon 404 `RESOURCE_NOT_FOUND`. La même réponse vaut pour une habilitation inconnue.
+- Le dernier titulaire actif de HABILITATIONS ne peut pas perdre cette fonction : 409 `LAST_HABILITATIONS_HOLDER`. Cette garde est défensive : l'interdiction de se retirer sa propre habilitation l'empêche déjà en pratique.
+- L'effet est immédiat : à l'appel suivant, `withAdmin` relit les habilitations dans la même transaction que l'opération.
+- Chaque attribution (`ADMIN_GRANT`) et chaque retrait (`ADMIN_REVOKE`) sont inscrits dans `audit_event`, avec l'agent, la session d'administration et le motif.
+- Le journal ne renvoie que des références opaques et des codes : jamais le contenu d'une pièce, un nom, un téléphone ou un secret.
+- La fonction AUDIT n'accorde ni l'admission ni la finance, et inversement.
+- Paramètres inconnus, répétés ou encodés : 400, sans appel au service.

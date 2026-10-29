@@ -1,6 +1,6 @@
 # Administration web WAKA
 
-Application Flutter web distincte, réservée aux agents habilités. Première fonction réalisée : **l'examen des candidatures chauffeur** (fonction `ADMISSION`).
+Application Flutter web distincte, réservée aux agents habilités. Fonctions réalisées : **l'examen des candidatures chauffeur** (`ADMISSION`), **la gestion des habilitations** (`HABILITATIONS`) et **la lecture du journal d'audit** (`AUDIT`). Un onglet s'affiche pour chaque fonction détenue.
 
 ## Ce qu'elle fait
 
@@ -13,6 +13,8 @@ Application Flutter web distincte, réservée aux agents habilités. Première f
    - Chaque photo ou pièce peut être jugée « acceptable » ou « à corriger » (avec un code de motif).
    - **Décision** : demander une correction (seuls les éléments « à corriger » le seront), refuser avec motif, ou approuver. L'approbation est bloquée à l'écran et par le serveur tant qu'une exigence du dossier est « à confirmer par WAKA ».
    - Si la réponse se perd, la même décision est renvoyée avec la même clé : elle n'est jamais appliquée deux fois.
+4. **Habilitations** : liste des habilitations actives (et retirées sur demande), attribution à un autre compte actif avec un motif, retrait motivé. Ton propre identifiant de compte est affiché pour qu'un collègue puisse te l'attribuer ; personne ne peut s'attribuer ni se retirer une habilitation.
+5. **Journal d'audit** : actions sensibles de la plus récente à la plus ancienne, filtrables par objet. Seulement des références et des codes, jamais de contenu.
 
 ## Sécurité
 
@@ -36,5 +38,5 @@ flutter run -d chrome --web-port 7357 --dart-define=WAKA_API_BASE_URL=http://loc
 
 - La connexion passe par le code SMS. Tant que l'envoi de SMS n'est pas activé (en attente, à la demande du fondateur), un agent ne peut pas se connecter en conditions réelles.
 - Les services serveur (connexion, administration, dossiers) ne sont pas assemblés dans l'application ordinaire : elle répond « indisponible » sans configuration qualifiée.
-- Fonctions assistance, finance, audit et gestion des habilitations : à construire.
+- Fonctions assistance et finance : à construire.
 - Pas d'hébergement HTTPS en ligne : à décider avec le fondateur (service payant).

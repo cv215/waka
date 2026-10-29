@@ -25,7 +25,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 05.05 administrative access: client session + active grant + single-use TOTP code.
- * Grants themselves are never created over HTTP here (founder bootstrap is local maintenance).
+ * The founder bootstrap stays local maintenance; later grants go through AdminGovernanceController (K19).
  */
 @RestController
 public final class AdminAccessController {
@@ -129,7 +129,7 @@ public final class AdminAccessController {
         if (service == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         return service;
     }
-    private static <T> T invoke(Supplier<T> operation) {
+    static <T> T invoke(Supplier<T> operation) {
         try { return operation.get(); }
         catch (SessionException error) {
             throw new ResponseStatusException(error.code() == SessionException.Code.SERVICE_UNAVAILABLE
@@ -142,11 +142,15 @@ public final class AdminAccessController {
                 case INVALID_SECOND_FACTOR, INVALID_ADMIN_SESSION -> HttpStatus.UNAUTHORIZED;
                 case LOCKED -> HttpStatus.TOO_MANY_REQUESTS;
                 case BOOTSTRAP_ALREADY_DONE, ACCOUNT_NOT_FOUND, SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+                case SELF_GRANT_FORBIDDEN -> HttpStatus.FORBIDDEN;
+                case LAST_HABILITATIONS_HOLDER -> HttpStatus.CONFLICT;
+                case NOT_FOUND -> HttpStatus.NOT_FOUND;
             };
             String code = switch (error.code()) {
                 case NOT_AUTHORIZED -> "ACTION_NOT_ALLOWED";
                 case LOCKED -> "RATE_LIMITED";
                 case BOOTSTRAP_ALREADY_DONE, ACCOUNT_NOT_FOUND -> "SERVICE_UNAVAILABLE";
+                case NOT_FOUND -> "RESOURCE_NOT_FOUND";
                 default -> error.code().name();
             };
             throw new ProfileHttpException(status, code);
