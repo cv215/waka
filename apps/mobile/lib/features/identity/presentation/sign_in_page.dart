@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../../core/config/local_api_configuration.dart';
 import '../../../core/presentation/waka_page.dart';
 import '../../drivers/presentation/driver_application_page.dart';
+import '../../privacy/presentation/my_data_page.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
 import '../data/login_models.dart';
@@ -181,6 +182,16 @@ class _SignInPageState extends State<SignInPage> {
                         ),
                   icon: const Icon(Icons.badge_outlined),
                   label: const Text('Ma candidature chauffeur'),
+                ),
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PrivacyGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => MyDataPage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.privacy_tip_outlined),
+                  label: const Text('Mes données'),
                 ),
               if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.profileGateway != null) ...[
                 const Divider(height: 32),

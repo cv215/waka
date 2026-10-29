@@ -6,6 +6,7 @@ import '../../../core/config/local_api_configuration.dart';
 import 'driver_application_models.dart';
 import 'driver_document_models.dart';
 import 'login_models.dart';
+import 'privacy_models.dart';
 import 'profile_models.dart';
 import 'vehicle_photo_models.dart';
 
@@ -39,6 +40,13 @@ abstract interface class VehiclePhotoGateway {
   void dispose();
 }
 
+/// Requests about one's own data and the account's own activity (K21).
+abstract interface class PrivacyGateway {
+  Future<PrivacyRequestView> requestPrivacy(LoginSession session, String client, String key, String kind, String? details);
+  Future<ActivityPage> activity(LoginSession session, String client, String? cursor);
+  void dispose();
+}
+
 /// Catalogue documents of the owner's file, and the decisions about it (K17, K18).
 abstract interface class DriverDocumentGateway {
   Future<List<RequirementView>> requirements(LoginSession session, String client, String applicationId);
@@ -49,7 +57,8 @@ abstract interface class DriverDocumentGateway {
 }
 
 class LoginClient
-    implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway {
+    implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
+        PrivacyGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -98,9 +107,25 @@ class LoginClient
     );
   }
 
+  @override
+  Future<PrivacyRequestView> requestPrivacy(LoginSession session, String client, String key, String kind,
+      String? details) async {
+    if (!privacyKinds.contains(kind) || !isLoginUuid(key)) throw const PhotoProblem(PhotoFailure.invalid);
+    return PrivacyRequestView.parse(await _photoSend(session, client, 'POST', '/api/v1/me/privacy-requests', 201,
+        alsoExpected: 200, key: key, contentType: 'application/json',
+        bytes: utf8.encode(jsonEncode({'kind': kind, 'details': details}))));
+  }
+
+  @override
+  Future<ActivityPage> activity(LoginSession session, String client, String? cursor) async {
+    if (cursor != null && !RegExp(r'^[0-9a-f_-]{1,64}$').hasMatch(cursor)) throw const PhotoProblem(PhotoFailure.invalid);
+    return ActivityPage.parse(await _photoSend(session, client, 'GET',
+        '/api/v1/me/activity?limit=20${cursor == null ? '' : '&cursor=$cursor'}', 200, maxBytes: 32768));
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
-      int maxBytes = 8192}) async {
+      int maxBytes = 8192, int? alsoExpected}) async {
     if (_closed || !configuration.isConfigured) throw const PhotoProblem(PhotoFailure.unavailable);
     final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
     _active.add(http);
@@ -129,7 +154,7 @@ class LoginClient
           throw const PhotoProblem(PhotoFailure.invalidResponse);
         }
         final status = response.statusCode;
-        if (status == expected) {
+        if (status == expected || status == alsoExpected) {
           if (response.headers.contentType?.mimeType != 'application/json') throw const PhotoProblem(PhotoFailure.invalidResponse);
           return jsonDecode(utf8.decode(received));
         }
