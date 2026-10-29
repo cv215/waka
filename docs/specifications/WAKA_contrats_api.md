@@ -509,3 +509,24 @@ Refus :
 - 503 : service non assemblé.
 
 **Non assemblé** tant que trois points restent ouverts : le fournisseur d'itinéraire (API cartographique externe, reportée à la fin par le fondateur), le territoire servi (R10) et la version de grille mise en vente (aucune date de vente adoptée). Le devis ne réserve rien. A09 et la suite restent à faire.
+
+### K21 — Demandes sur ses données (A06) et activité du compte (A07)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+**`POST /api/v1/me/privacy-requests`** exige `Idempotency-Key`. Corps : `{kind, details?}`.
+- `kind` vaut `access` ou `deletion`.
+- `details` est un texte facultatif de 1 à 500 caractères (sauts de ligne admis, aucun caractère de contrôle caché). Il est stocké chiffré et n'est jamais renvoyé.
+- Réponse 201 : `{requestId, kind, state:"received", receivedAt, created:true}`.
+
+Une seule demande ouverte par type et par compte :
+- même clé et même demande : la même réponse, en 200 ;
+- même clé avec une autre demande : 409 `IDEMPOTENCY_KEY_REUSED` ;
+- nouvelle demande d'un type déjà ouvert : la demande ouverte est rendue en 200, avec `created:false`. Le nouveau texte n'est pas conservé.
+
+**Recevoir une demande de suppression ne supprime rien, ne ferme pas le compte et n'annonce aucune suppression totale.** Le traitement suit la procédure A05 de `WAKA_acces_et_conservation.md`. Les durées de conservation, les exceptions et la fonction habilitée qui traitera les demandes restent à qualifier.
+
+**`GET /api/v1/me/activity`**, paramètres facultatifs `cursor` et `limit` (1 à 50, 20 par défaut).
+- Réponse : `{items:[{objectType, objectId, state, at}], nextCursor}`, les éléments les plus récents d'abord.
+- Contenu : le dossier chauffeur, les demandes sur ses données et les devis (`valid`/`expired`) du seul titulaire. Réservations, paiements et achats s'ajouteront avec leurs points.
+- La lecture ne modifie rien. Un paramètre inconnu ou répété est refusé (400).
