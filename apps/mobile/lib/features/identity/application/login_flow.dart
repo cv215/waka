@@ -36,7 +36,8 @@ class LoginFlow extends ChangeNotifier {
   bool get canStartApplication =>
       noApplication && applicationGateway != null && pendingApplication == null;
   bool get canEditVehicle =>
-      application != null && applicationGateway != null && !applicationNeedsReview && pendingApplication == null;
+      application != null && application!.editable && applicationGateway != null && !applicationNeedsReview &&
+      pendingApplication == null;
   LoginSnapshot? _snapshot;
   bool busy = false, ready = false, sessionSaved = true;
   bool _confirmedNow = false, _sessionRejected = false;
@@ -349,6 +350,17 @@ class LoginFlow extends ChangeNotifier {
     ));
   });
 
+  /// Sends the exact version shown to examination; the server checks fields, photos and documents.
+  Future<void> submitApplication() => _run(() async {
+    if (!canEditVehicle) throw const ApplicationProblem(ApplicationFailure.invalid);
+    await _persistAndSend(SubmitApplicationCommand(
+      randomLoginId(),
+      session!.accountId,
+      application!.applicationId,
+      application!.version,
+    ));
+  });
+
   /// Resends the same key and body; a lost answer never gets a new key automatically.
   Future<void> resumeApplication() => _run(() async {
     final command = pendingApplication;
@@ -399,6 +411,8 @@ class LoginFlow extends ChangeNotifier {
     ApplicationFailure.alreadyOpen,
     ApplicationFailure.notFound,
     ApplicationFailure.rejected,
+    ApplicationFailure.incomplete,
+    ApplicationFailure.notEditable,
   }.contains(failure);
 
   Future<void> _forgetApplicationCommand() async {

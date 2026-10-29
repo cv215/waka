@@ -20,6 +20,12 @@ enum PhotoFailure {
   uncertain,
   invalidResponse,
   invalid,
+  /// The document does not apply to the declared category or use right.
+  notApplicable,
+  /// A vehicle document needs the registration to be filled in first.
+  registrationRequired,
+  /// The validity end date is already past.
+  expired,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];
