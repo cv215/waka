@@ -251,6 +251,20 @@ public final class PersistentDriverApplicationService {
         return new RequirementContext(row.state, row.category, fields.usageRight(), vehicleKey(candidate, fields));
     }
 
+    /** What A32 needs about the caller's open file; null when the account has none. */
+    public record AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements) {
+        @Override public String toString() { return "AccessBasis[REDACTED]"; }
+    }
+
+    /** For the access service, inside its authenticated transaction: the open file and its requirement statuses. */
+    public AccessBasis accessBasisLocked(UUID candidate, Instant now) {
+        requireTransaction();
+        Row row = openApplication(candidate);
+        if (row == null) return null;
+        return new AccessBasis(row.id, row.category, row.state,
+                statuses(candidate, row.category, current(candidate, row, now).vehicleFields(), now));
+    }
+
     /** Recorded with each decision: "v1" for the catalogue in force, "test" for any other list. */
     String catalogueVersion() { return catalog.equals(DocumentCatalog.V1) ? DocumentCatalog.VERSION : "test"; }
 
