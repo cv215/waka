@@ -92,6 +92,71 @@ public final class VoyageController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** Exactly {fromIndex, toIndex, seats}: the price comes from the driver's list, never from the client. */
+    @PostMapping(path = "/api/v1/voyages/{voyageId}/reservations", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentVoyageService.ReservationView> reserve(@PathVariable String voyageId, HttpServletRequest request)
+            throws IOException {
+        UUID id = LoginRequestReader.uuid(voyageId);
+        UUID key = LoginRequestReader.key(request);
+        int[] input = reservation(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            var reservation = invoke(() -> service().reserve(token, client, key, id, input[0], input[1], input[2]));
+            return ResponseEntity.status(reservation.idempotentReplay() ? HttpStatus.OK : HttpStatus.CREATED)
+                    .cacheControl(CacheControl.noStore()).body(reservation);
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
+    @GetMapping(path = "/api/v1/me/voyage-reservations", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentVoyageService.ReservationView>> myReservations(HttpServletRequest request) throws IOException {
+        MeRequestReader.emptyGet(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().myReservations(token, client)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
+    /** Naturally idempotent: a second cancellation returns the reservation unchanged. */
+    @PostMapping(path = "/api/v1/voyage-reservations/{reservationId}/cancellations", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentVoyageService.ReservationView> cancelReservation(@PathVariable String reservationId,
+            HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(reservationId);
+        LoginRequestReader.emptyBody(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().cancelReservation(token, client, id)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
+    private static int[] reservation(HttpServletRequest request) throws IOException {
+        if (request.getQueryString() != null) throw LoginRequestReader.invalid();
+        byte[] body = request.getInputStream().readNBytes(257);
+        try {
+            if (body.length > 256) throw new ResponseStatusException(HttpStatus.CONTENT_TOO_LARGE);
+            try (JsonParser parser = JSON.createParser(new InputStreamReader(new ByteArrayInputStream(body),
+                    StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)))) {
+                if (parser.nextToken() != JsonToken.START_OBJECT) throw LoginRequestReader.invalid();
+                Map<String, Integer> fields = new HashMap<>();
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    String name = parser.getString();
+                    if (!Set.of("fromIndex", "toIndex", "seats").contains(name) || fields.containsKey(name)
+                            || parser.nextToken() != JsonToken.VALUE_NUMBER_INT || !parser.getText().matches("[0-5]")) {
+                        throw LoginRequestReader.invalid();
+                    }
+                    fields.put(name, Integer.parseInt(parser.getText()));
+                }
+                if (fields.size() != 3 || parser.nextToken() != null) throw LoginRequestReader.invalid();
+                return new int[] { fields.get("fromIndex"), fields.get("toIndex"), fields.get("seats") };
+            } catch (JacksonException hidden) {
+                throw LoginRequestReader.invalid();
+            }
+        } finally { Arrays.fill(body, (byte) 0); }
+    }
+
     /** Exactly {stops:[{place, plannedAt}], seats, prices:{"0-1": int, ...}}; plannedAt is an ISO instant in UTC. */
     static PublishInput read(HttpServletRequest request) throws IOException {
         if (request.getQueryString() != null) throw LoginRequestReader.invalid();
@@ -185,7 +250,8 @@ public final class VoyageController {
             HttpStatus status = switch (error.code()) {
                 case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
                 case DRIVER_NOT_ALLOWED -> HttpStatus.FORBIDDEN;
-                case TOO_MANY_SEATS -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case TOO_MANY_SEATS, OWN_VOYAGE, DEPARTED -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case NOT_ENOUGH_SEATS, ALREADY_BOARDED -> HttpStatus.CONFLICT;
                 case NOT_FOUND -> HttpStatus.NOT_FOUND;
                 case IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;
                 case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;

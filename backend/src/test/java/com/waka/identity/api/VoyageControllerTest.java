@@ -62,8 +62,8 @@ class VoyageControllerTest {
         var stops = List.of(new PersistentVoyageService.Stop("Yaoundé", Instant.parse("2026-11-15T06:00:00Z")),
                 new PersistentVoyageService.Stop("Douala", Instant.parse("2026-11-15T10:00:00Z")));
         when(service.publish(any(), eq(client), eq(key), eq(stops), eq(3), eq(Map.of("0-1", 6000))))
-                .thenReturn(new PersistentVoyageService.VoyageView(id, "taxi", 3, "published", stops, Map.of("0-1", 6000), now, false))
-                .thenReturn(new PersistentVoyageService.VoyageView(id, "taxi", 3, "published", stops, Map.of("0-1", 6000), now, true))
+                .thenReturn(new PersistentVoyageService.VoyageView(id, "taxi", 3, "published", stops, Map.of("0-1", 6000), Map.of("0-1", 3), now, false))
+                .thenReturn(new PersistentVoyageService.VoyageView(id, "taxi", 3, "published", stops, Map.of("0-1", 6000), Map.of("0-1", 3), now, true))
                 .thenThrow(new VoyageException(VoyageException.Code.DRIVER_NOT_ALLOWED))
                 .thenThrow(new VoyageException(VoyageException.Code.TOO_MANY_SEATS));
         MockMvc mvc = mvc(service);
@@ -76,6 +76,29 @@ class VoyageControllerTest {
         mvc.perform(own(post("/api/v1/voyages/" + id + "/cancellations")).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"reasonCode\":\"CHANGE_OF_PLAN\"}")).andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test void reservationBodyIsExactAndThePriceNeverComesFromTheClient() throws Exception {
+        var service = mock(PersistentVoyageService.class);
+        MockMvc mvc = mvc(service);
+        UUID voyage = UUID.randomUUID();
+        for (String body : new String[] { "{\"fromIndex\":0,\"toIndex\":1}", "{\"fromIndex\":0,\"toIndex\":6,\"seats\":1}",
+                "{\"fromIndex\":0,\"toIndex\":1,\"seats\":1,\"seatPriceXaf\":1}", "{\"fromIndex\":\"0\",\"toIndex\":1,\"seats\":1}" }) {
+            mvc.perform(own(post("/api/v1/voyages/" + voyage + "/reservations")).header("Idempotency-Key", key.toString())
+                    .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(service);
+        when(service.reserve(any(), eq(client), eq(key), eq(voyage), eq(0), eq(2), eq(1)))
+                .thenThrow(new VoyageException(VoyageException.Code.NOT_ENOUGH_SEATS))
+                .thenThrow(new VoyageException(VoyageException.Code.OWN_VOYAGE));
+        String ok = "{\"fromIndex\":0,\"toIndex\":2,\"seats\":1}";
+        mvc.perform(own(post("/api/v1/voyages/" + voyage + "/reservations")).header("Idempotency-Key", key.toString())
+                .contentType(MediaType.APPLICATION_JSON).content(ok)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("NOT_ENOUGH_SEATS"));
+        mvc.perform(own(post("/api/v1/voyages/" + voyage + "/reservations")).header("Idempotency-Key", key.toString())
+                .contentType(MediaType.APPLICATION_JSON).content(ok)).andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.code").value("OWN_VOYAGE"));
+        mvc.perform(own(post("/api/v1/voyage-reservations/" + voyage + "/cancellations")).content("{}")).andExpect(status().isBadRequest());
     }
 
     private MockHttpServletRequestBuilder publish(String body) {

@@ -603,3 +603,24 @@ Règles :
 - **Places** : de 1 à 5, et jamais plus que les places passagers du véhicule approuvé. Au-delà : 422 `TOO_MANY_SEATS`.
 - **Chauffeur** : son accès doit être `active` ou `provisional` (K23). **Aucun abonnement n'est exigé.** Sinon : 403 `DRIVER_NOT_ALLOWED`.
 - **Calculs** (`VoyageRules`, testés) : commission de 10 % arrondie au franc ; versement au chauffeur à l'embarquement ; annulation par le client gratuite à 12 h ou plus du départ, puis 15 % de frais, et 30 % à moins de 3 h, partagés moitié chauffeur (arrondi au franc inférieur), moitié WAKA ; annulation par le chauffeur sans frais. Ces calculs seront branchés sur les réservations.
+
+### K26 — Voyages entre villes : réservation de places (R11, deuxième partie)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503). **Aucun paiement réel n'existe encore.**
+
+| Route | Rôle |
+|---|---|
+| `POST /api/v1/voyages/{id}/reservations` | Exige `Idempotency-Key`. Corps exact `{fromIndex, toIndex, seats}`. **Le prix vient de la liste du chauffeur, jamais du client.** 201 à la création, 200 si la même demande est renvoyée avec la même clé. |
+| `GET /api/v1/me/voyage-reservations` | Les réservations de la personne connectée, les plus récentes d'abord. |
+| `POST /api/v1/voyage-reservations/{id}/cancellations` | Corps vide. Annulation par le client ; la répéter ne change rien. |
+
+Règles :
+- **Places par tronçon** : les places sont comptées tronçon par tronçon. Un passager Yaoundé → Edéa et un autre Edéa → Douala peuvent occuper le même siège. La demande est refusée si un tronçon serait dépassé : 409 `NOT_ENOUGH_SEATS`.
+- **Refus** : réserver son propre voyage donne 422 `OWN_VOYAGE` ; réserver après l'heure prévue à l'arrêt de montée donne 422 `DEPARTED`.
+- **Attente de paiement** : une réservation commence `awaiting_payment` et garde ses places pendant la fenêtre de paiement de 3 minutes (R10, reprise faute de paramètre propre aux voyages). Passé ce délai, elle s'affiche `expired` et libère ses places. Les états `confirmed` et `boarded` viendront avec le prestataire de paiement.
+- **Annulation par le client** :
+  - réservation non payée : elle se termine, sans montant ;
+  - réservation payée : le règlement R11 (0, 15 ou 30 %, à l'heure prévue de l'arrêt de montée) est calculé et enregistré (`refundXaf`, `driverXaf`, `wakaXaf`, `feePercent`).
+- **Annulation du voyage par son chauffeur** : chaque réservation active est annulée ; une réservation payée est remboursée en entier.
+- La liste des voyages indique, pour chaque paire d'arrêts, les places encore libres (`availableSeats`).
+- **Aucune somme ne bouge** : les montants enregistrés serviront au prestataire de paiement.
