@@ -1,0 +1,12 @@
+{
+    "name": "WAKA administration",
+    "short_name": "WAKA admin",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0B6E4F",
+    "theme_color": "#0B6E4F",
+    "description": "Administration web WAKA pour agents habilites",
+    "orientation": "any",
+    "prefer_related_applications": false,
+    "icons": []
+}
