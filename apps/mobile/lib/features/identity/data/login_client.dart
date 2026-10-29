@@ -6,6 +6,7 @@ import '../../../core/config/local_api_configuration.dart';
 import 'driver_application_models.dart';
 import 'login_models.dart';
 import 'profile_models.dart';
+import 'vehicle_photo_models.dart';
 
 abstract interface class LoginGateway {
   Future<LoginChallenge> request(LoginAttempt attempt, String client);
@@ -29,11 +30,99 @@ abstract interface class DriverApplicationGateway {
   void dispose();
 }
 
-class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGateway {
+/// The six vehicle views of the owner's draft (K16). Upload is a raw JPEG or PNG body.
+abstract interface class VehiclePhotoGateway {
+  Future<List<PhotoViewStatus>> listPhotos(LoginSession session, String client, String applicationId);
+  Future<PhotoUpload> uploadPhoto(LoginSession session, String client, String applicationId, String view,
+      String key, List<int> bytes, String contentType);
+  void dispose();
+}
+
+class LoginClient implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
   bool _closed = false;
+
+  @override
+  Future<List<PhotoViewStatus>> listPhotos(LoginSession session, String client, String applicationId) async =>
+      PhotoViewStatus.parseList(await _photoSend(session, client, 'GET', '/api/v1/driver-applications/$applicationId/photos', 200));
+
+  @override
+  Future<PhotoUpload> uploadPhoto(LoginSession session, String client, String applicationId, String view,
+      String key, List<int> bytes, String contentType) async {
+    if (!vehiclePhotoViews.contains(view) || photoContentType(bytes) != contentType || bytes.length > maxPhotoBytes) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return PhotoUpload.parse(
+      await _photoSend(session, client, 'POST', '/api/v1/driver-applications/$applicationId/photos/$view', 201,
+          key: key, bytes: bytes, contentType: contentType),
+      applicationId,
+      view,
+    );
+  }
+
+  Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
+      {String? key, List<int>? bytes, String? contentType}) async {
+    if (_closed || !configuration.isConfigured) throw const PhotoProblem(PhotoFailure.unavailable);
+    final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    _active.add(http);
+    try {
+      // A photo upload may take longer on a slow mobile network than the small JSON calls.
+      return await (() async {
+        final request = await http.openUrl(method, configuration.baseUri!.resolve(path));
+        request.followRedirects = false;
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json, application/problem+json');
+        request.headers.set('Authorization', 'Bearer ${session.token}');
+        request.headers.set('X-Waka-Client-Instance', client);
+        if (bytes != null) {
+          request.headers.set('Idempotency-Key', key!);
+          request.headers.set(HttpHeaders.contentTypeHeader, contentType!);
+          request.contentLength = bytes.length;
+          request.add(bytes);
+        }
+        final response = await request.close();
+        final received = <int>[];
+        await for (final chunk in response) {
+          if (received.length + chunk.length > 8192) throw const PhotoProblem(PhotoFailure.invalidResponse);
+          received.addAll(chunk);
+        }
+        if (response.headers.value(HttpHeaders.cacheControlHeader) != 'no-store') {
+          throw const PhotoProblem(PhotoFailure.invalidResponse);
+        }
+        final status = response.statusCode;
+        if (status == expected) {
+          if (response.headers.contentType?.mimeType != 'application/json') throw const PhotoProblem(PhotoFailure.invalidResponse);
+          return jsonDecode(utf8.decode(received));
+        }
+        if (response.headers.contentType?.mimeType != 'application/problem+json') {
+          throw const PhotoProblem(PhotoFailure.invalidResponse);
+        }
+        final problem = jsonDecode(utf8.decode(received));
+        final code = problem is Map && problem['code'] is String ? problem['code'] as String : null;
+        throw PhotoProblem(switch ((status, code)) {
+          (401 || 403, _) => PhotoFailure.denied,
+          (404, _) => PhotoFailure.notFound,
+          (400, 'FILE_REJECTED') => PhotoFailure.rejectedFile,
+          (409, 'IDEMPOTENCY_KEY_REUSED') => PhotoFailure.keyReused,
+          (409, 'NOT_EDITABLE') => PhotoFailure.notEditable,
+          (413, _) => PhotoFailure.tooLarge,
+          (415, _) => PhotoFailure.unsupported,
+          (>= 500, _) => PhotoFailure.unavailable,
+          _ => PhotoFailure.invalidResponse,
+        });
+      })().timeout(Duration(seconds: bytes == null ? 8 : 60));
+    } on PhotoProblem {
+      rethrow;
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    } on Exception {
+      throw const PhotoProblem(PhotoFailure.uncertain);
+    } finally {
+      http.close(force: true);
+      _active.remove(http);
+    }
+  }
 
   @override
   Future<DriverApplicationSnapshot?> currentApplication(LoginSession session, String client) async {
