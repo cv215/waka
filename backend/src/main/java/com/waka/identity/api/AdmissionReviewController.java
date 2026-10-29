@@ -36,7 +36,7 @@ import tools.jackson.core.json.JsonFactory;
 @RestController
 public final class AdmissionReviewController {
     record DecisionInput(long expectedVersion, String action, String reasonCode, String details,
-            List<AdmissionReviewService.PhotoReview> photoDecisions) {
+            List<AdmissionReviewService.PhotoReview> photoDecisions, List<AdmissionReviewService.DocumentReview> documentDecisions) {
         @Override public String toString() { return "DecisionInput[REDACTED]"; }
     }
     private static final JsonFactory JSON = new JsonFactory();
@@ -82,7 +82,7 @@ public final class AdmissionReviewController {
         try {
             String client = MeRequestReader.client(request);
             var decision = invoke(() -> service().decide(token, client, adminToken, id, key, input.expectedVersion(),
-                    input.action(), input.reasonCode(), input.details(), input.photoDecisions()));
+                    input.action(), input.reasonCode(), input.details(), input.photoDecisions(), input.documentDecisions()));
             return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(decision);
         } finally { Arrays.fill(token, '\0'); Arrays.fill(adminToken, '\0'); }
     }
@@ -124,6 +124,10 @@ public final class AdmissionReviewController {
                             if (value != JsonToken.START_ARRAY) throw LoginRequestReader.invalid();
                             fields.put(name, photoDecisions(parser));
                         }
+                        case "documentDecisions" -> {
+                            if (value != JsonToken.START_ARRAY) throw LoginRequestReader.invalid();
+                            fields.put(name, documentDecisions(parser));
+                        }
                         default -> throw LoginRequestReader.invalid();
                     }
                 }
@@ -132,8 +136,10 @@ public final class AdmissionReviewController {
                 }
                 @SuppressWarnings("unchecked")
                 var photos = (List<AdmissionReviewService.PhotoReview>) fields.getOrDefault("photoDecisions", List.of());
+                @SuppressWarnings("unchecked")
+                var documents = (List<AdmissionReviewService.DocumentReview>) fields.getOrDefault("documentDecisions", List.of());
                 return new DecisionInput((Long) fields.get("expectedVersion"), (String) fields.get("action"),
-                        (String) fields.get("reasonCode"), (String) fields.get("details"), photos);
+                        (String) fields.get("reasonCode"), (String) fields.get("details"), photos, documents);
             } catch (JacksonException | IllegalArgumentException | ClassCastException | IOException hidden) {
                 throw LoginRequestReader.invalid();
             }
@@ -155,6 +161,27 @@ public final class AdmissionReviewController {
             }
             if (!item.keySet().containsAll(Set.of("view", "fileId", "result"))) throw LoginRequestReader.invalid();
             reviews.add(new AdmissionReviewService.PhotoReview(item.get("view"), LoginRequestReader.uuid(item.get("fileId")),
+                    item.get("result"), item.get("reasonCode")));
+        }
+        return List.copyOf(reviews);
+    }
+
+    /** At most one entry per catalogue document; the type is taken from the server, never from the agent. */
+    private static List<AdmissionReviewService.DocumentReview> documentDecisions(JsonParser parser) {
+        List<AdmissionReviewService.DocumentReview> reviews = new ArrayList<>();
+        while (parser.nextToken() != JsonToken.END_ARRAY) {
+            if (parser.currentToken() != JsonToken.START_OBJECT || reviews.size() >= 12) throw LoginRequestReader.invalid();
+            Map<String, String> item = new HashMap<>();
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String name = parser.getString();
+                JsonToken value = parser.nextToken();
+                if (!Set.of("documentId", "result", "reasonCode").contains(name) || item.containsKey(name)) throw LoginRequestReader.invalid();
+                if (value == JsonToken.VALUE_NULL && "reasonCode".equals(name)) item.put(name, null);
+                else if (value == JsonToken.VALUE_STRING) item.put(name, parser.getString());
+                else throw LoginRequestReader.invalid();
+            }
+            if (!item.keySet().containsAll(Set.of("documentId", "result"))) throw LoginRequestReader.invalid();
+            reviews.add(new AdmissionReviewService.DocumentReview(LoginRequestReader.uuid(item.get("documentId")), null,
                     item.get("result"), item.get("reasonCode")));
         }
         return List.copyOf(reviews);

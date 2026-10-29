@@ -98,6 +98,19 @@ public final class DriverApplicationController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** Only the documents of the declared situation, each with its plain explanation and status. */
+    @GetMapping(path = "/api/v1/driver-applications/{applicationId}/requirements", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentDriverApplicationService.RequirementStatus>> requirements(@PathVariable String applicationId,
+            HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(applicationId);
+        MeRequestReader.emptyGet(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ok(invoke(() -> service().requirements(token, client, id)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
     /** The decisions and reasons about the caller's own file; the agent is never named. */
     @GetMapping(path = "/api/v1/driver-applications/{applicationId}/decisions", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<List<AdmissionReviewService.Decision>> decisions(@PathVariable String applicationId,

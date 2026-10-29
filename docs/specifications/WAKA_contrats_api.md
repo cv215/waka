@@ -428,3 +428,34 @@ Règles de décision :
 - 403 `CONFLICT_OF_INTEREST` si l'agent examine son propre dossier.
 
 États : `draft` → `submitted` → `correction_requested` (modifiable, renvoi possible) ou `refused` (fermé, nouveau dossier possible). La réponse du dossier garde ses onze champs ; seule la liste des états grandit.
+### K18 — Pièces justificatives et approbation (catalogue v1)
+
+Le catalogue des pièces est décrit dans `WAKA_pieces_chauffeur.md`. Chaque exigence est `established` (établie) ou `to_confirm` (à confirmer). Routes réalisées côté serveur, non assemblées par défaut :
+
+| Route | Rôle |
+|---|---|
+| `GET /api/v1/driver-applications/{id}/requirements` | Pièces applicables à la catégorie et au droit d'utilisation déclarés, seulement celles-là. Champs : code, document, explanation, status, requiredForSubmission, documentId, reviewState (`received`/`accepted`/`to_correct`), validUntil, expired, satisfied. Une exigence `to_confirm` n'est jamais `satisfied`. |
+| `POST /api/v1/driver-applications/{id}/documents/{code}` | Image brute JPEG ou PNG de la pièce, avec Idempotency-Key et en-tête facultatif `X-Waka-Valid-Until: yyyy-MM-dd`. Contrôlée et nettoyée comme les photos, puis chiffrée. Le PDF n'est pas accepté à ce stade. |
+| `GET /api/v1/driver-documents/{documentId}/content` | Lecture par le titulaire. |
+| `GET /api/v1/admin/driver-documents/{documentId}/content` | Lecture par un agent ADMISSION, uniquement pour un candidat ayant déjà envoyé un dossier ; tracée dans le journal d'audit. |
+
+Refus au dépôt :
+- 409 `DOCUMENT_NOT_APPLICABLE` : pièce étrangère à la situation (titre de taxi pour une voiture personnelle, autorisation d'utilisation pour le titulaire de la carte grise…) ;
+- 409 `REGISTRATION_REQUIRED` : pièce du véhicule déposée avant l'immatriculation ;
+- 400 `DOCUMENT_EXPIRED` : date de validité déjà dépassée.
+
+Réutilisation :
+- les pièces de la **personne** (identité, permis) servent d'un dossier à l'autre ;
+- les pièces du **véhicule** servent tant que l'immatriculation est la même (clé opaque) ;
+- une pièce acceptée et encore valide reste acceptée au renouvellement ;
+- une pièce expirée redevient à fournir.
+
+Envoi A29 : il exige, en plus des champs et des photos, une pièce présente, valide et non « à corriger » pour chaque exigence **établie**. Les pièces des exigences **à confirmer** sont facultatives.
+
+Décision A38 : elle accepte `documentDecisions: [{documentId, result, reasonCode?}]`. Le type de pièce est fixé par le serveur ; l'agent ne peut pas l'envoyer.
+- `request_correction` ne fait corriger que les pièces marquées `to_correct` ; les autres restent acceptées.
+- `approve` est refusé en 409 `APPROVAL_NOT_AVAILABLE` tant qu'une exigence applicable est **à confirmer**.
+- `approve` est refusé en 409 `INCOMPLETE` si une pièce n'est pas acceptée et valide, si les six photos ne sont pas jugées acceptables dans la décision, ou s'il manque un champ du véhicule.
+- La version du catalogue est enregistrée avec chaque décision.
+
+Avec le catalogue v1, chaque parcours compte au moins une exigence à confirmer : aucune approbation n'est donc possible avant la décision datée du fondateur.

@@ -3,8 +3,11 @@ package com.waka.identity.admin;
 import com.waka.identity.admission.AdmissionCrypto;
 import com.waka.identity.admission.AdmissionException;
 import com.waka.identity.admission.AdmissionReviewService;
+import com.waka.identity.admission.DocumentCatalog;
 import com.waka.identity.admission.PersistentDriverApplicationService;
+import com.waka.identity.admission.PersistentDriverApplicationService.RequirementStatus;
 import com.waka.identity.admission.VehicleFields;
+import com.waka.identity.files.DriverDocumentService;
 import com.waka.identity.files.FileException;
 import com.waka.identity.files.PrivateFileStore;
 import com.waka.identity.files.VehiclePhotoService;
@@ -25,13 +28,17 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,31 +51,39 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Real opt-in MySQL/V10: submission, ADMISSION examination with a TOTP session, append-only decisions. */
+/**
+ * Real opt-in MySQL/V11, both routes end to end: candidate documents, submission, ADMISSION examination
+ * with a TOTP session, correction of one piece only, renewal reuse and approval rules. Catalogue v1
+ * keeps approval blocked; a test catalogue with every requirement established proves the approval path.
+ */
 @EnabledIfEnvironmentVariable(named = "WAKA_VERIFY_MYSQL", matches = "true")
 class AdmissionReviewMySqlVerificationTest {
     private record Login(char[] token, UUID account) { }
-    private static final VehicleFields CAR = new VehicleFields("Marque", "Modele", 2020, "Bleu", "AB 12-CD", 5, 4, "holder");
+    /** The three services that depend on a catalogue, wired together. */
+    private record Stack(PersistentDriverApplicationService applications, DriverDocumentService documents, AdmissionReviewService reviews) { }
+    private static final List<DocumentCatalog.Requirement> ALL_ESTABLISHED = DocumentCatalog.V1.stream()
+            .map(r -> new DocumentCatalog.Requirement(r.code(), r.document(), r.explanation(), r.categories(),
+                    r.onlyForAuthorizedUse(), r.scope(), DocumentCatalog.Status.ESTABLISHED)).toList();
     @TempDir Path storage;
     private JdbcTemplate jdbc;
     private DataSourceTransactionManager manager;
-    private OtpCrypto otpCrypto;
     private byte[][] keys;
     private MutableClock clock;
     private CapturingGateway gateway;
     private PersistentOtpService otp;
     private PersistentSessionService sessions;
     private PersistentAdminService admin;
-    private PersistentDriverApplicationService applications;
-    private VehiclePhotoService photos;
-    private AdmissionReviewService reviews;
+    private PrivateFileStore store;
     private AdmissionCrypto admissionCrypto;
+    private VehiclePhotoService photos;
+    private Stack v1, established;
     private String gate, otpGate;
     private final String client = UUID.randomUUID().toString();
     private final String candidatePhone = "+2376" + "0".repeat(8);
     private final String agentPhone = "+2376" + "0".repeat(7) + "1";
     private final String thirdPhone = "+2376" + "0".repeat(7) + "2";
     private byte[] jpeg;
+    private LocalDate nextYear;
 
     @BeforeEach void prepare() throws Exception {
         String url = required("WAKA_DB_URL");
@@ -83,7 +98,7 @@ class AdmissionReviewMySqlVerificationTest {
         SecureRandom random = new SecureRandom();
         keys = new byte[9][32];
         for (byte[] key : keys) random.nextBytes(key);
-        otpCrypto = new OtpCrypto(keys[0], keys[1], random);
+        OtpCrypto otpCrypto = new OtpCrypto(keys[0], keys[1], random);
         clock = new MutableClock(); gateway = new CapturingGateway();
         otp = new PersistentOtpService(jdbc, manager, otpCrypto, new OtpPolicy(100), gateway, clock);
         sessions = new PersistentSessionService(jdbc, manager, new PersistedOtpProofVerifier(jdbc, otpCrypto, clock),
@@ -92,22 +107,30 @@ class AdmissionReviewMySqlVerificationTest {
         admin = new PersistentAdminService(sessions, jdbc, manager, new AdminCrypto(keys[3], keys[4], "test-key", random),
                 new AdminPolicy(Duration.ofSeconds(900), Duration.ofSeconds(3600), 5, Duration.ofSeconds(120), Duration.ofSeconds(300)), clock);
         admissionCrypto = new AdmissionCrypto(keys[5], keys[6], "test-key", random);
-        // Test-only: requirements declared qualified with no document family, never the ordinary application.
-        applications = new PersistentDriverApplicationService(sessions, jdbc, manager, admissionCrypto, Duration.ofSeconds(600), clock, true);
-        photos = new VehiclePhotoService(sessions, jdbc, new PrivateFileStore(storage, keys[7], keys[8], "test-key", random), admin);
-        reviews = new AdmissionReviewService(sessions, admin, applications, jdbc, admissionCrypto);
+        store = new PrivateFileStore(storage, keys[7], keys[8], "test-key", random);
+        photos = new VehiclePhotoService(sessions, jdbc, store, admin);
+        v1 = stack(DocumentCatalog.V1);
+        established = stack(ALL_ESTABLISHED);
         BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
         var out = new ByteArrayOutputStream();
         ImageIO.write(image, "jpeg", out);
         jpeg = out.toByteArray();
+        nextYear = LocalDate.ofInstant(clock.instant(), ZoneId.of("Africa/Douala")).plusYears(1);
+    }
+
+    private Stack stack(List<DocumentCatalog.Requirement> catalog) {
+        var applications = new PersistentDriverApplicationService(sessions, jdbc, manager, admissionCrypto, Duration.ofSeconds(600), clock, catalog);
+        return new Stack(applications, new DriverDocumentService(sessions, applications, jdbc, store, admin),
+                new AdmissionReviewService(sessions, admin, applications, jdbc, admissionCrypto));
     }
 
     @AfterEach void cleanOnlyRandomNamespacesAndRespectForeignKeys() {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("admission_photo_review", "admission_decision", "vehicle_photo", "driver_application_command",
-                        "driver_application", "admin_session", "admin_totp", "admin_grant", "identity_session", "identity_account", "identity_session_gate")) {
+                for (String table : List.of("admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                        "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
+                        "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
                 }
             }
@@ -123,125 +146,187 @@ class AdmissionReviewMySqlVerificationTest {
         }
     }
 
-    @Test void submissionNeedsQualifiedRequirementsCompleteVehicleAndSixPhotos() {
+    @Test void eachRouteShowsAndAcceptsOnlyItsOwnDocuments() {
         Login candidate = login(candidatePhone);
-        var notQualified = new PersistentDriverApplicationService(sessions, jdbc, manager, admissionCrypto, Duration.ofSeconds(600), clock);
-        UUID app = applications.create(candidate.token, client, UUID.randomUUID(), "taxi").applicationId();
-        assertFailure(AdmissionException.Code.REQUIREMENTS_NOT_QUALIFIED, () -> notQualified.submit(candidate.token, client, app, UUID.randomUUID(), 1));
-        assertFailure(AdmissionException.Code.INCOMPLETE, () -> applications.submit(candidate.token, client, app, UUID.randomUUID(), 1));
-        applications.updateVehicle(candidate.token, client, app, UUID.randomUUID(), 1, CAR);
-        for (String view : List.of("PH01", "PH02", "PH03", "PH04", "PH05")) photos.upload(candidate.token, client, app, view, UUID.randomUUID(), "image/jpeg", jpeg);
-        assertFailure(AdmissionException.Code.INCOMPLETE, () -> applications.submit(candidate.token, client, app, UUID.randomUUID(), 2));
-        photos.upload(candidate.token, client, app, "PH06", UUID.randomUUID(), "image/jpeg", jpeg);
-        assertFailure(AdmissionException.Code.VERSION_CONFLICT, () -> applications.submit(candidate.token, client, app, UUID.randomUUID(), 1));
-        UUID key = UUID.randomUUID();
-        var submitted = applications.submit(candidate.token, client, app, key, 2);
-        assertEquals("submitted", submitted.state()); assertEquals(3, submitted.version());
-        assertTrue(applications.submit(candidate.token, client, app, key, 2).idempotentReplay());
-        assertFailure(AdmissionException.Code.NOT_EDITABLE, () -> applications.updateVehicle(candidate.token, client, app, UUID.randomUUID(), 3, CAR));
-        assertEquals(FileException.Code.NOT_EDITABLE, assertThrows(FileException.class,
-                () -> photos.upload(candidate.token, client, app, "PH01", UUID.randomUUID(), "image/jpeg", jpeg)).code());
-        // Still readable: the vehicle was re-encrypted for its new version.
-        assertEquals("AB 12-CD", applications.readCurrent(candidate.token, client).vehicleFields().registration());
-    }
-
-    @Test void agentExaminesRequestsCorrectionThenRefusesWithAnAuditedTrail() {
-        Login candidate = login(candidatePhone);
-        UUID app = submittedFile(candidate);
-        clock.advance(61);
-        Login agent = login(agentPhone);
-        char[] adminToken = adminSession(agent, Set.of(AdminFunction.ADMISSION));
-        var items = reviews.workItems(agent.token, client, adminToken);
-        assertEquals(List.of(app), items.stream().map(AdmissionReviewService.WorkItem::applicationId).toList());
-        var detail = reviews.detail(agent.token, client, adminToken, app);
-        assertEquals("AB 12-CD", detail.application().vehicleFields().registration());
-        assertEquals(6, detail.photos().size());
-        UUID ph02 = detail.photos().get(1).fileId();
-        assertTrue(photos.examinationContent(agent.token, client, adminToken, ph02).jpeg().length > 0);
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit_event WHERE object_ref=? AND event_type='PRIVATE_FILE_READ' AND actor_ref=?",
-                Integer.class, ph02.toString(), agent.account.toString()));
-
-        assertFailure(AdmissionException.Code.APPROVAL_NOT_AVAILABLE, () -> reviews.decide(agent.token, client, adminToken, app,
-                UUID.randomUUID(), 3, "approve", "ALL_CONDITIONS_MET", null, List.of()));
-        var stalePhoto = List.of(new AdmissionReviewService.PhotoReview("PH02", UUID.randomUUID(), "to_correct", "PLATE_UNREADABLE"));
-        assertFailure(AdmissionException.Code.VERSION_CONFLICT, () -> reviews.decide(agent.token, client, adminToken, app,
-                UUID.randomUUID(), 3, "request_correction", "PHOTO_TO_REPLACE", null, stalePhoto));
-        UUID key = UUID.randomUUID();
-        var review = List.of(new AdmissionReviewService.PhotoReview("PH02", ph02, "to_correct", "PLATE_UNREADABLE"),
-                new AdmissionReviewService.PhotoReview("PH01", detail.photos().getFirst().fileId(), "acceptable", null));
-        var correction = reviews.decide(agent.token, client, adminToken, app, key, 3, "request_correction", "PHOTO_TO_REPLACE",
-                "La plaque doit être lisible.", review);
-        assertFalse(correction.idempotentReplay());
-        assertTrue(reviews.decide(agent.token, client, adminToken, app, key, 3, "request_correction", "PHOTO_TO_REPLACE",
-                "La plaque doit être lisible.", review).idempotentReplay());
-        assertFailure(AdmissionException.Code.IDEMPOTENCY_KEY_REUSED, () -> reviews.decide(agent.token, client, adminToken, app,
-                key, 3, "refuse", "PHOTO_TO_REPLACE", null, List.of()));
-        assertFailure(AdmissionException.Code.VERSION_CONFLICT, () -> reviews.decide(agent.token, client, adminToken, app,
-                UUID.randomUUID(), 3, "refuse", "LATE", null, List.of()));
-        byte[] stored = jdbc.queryForObject("SELECT details_cipher FROM admission_decision WHERE gate_hash=?", byte[].class, gate);
-        assertFalse(new String(stored, java.nio.charset.StandardCharsets.ISO_8859_1).contains("plaque"));
-
-        var seen = reviews.candidateDecisions(candidate.token, client, app);
-        assertEquals(1, seen.size());
-        assertEquals("La plaque doit être lisible.", seen.getFirst().details());
-        assertEquals("to_correct", seen.getFirst().photoReviews().get(1).result());
-        var current = applications.readCurrent(candidate.token, client);
-        assertEquals("correction_requested", current.state());
-        photos.upload(candidate.token, client, app, "PH02", UUID.randomUUID(), "image/jpeg", jpeg);
-        var resubmitted = applications.submit(candidate.token, client, app, UUID.randomUUID(), current.version());
-        assertEquals("submitted", resubmitted.state());
-
-        reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), resubmitted.version(), "refuse", "VEHICLE_NOT_ELIGIBLE", null, List.of());
-        assertFailure(AdmissionException.Code.NOT_FOUND, () -> applications.readCurrent(candidate.token, client));
-        assertEquals("refused", applications.read(candidate.token, client, app).state());
-        assertEquals(2, reviews.candidateDecisions(candidate.token, client, app).size());
-        assertNotEquals(app, applications.create(candidate.token, client, UUID.randomUUID(), "private").applicationId());
-        assertTrue(reviews.workItems(agent.token, client, adminToken).isEmpty());
-    }
-
-    @Test void conflictsOfInterestScopeAndFunctionAreEnforced() {
-        Login agent = login(agentPhone);
-        UUID own = submittedFile(agent);
-        char[] adminToken = adminSession(agent, Set.of(AdminFunction.ADMISSION));
-        assertTrue(reviews.workItems(agent.token, client, adminToken).isEmpty(), "own file never listed");
-        assertFailure(AdmissionException.Code.CONFLICT_OF_INTEREST, () -> reviews.detail(agent.token, client, adminToken, own));
-        assertFailure(AdmissionException.Code.CONFLICT_OF_INTEREST, () -> reviews.decide(agent.token, client, adminToken, own,
-                UUID.randomUUID(), 3, "refuse", "SELF", null, List.of()));
-        UUID ownPhoto = UUID.fromString(jdbc.queryForObject("SELECT id FROM vehicle_photo WHERE gate_hash=? AND application_id=? LIMIT 1",
-                String.class, gate, own.toString()));
-        assertEquals(FileException.Code.NOT_FOUND, assertThrows(FileException.class,
-                () -> photos.examinationContent(agent.token, client, adminToken, ownPhoto)).code());
+        UUID taxi = v1.applications.create(candidate.token, client, UUID.randomUUID(), "taxi").applicationId();
+        assertFile(FileException.Code.VEHICLE_REQUIRED, () -> upload(v1, candidate, taxi, "REGISTRATION_CERTIFICATE"));
+        v1.applications.updateVehicle(candidate.token, client, taxi, UUID.randomUUID(), 1, car("holder", "AB 12-CD"));
+        assertEquals(List.of("IDENTITY", "DRIVING_LICENCE", "REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION",
+                "TRANSPORT_LICENCE", "PUBLIC_TRANSPORT_CARD"), codes(v1.applications.requirements(candidate.token, client, taxi)));
+        assertFile(FileException.Code.NOT_APPLICABLE, () -> upload(v1, candidate, taxi, "PAID_TRANSPORT_AUTHORIZATION"));
+        assertFile(FileException.Code.NOT_APPLICABLE, () -> upload(v1, candidate, taxi, "USE_AUTHORIZATION"));
+        assertFile(FileException.Code.EXPIRED, () -> v1.documents.upload(candidate.token, client, taxi, "INSURANCE",
+                UUID.randomUUID(), "image/jpeg", jpeg, LocalDate.of(2020, 1, 1)));
+        for (String view : AdmissionReviewService.VIEWS) photos.upload(candidate.token, client, taxi, view, UUID.randomUUID(), "image/jpeg", jpeg);
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2));
+        for (String code : List.of("IDENTITY", "DRIVING_LICENCE", "REGISTRATION_CERTIFICATE")) upload(v1, candidate, taxi, code);
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2));
+        upload(v1, candidate, taxi, "INSURANCE");
+        // Requirements still to be confirmed are shown, optional for submission and never satisfied.
+        var statuses = v1.applications.requirements(candidate.token, client, taxi);
+        assertTrue(statuses.stream().filter(s -> "to_confirm".equals(s.status())).noneMatch(RequirementStatus::requiredForSubmission));
+        assertTrue(statuses.stream().noneMatch(RequirementStatus::satisfied), "received is never accepted");
+        assertEquals("submitted", v1.applications.submit(candidate.token, client, taxi, UUID.randomUUID(), 2).state());
 
         clock.advance(61);
+        Login other = login(thirdPhone);
+        UUID personal = v1.applications.create(other.token, client, UUID.randomUUID(), "private").applicationId();
+        v1.applications.updateVehicle(other.token, client, personal, UUID.randomUUID(), 1, car("authorized_use", "XY 99-ZZ"));
+        assertEquals(List.of("IDENTITY", "DRIVING_LICENCE", "REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION",
+                "USE_AUTHORIZATION", "PAID_TRANSPORT_AUTHORIZATION"), codes(v1.applications.requirements(other.token, client, personal)));
+        assertFile(FileException.Code.NOT_APPLICABLE, () -> upload(v1, other, personal, "TRANSPORT_LICENCE"));
+        assertFile(FileException.Code.NOT_APPLICABLE, () -> upload(v1, other, personal, "PUBLIC_TRANSPORT_CARD"));
+        assertEquals("received", upload(v1, other, personal, "USE_AUTHORIZATION").reviewState());
+        assertFile(FileException.Code.NOT_FOUND, () -> upload(v1, other, taxi, "IDENTITY"));
+    }
+
+    @Test void catalogueV1KeepsApprovalBlockedWhileRequirementsAreToConfirm() {
         Login candidate = login(candidatePhone);
-        UUID draft = applications.create(candidate.token, client, UUID.randomUUID(), "taxi").applicationId();
-        UUID draftPhoto = photos.upload(candidate.token, client, draft, "PH01", UUID.randomUUID(), "image/jpeg", jpeg).fileId();
-        assertFailure(AdmissionException.Code.NOT_FOUND, () -> reviews.detail(agent.token, client, adminToken, draft), "drafts are not examined");
-        assertEquals(FileException.Code.NOT_FOUND, assertThrows(FileException.class,
-                () -> photos.examinationContent(agent.token, client, adminToken, draftPhoto)).code());
-        assertFailure(AdmissionException.Code.NOT_FOUND, () -> reviews.candidateDecisions(candidate.token, client, own));
+        UUID app = readyFile(v1, candidate, "taxi", "holder", "AB 12-CD", false);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = v1.reviews.detail(agent.token, client, adminToken, app);
+        assertTrue(detail.requirements().stream().anyMatch(r -> "to_confirm".equals(r.status())));
+        assertAdmission(AdmissionException.Code.APPROVAL_NOT_AVAILABLE, () -> v1.reviews.decide(agent.token, client, adminToken, app,
+                UUID.randomUUID(), detail.application().version(), "approve", "ALL_CONDITIONS_MET", null,
+                allPhotos(detail, "acceptable"), allDocuments(detail, "acceptable")));
+        assertEquals("submitted", v1.applications.read(candidate.token, client, app).state());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM driver_document WHERE gate_hash=? AND review_state<>'received'", Integer.class, gate),
+                "a refused approval changes no document");
+    }
+
+    @Test void correctionTargetsOnlyThePieceConcernedThenApprovalWithEstablishedRequirements() {
+        Login candidate = login(candidatePhone);
+        UUID app = readyFile(established, candidate, "private", "authorized_use", "XY 99-ZZ", true);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = established.reviews.detail(agent.token, client, adminToken, app);
+        UUID insurance = documentOf(detail.requirements(), "INSURANCE");
+        assertTrue(established.documents.examinationContent(agent.token, client, adminToken, insurance).jpeg().length > 0);
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit_event WHERE object_ref=? AND object_type='driver_document'",
+                Integer.class, insurance.toString()));
+        var reviews = new ArrayList<AdmissionReviewService.DocumentReview>();
+        for (var requirement : detail.requirements()) {
+            boolean target = requirement.code().equals("INSURANCE");
+            reviews.add(new AdmissionReviewService.DocumentReview(requirement.documentId(), null,
+                    target ? "to_correct" : "acceptable", target ? "COVER_NOT_SHOWN" : null));
+        }
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> established.reviews.decide(agent.token, client, adminToken, app,
+                UUID.randomUUID(), detail.application().version(), "approve", "ALL_CONDITIONS_MET", null, List.of(), allDocuments(detail, "acceptable")),
+                "approval needs all six photos acceptable");
+        var correction = established.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), detail.application().version(),
+                "request_correction", "DOCUMENT_TO_REPLACE", "L'attestation doit mentionner le transport de passagers.",
+                allPhotos(detail, "acceptable"), reviews);
+        assertEquals("INSURANCE", correction.documentReviews().stream().filter(r -> "to_correct".equals(r.result())).findFirst().orElseThrow().documentType());
+
+        var mine = established.applications.requirements(candidate.token, client, app);
+        assertEquals("to_correct", statusOf(mine, "INSURANCE").reviewState());
+        assertTrue(mine.stream().filter(s -> !s.code().equals("INSURANCE")).allMatch(RequirementStatus::satisfied),
+                "every other piece stays accepted");
+        long version = established.applications.readCurrent(candidate.token, client).version();
+        assertAdmission(AdmissionException.Code.INCOMPLETE, () -> established.applications.submit(candidate.token, client, app, UUID.randomUUID(), version),
+                "the piece to correct must be replaced first");
+        UUID newInsurance = upload(established, candidate, app, "INSURANCE").documentId();
+        long resubmitted = established.applications.submit(candidate.token, client, app, UUID.randomUUID(), version).version();
+
+        var again = established.reviews.detail(agent.token, client, adminToken, app);
+        assertEquals(newInsurance, documentOf(again.requirements(), "INSURANCE"));
+        var approval = established.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), resubmitted, "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(again, "acceptable"),
+                List.of(new AdmissionReviewService.DocumentReview(newInsurance, null, "acceptable", null)));
+        assertEquals("approve", approval.action());
+        assertEquals("approved", established.applications.read(candidate.token, client, app).state());
+        assertEquals("test", jdbc.queryForObject("SELECT catalogue_version FROM admission_decision WHERE gate_hash=? AND action='approve'", String.class, gate));
+    }
+
+    @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
+        Login candidate = login(candidatePhone);
+        UUID first = readyFile(established, candidate, "taxi", "holder", "AB 12-CD", true);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = established.reviews.detail(agent.token, client, adminToken, first);
+        established.reviews.decide(agent.token, client, adminToken, first, UUID.randomUUID(), detail.application().version(),
+                "refuse", "VEHICLE_NOT_ELIGIBLE", null, List.of(), allDocuments(detail, "acceptable"));
+
+        UUID second = established.applications.create(candidate.token, client, UUID.randomUUID(), "taxi").applicationId();
+        established.applications.updateVehicle(candidate.token, client, second, UUID.randomUUID(), 1, car("holder", "AB 12-CD"));
+        var sameVehicle = established.applications.requirements(candidate.token, client, second);
+        assertTrue(sameVehicle.stream().allMatch(RequirementStatus::satisfied), "every valid accepted piece is reused, nothing uploaded again");
+
+        established.applications.updateVehicle(candidate.token, client, second, UUID.randomUUID(), 2, car("holder", "CD 34-EF"));
+        var otherVehicle = established.applications.requirements(candidate.token, client, second);
+        Map<String, Boolean> satisfied = otherVehicle.stream().collect(Collectors.toMap(RequirementStatus::code, RequirementStatus::satisfied));
+        assertTrue(satisfied.get("IDENTITY") && satisfied.get("DRIVING_LICENCE"), "person pieces follow the person");
+        assertFalse(satisfied.get("REGISTRATION_CERTIFICATE") || satisfied.get("INSURANCE"), "vehicle pieces follow the registration");
+
+        clock.advance(Duration.ofDays(400).toSeconds());
+        Login later = login(candidatePhone);
+        var expired = established.applications.requirements(later.token, client, second);
+        assertTrue(statusOf(expired, "IDENTITY").expired(), "an expired piece must be provided again");
+        assertFalse(statusOf(expired, "IDENTITY").satisfied());
+    }
+
+    @Test void agentScopeConflictsAndFunctionAreEnforced() {
+        Login agent = login(agentPhone);
+        UUID own = readyFile(v1, agent, "taxi", "holder", "AB 12-CD", false);
+        char[] adminToken = adminSession(agent);
+        assertTrue(v1.reviews.workItems(agent.token, client, adminToken).isEmpty(), "own file never listed");
+        assertAdmission(AdmissionException.Code.CONFLICT_OF_INTEREST, () -> v1.reviews.detail(agent.token, client, adminToken, own));
+        UUID ownDocument = UUID.fromString(jdbc.queryForObject("SELECT id FROM driver_document WHERE gate_hash=? LIMIT 1", String.class, gate));
+        assertFile(FileException.Code.NOT_FOUND, () -> v1.documents.examinationContent(agent.token, client, adminToken, ownDocument));
+
+        clock.advance(61);
+        Login candidate = login(candidatePhone);
+        UUID draft = v1.applications.create(candidate.token, client, UUID.randomUUID(), "taxi").applicationId();
+        UUID draftDocument = upload(v1, candidate, draft, "IDENTITY").documentId();
+        assertFile(FileException.Code.NOT_FOUND, () -> v1.documents.examinationContent(agent.token, client, adminToken, draftDocument),
+                "pieces of a candidate who never submitted stay private");
+        assertFile(FileException.Code.NOT_FOUND, () -> v1.documents.content(candidate.token, client, ownDocument));
+        assertTrue(v1.documents.content(candidate.token, client, draftDocument).jpeg().length > 0);
 
         clock.advance(61);
         Login auditor = login(thirdPhone);
         jdbc.update("INSERT INTO admin_grant (gate_hash,id,account_id,admin_function,granted_at,granted_by,reason_code) VALUES (?,?,?,?,NOW(6),'TEST','TEST')",
                 gate, UUID.randomUUID().toString(), auditor.account.toString(), "AUDIT");
         char[] auditorToken = openSession(auditor);
-        assertFailure(AdmissionException.Code.NOT_AUTHORIZED, () -> reviews.workItems(auditor.token, client, auditorToken));
-        assertEquals(FileException.Code.NOT_AUTHORIZED, assertThrows(FileException.class,
-                () -> photos.examinationContent(auditor.token, client, auditorToken, draftPhoto)).code());
-        assertFailure(AdmissionException.Code.INVALID_ADMIN_SESSION, () -> reviews.workItems(candidate.token, client, adminToken),
-                "an admin token is bound to its own client session");
+        assertAdmission(AdmissionException.Code.NOT_AUTHORIZED, () -> v1.reviews.workItems(auditor.token, client, auditorToken));
+        assertFile(FileException.Code.NOT_AUTHORIZED, () -> v1.documents.examinationContent(auditor.token, client, auditorToken, ownDocument));
     }
 
-    private UUID submittedFile(Login owner) {
-        UUID app = applications.create(owner.token, client, UUID.randomUUID(), "taxi").applicationId();
-        applications.updateVehicle(owner.token, client, app, UUID.randomUUID(), 1, CAR);
+    /** A complete, submitted file; {@code allPieces} also uploads the optional requirements. */
+    private UUID readyFile(Stack stack, Login owner, String category, String right, String plate, boolean allPieces) {
+        UUID app = stack.applications.create(owner.token, client, UUID.randomUUID(), category).applicationId();
+        stack.applications.updateVehicle(owner.token, client, app, UUID.randomUUID(), 1, car(right, plate));
         for (String view : AdmissionReviewService.VIEWS) photos.upload(owner.token, client, app, view, UUID.randomUUID(), "image/jpeg", jpeg);
-        applications.submit(owner.token, client, app, UUID.randomUUID(), 2);
+        for (var requirement : stack.applications.requirements(owner.token, client, app)) {
+            if (allPieces || requirement.requiredForSubmission()) upload(stack, owner, app, requirement.code());
+        }
+        stack.applications.submit(owner.token, client, app, UUID.randomUUID(), 2);
         return app;
     }
-    private char[] adminSession(Login agent, Set<AdminFunction> functions) {
-        admin.bootstrapFounder(agent.account, functions);
+    private DriverDocumentService.DocumentView upload(Stack stack, Login owner, UUID app, String code) {
+        return stack.documents.upload(owner.token, client, app, code, UUID.randomUUID(), "image/jpeg", jpeg, nextYear);
+    }
+    private static VehicleFields car(String right, String plate) {
+        return new VehicleFields("Marque", "Modele", 2020, "Bleu", plate, 5, 4, right);
+    }
+    private static List<String> codes(List<RequirementStatus> statuses) { return statuses.stream().map(RequirementStatus::code).toList(); }
+    private static RequirementStatus statusOf(List<RequirementStatus> statuses, String code) {
+        return statuses.stream().filter(s -> s.code().equals(code)).findFirst().orElseThrow();
+    }
+    private static UUID documentOf(List<RequirementStatus> statuses, String code) { return statusOf(statuses, code).documentId(); }
+    private static List<AdmissionReviewService.PhotoReview> allPhotos(AdmissionReviewService.Detail detail, String result) {
+        return detail.photos().stream().map(p -> new AdmissionReviewService.PhotoReview(p.view(), p.fileId(), result, null)).toList();
+    }
+    private static List<AdmissionReviewService.DocumentReview> allDocuments(AdmissionReviewService.Detail detail, String result) {
+        return detail.requirements().stream().filter(r -> r.documentId() != null)
+                .map(r -> new AdmissionReviewService.DocumentReview(r.documentId(), null, result, null)).toList();
+    }
+    private char[] adminSession(Login agent) {
+        admin.bootstrapFounder(agent.account, Set.of(AdminFunction.ADMISSION));
         return openSession(agent);
     }
     private char[] openSession(Login agent) {
@@ -271,9 +356,13 @@ class AdmissionReviewMySqlVerificationTest {
         finally { Arrays.fill(code, '\0'); }
         try (SessionGrant grant = sessions.open(proof, client, phone)) { return new Login(grant.token(), grant.accountId()); }
     }
-    private static void assertFailure(AdmissionException.Code code, Runnable operation) { assertFailure(code, operation, ""); }
-    private static void assertFailure(AdmissionException.Code code, Runnable operation, String reason) {
+    private static void assertAdmission(AdmissionException.Code code, Runnable operation) { assertAdmission(code, operation, ""); }
+    private static void assertAdmission(AdmissionException.Code code, Runnable operation, String reason) {
         assertEquals(code, assertThrows(AdmissionException.class, operation::run, reason).code(), reason);
+    }
+    private static void assertFile(FileException.Code code, Runnable operation) { assertFile(code, operation, ""); }
+    private static void assertFile(FileException.Code code, Runnable operation, String reason) {
+        assertEquals(code, assertThrows(FileException.class, operation::run, reason).code(), reason);
     }
     private static String required(String key) {
         String value = System.getenv(key);
