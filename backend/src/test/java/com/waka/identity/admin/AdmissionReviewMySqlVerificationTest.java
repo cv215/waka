@@ -129,7 +129,7 @@ class AdmissionReviewMySqlVerificationTest {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("voyage_reservation", "voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                for (String table : List.of("referral_attempt", "referral_link", "referral_code", "voyage_reservation", "voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
                         "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
                         "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
@@ -379,6 +379,29 @@ class AdmissionReviewMySqlVerificationTest {
         }
         assertEquals(com.waka.mobility.voyage.VoyageException.Code.BOARDING_LOCKED,
                 code.apply(() -> voyages.board(driver.token, client, published.voyageId(), boardingCode)), "ten wrong codes lock boarding");
+        assertEquals(2, voyages.upcoming(rider.token, client).getFirst().availableSeats().get("0-1"),
+                "a boarded passenger keeps the seat (boarded + paid on 0-2 out of 4)");
+
+        // R12: once the rider took part in a completed paid service, no referrer can be attached any more.
+        var referrals = new com.waka.referrals.PersistentReferralService(sessions, jdbc, new SecureRandom(), clock);
+        String driverCode = referrals.mine(driver.token, client).referralCode();
+        assertEquals(com.waka.referrals.ReferralException.Code.WINDOW_CLOSED, assertThrows(com.waka.referrals.ReferralException.class,
+                () -> referrals.attach(rider.token, client, driverCode)).code());
+
+        // R12: a paid passenger absent after the boarding time is settled like a late cancellation (30 %).
+        var absent = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1);
+        jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, absent.reservationId().toString());
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.TOO_EARLY,
+                code.apply(() -> voyages.markNoShow(driver.token, client, published.voyageId(), absent.reservationId())));
+        // The boarding time is moved into the past in the test data instead of waiting for it.
+        jdbc.update("UPDATE voyage_stop SET planned_at=? WHERE gate_hash=? AND voyage_id=? AND stop_index=0",
+                java.time.LocalDateTime.ofInstant(clock.instant().minusSeconds(60), java.time.ZoneOffset.UTC), gate, published.voyageId().toString());
+        var noShow = voyages.markNoShow(driver.token, client, published.voyageId(), absent.reservationId());
+        assertEquals("no_show", noShow.state());
+        assertEquals(900, noShow.driverXaf(), "30 % of 6 000 F = 1 800 F, half to the driver");
+        assertEquals(4200, voyages.myReservations(rider.token, client).stream().filter(r -> r.reservationId().equals(absent.reservationId()))
+                .findFirst().orElseThrow().refundXaf());
+        assertEquals("no_show", voyages.markNoShow(driver.token, client, published.voyageId(), absent.reservationId()).state(), "repeat");
         assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_FOUND, assertThrows(com.waka.mobility.voyage.VoyageException.class,
                 () -> voyages.cancel(rider.token, client, published.voyageId(), "CHANGE_OF_PLAN")).code(), "only its driver cancels");
         assertEquals("cancelled", voyages.cancel(driver.token, client, published.voyageId(), "CHANGE_OF_PLAN").state());

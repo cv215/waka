@@ -62,7 +62,8 @@ public final class ReferralController {
         } catch (ReferralException error) {
             HttpStatus status = switch (error.code()) {
                 case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
-                case CODE_NOT_RECOGNIZED, SELF_REFERRAL -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case CODE_NOT_RECOGNIZED, SELF_REFERRAL, MUTUAL_REFERRAL, WINDOW_CLOSED -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case TOO_MANY_ATTEMPTS -> HttpStatus.TOO_MANY_REQUESTS;
                 case REFERRER_ALREADY_SET -> HttpStatus.CONFLICT;
                 case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             };

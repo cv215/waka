@@ -79,7 +79,7 @@ class ReferralMySqlVerificationTest {
     @AfterEach void cleanOnlyRandomNamespaces() {
         try {
             if (jdbc != null && gate != null) {
-                for (String table : List.of("referral_link", "referral_code", "identity_session",
+                for (String table : List.of("referral_attempt", "referral_link", "referral_code", "identity_session",
                         "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
                 }
@@ -135,6 +135,26 @@ class ReferralMySqlVerificationTest {
                 "an inactive owner's code is answered like an unknown code");
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM referral_link WHERE gate_hash=?", Integer.class, gate));
         assertThrows(SessionException.class, () -> referrals.mine(second.token, client), "a disabled account has no session use");
+    }
+
+    @Test void noMutualReferralAndFiveUnknownCodesPerDay() {
+        Login first = login(contact);
+        String firstCode = referrers(first).referralCode();
+        clock.advance(61);
+        Login second = login(otherContact);
+        String secondCode = referrers(second).referralCode();
+        referrals.attach(second.token, client, firstCode);
+        assertEquals(ReferralException.Code.MUTUAL_REFERRAL, failure(() -> referrals.attach(first.token, client, secondCode)));
+        for (int i = 0; i < PersistentReferralService.MAX_FAILED_ATTEMPTS; i++) {
+            assertEquals(ReferralException.Code.CODE_NOT_RECOGNIZED, failure(() -> referrals.attach(first.token, client, unknownCode(firstCode))));
+        }
+        assertEquals(ReferralException.Code.TOO_MANY_ATTEMPTS, failure(() -> referrals.attach(first.token, client, secondCode)),
+                "locked even for a real code");
+        assertEquals(5, jdbc.queryForObject("SELECT COUNT(*) FROM referral_attempt WHERE gate_hash=?", Integer.class, gate));
+        clock.advance(24 * 3600 + 1);
+        Login again = login(contact);
+        assertEquals(ReferralException.Code.CODE_NOT_RECOGNIZED, failure(() -> referrals.attach(again.token, client, unknownCode(firstCode))),
+                "after 24 hours the counter starts again");
     }
 
     @Test void codesUseTheUnambiguousAlphabet() {

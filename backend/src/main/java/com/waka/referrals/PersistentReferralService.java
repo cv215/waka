@@ -16,12 +16,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * R05 / A34: each account gets one shareable code; an account may attach at most one referrer, once,
  * on one level, never itself. Neither the code nor the answers reveal who owns a code. A linkage
  * creates no bonus. Correction after attachment is an assistance matter, not a self-service change.
- * The deadline for attaching a referrer is not adopted yet (K22): construct explicitly; not assembled by default.
+ * R12 (delegated decisions): only before any completed paid service, never mutual, at most five unrecognized
+ * codes per 24 hours. Construct explicitly; not assembled by default.
  */
 public final class PersistentReferralService {
     /** No 0/O or 1/I, so a code read aloud or copied by hand stays unambiguous. */
     public static final String ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     public static final Pattern CODE = Pattern.compile("[" + ALPHABET + "]{8}");
+    /** R12: unrecognized codes allowed per account over a sliding window. */
+    public static final int MAX_FAILED_ATTEMPTS = 5;
+    public static final java.time.Duration ATTEMPT_WINDOW = java.time.Duration.ofHours(24);
     public record ReferralView(String referralCode, boolean referrerAttached, Instant attachedAt) { }
     public record LinkageView(Instant attachedAt, boolean created) { }
     private record Outcome<T>(T value, ReferralException.Code refusal) { }
@@ -62,18 +66,35 @@ public final class PersistentReferralService {
         if (referralCode == null || !CODE.matcher(referralCode).matches()) throw new ReferralException(ReferralException.Code.INVALID_REQUEST);
         return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             String actor = session.accountId().toString();
+            Instant now = session.serverTime().truncatedTo(ChronoUnit.MICROS);
+            // R12: at most five unrecognized codes over 24 hours; the lock is checked before any lookup.
+            Integer failures = jdbc.queryForObject("SELECT COUNT(*) FROM referral_attempt WHERE gate_hash=? AND account_id=? AND attempted_at>?",
+                    Integer.class, gate, actor, sql(now.minus(ATTEMPT_WINDOW)));
+            if (failures != null && failures >= MAX_FAILED_ATTEMPTS) return new Outcome<LinkageView>(null, ReferralException.Code.TOO_MANY_ATTEMPTS);
             var owners = jdbc.query("SELECT c.account_id FROM referral_code c JOIN identity_account a ON a.gate_hash=c.gate_hash AND a.id=c.account_id "
                     + "WHERE c.gate_hash=? AND c.code=? AND a.status='ACTIVE' FOR UPDATE", (rs, n) -> rs.getString(1), gate, referralCode);
             var existing = jdbc.query("SELECT referrer_account_id,linked_at FROM referral_link WHERE gate_hash=? AND account_id=? FOR UPDATE",
                     (rs, n) -> new Object[] { rs.getString(1), instant(rs.getObject(2, LocalDateTime.class)) }, gate, actor);
-            if (owners.isEmpty()) return new Outcome<LinkageView>(null, ReferralException.Code.CODE_NOT_RECOGNIZED);
+            if (owners.isEmpty()) {
+                jdbc.update("INSERT INTO referral_attempt (gate_hash,id,account_id,attempted_at) VALUES (?,?,?,?)",
+                        gate, UUID.randomUUID().toString(), actor, sql(now));
+                return new Outcome<LinkageView>(null, ReferralException.Code.CODE_NOT_RECOGNIZED);
+            }
             String referrer = owners.getFirst();
             if (referrer.equals(actor)) return new Outcome<LinkageView>(null, ReferralException.Code.SELF_REFERRAL);
             if (!existing.isEmpty()) {
                 return referrer.equals(existing.getFirst()[0]) ? new Outcome<>(new LinkageView((Instant) existing.getFirst()[1], false), null)
                         : new Outcome<LinkageView>(null, ReferralException.Code.REFERRER_ALREADY_SET);
             }
-            Instant now = session.serverTime().truncatedTo(ChronoUnit.MICROS);
+            // R12: no mutual referral; the would-be referrer must not already be this account's referee.
+            Integer mutual = jdbc.queryForObject("SELECT COUNT(*) FROM referral_link WHERE gate_hash=? AND account_id=? AND referrer_account_id=?",
+                    Integer.class, gate, referrer, actor);
+            if (mutual != null && mutual > 0) return new Outcome<LinkageView>(null, ReferralException.Code.MUTUAL_REFERRAL);
+            // R12: only before any completed paid service, as client or driver (today: a boarded paid voyage).
+            Integer served = jdbc.queryForObject("SELECT (SELECT COUNT(*) FROM voyage_reservation WHERE gate_hash=? AND client_account_id=? AND state='boarded')"
+                    + " + (SELECT COUNT(*) FROM voyage_reservation r JOIN voyage v ON v.gate_hash=r.gate_hash AND v.id=r.voyage_id"
+                    + " WHERE r.gate_hash=? AND v.driver_account_id=? AND r.state='boarded')", Integer.class, gate, actor, gate, actor);
+            if (served != null && served > 0) return new Outcome<LinkageView>(null, ReferralException.Code.WINDOW_CLOSED);
             jdbc.update("INSERT INTO referral_link (gate_hash,account_id,referrer_account_id,linked_at,source) VALUES (?,?,?,?,'self_service')",
                     gate, actor, referrer, sql(now));
             return new Outcome<>(new LinkageView(now, true), null);

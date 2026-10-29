@@ -62,6 +62,7 @@ abstract interface class VoyageGateway {
   Future<ReservationView> cancelVoyageReservation(LoginSession session, String client, String reservationId);
   Future<List<PassengerView>> voyagePassengers(LoginSession session, String client, String voyageId);
   Future<PassengerView> boardPassenger(LoginSession session, String client, String voyageId, String code);
+  Future<PassengerView> markNoShow(LoginSession session, String client, String voyageId, String reservationId);
   void dispose();
 }
 
@@ -228,6 +229,13 @@ class LoginClient
         contentType: 'application/json', bytes: utf8.encode(jsonEncode({'boardingCode': code}))));
   }
 
+  @override
+  Future<PassengerView> markNoShow(LoginSession session, String client, String voyageId, String reservationId) async {
+    if (!isLoginUuid(voyageId) || !isLoginUuid(reservationId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return PassengerView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages/$voyageId/no-shows', 200,
+        contentType: 'application/json', bytes: utf8.encode(jsonEncode({'reservationId': reservationId}))));
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
       int maxBytes = 8192, int? alsoExpected}) async {
@@ -288,6 +296,10 @@ class LoginClient
           (422, 'WRONG_CODE') => PhotoFailure.wrongCode,
           (409, 'NOT_PAID') => PhotoFailure.notPaid,
           (429, 'BOARDING_LOCKED') => PhotoFailure.boardingLocked,
+          (422, 'MUTUAL_REFERRAL') => PhotoFailure.mutualReferral,
+          (422, 'WINDOW_CLOSED') => PhotoFailure.referralWindowClosed,
+          (429, 'TOO_MANY_ATTEMPTS') => PhotoFailure.tooManyAttempts,
+          (422, 'TOO_EARLY') => PhotoFailure.tooEarly,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

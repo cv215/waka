@@ -119,6 +119,20 @@ public final class VoyageController {
             return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().board(token, client, id, code)));
         } finally { Arrays.fill(token, '\0'); }
     }
+    /** R12: body {reservationId}; the driver declares a paid passenger absent after the boarding time. */
+    @PostMapping(path = "/api/v1/voyages/{voyageId}/no-shows", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentVoyageService.PassengerView> noShow(@PathVariable String voyageId, HttpServletRequest request)
+            throws IOException {
+        UUID id = LoginRequestReader.uuid(voyageId);
+        UUID reservation = LoginRequestReader.uuid(LoginRequestReader.body(request, Set.of("reservationId")).get("reservationId"));
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().markNoShow(token, client, id, reservation)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
     /** Exactly {fromIndex, toIndex, seats}: the price comes from the driver's list, never from the client. */
     @PostMapping(path = "/api/v1/voyages/{voyageId}/reservations", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
@@ -279,7 +293,7 @@ public final class VoyageController {
                 case DRIVER_NOT_ALLOWED -> HttpStatus.FORBIDDEN;
                 case TOO_MANY_SEATS, OWN_VOYAGE, DEPARTED -> HttpStatus.UNPROCESSABLE_CONTENT;
                 case NOT_ENOUGH_SEATS, ALREADY_BOARDED, NOT_PAID -> HttpStatus.CONFLICT;
-                case WRONG_CODE -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case WRONG_CODE, TOO_EARLY -> HttpStatus.UNPROCESSABLE_CONTENT;
                 case BOARDING_LOCKED -> HttpStatus.TOO_MANY_REQUESTS;
                 case NOT_FOUND -> HttpStatus.NOT_FOUND;
                 case IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;

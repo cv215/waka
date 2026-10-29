@@ -40,6 +40,11 @@ enum PhotoFailure {
   wrongCode,
   notPaid,
   boardingLocked,
+  /// R12: mutual referral, referral window closed, too many unknown codes, absent declared too early.
+  mutualReferral,
+  referralWindowClosed,
+  tooManyAttempts,
+  tooEarly,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];
