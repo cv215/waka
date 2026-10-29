@@ -1,0 +1,162 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:waka_mobile/features/identity/application/login_flow.dart';
+import 'package:waka_mobile/features/identity/data/login_client.dart';
+import 'package:waka_mobile/features/identity/data/login_models.dart';
+import 'package:waka_mobile/features/identity/data/login_store.dart';
+import 'package:waka_mobile/features/identity/data/vehicle_photo_models.dart';
+import 'package:waka_mobile/features/identity/data/voyage_models.dart';
+import 'package:waka_mobile/features/voyages/presentation/voyages_page.dart';
+
+import 'driver_document_test.dart' as fixture;
+
+String iso(DateTime t) => '${t.toUtc().toIso8601String().substring(0, 19)}Z';
+final departure = DateTime.utc(2026, 11, 15, 6);
+
+Map<String, Object?> voyageJson(String id, {Map<String, int>? available}) => {
+  'voyageId': id, 'category': 'private', 'seats': 4, 'state': 'published',
+  'stops': [
+    {'place': 'Yaoundé', 'plannedAt': iso(departure)},
+    {'place': 'Edéa', 'plannedAt': iso(departure.add(const Duration(hours: 3)))},
+    {'place': 'Douala', 'plannedAt': iso(departure.add(const Duration(hours: 4)))},
+  ],
+  'prices': {'0-1': 4000, '0-2': 6000, '1-2': 2000},
+  'availableSeats': available ?? {'0-1': 4, '0-2': 4, '1-2': 4},
+  'createdAt': iso(departure.subtract(const Duration(days: 2))), 'idempotentReplay': false,
+};
+
+Map<String, Object?> reservationJson(String voyage, {String state = 'awaiting_payment', int? refund, int? fee}) => {
+  'reservationId': randomLoginId(), 'voyageId': voyage, 'fromIndex': 0, 'toIndex': 2, 'seats': 2, 'seatPriceXaf': 6000,
+  'totalXaf': 12000, 'state': state, 'holdExpiresAt': iso(departure), 'boardingAt': iso(departure),
+  'refundXaf': refund, 'driverXaf': refund == null ? null : (12000 - refund) ~/ 2,
+  'wakaXaf': refund == null ? null : 12000 - refund - (12000 - refund) ~/ 2, 'feePercent': fee, 'idempotentReplay': false,
+};
+
+class VoyageFixture extends fixture.Gateway implements VoyageGateway {
+  VoyageFixture(LoginSession session) : super(session, 'private', 'holder');
+  final voyageId = randomLoginId();
+  final reserved = <String>[];
+  final published = <(List<VoyageStop>, int, Map<String, int>)>[];
+  final reservations = <Map<String, Object?>>[];
+
+  @override
+  Future<List<VoyageView>> upcomingVoyages(LoginSession s, String c) async => [VoyageView.parse(voyageJson(voyageId))];
+  @override
+  Future<List<VoyageView>> myVoyages(LoginSession s, String c) async => const [];
+  @override
+  Future<VoyageView> publishVoyage(LoginSession s, String c, String key, List<VoyageStop> stops, int seats, Map<String, int> prices) async {
+    published.add((stops, seats, prices));
+    return VoyageView.parse(voyageJson(randomLoginId()));
+  }
+  @override
+  Future<VoyageView> cancelVoyage(LoginSession s, String c, String id, String reason) async => VoyageView.parse(voyageJson(id));
+  @override
+  Future<ReservationView> reserveVoyage(LoginSession s, String c, String key, String voyage, int from, int to, int seats) async {
+    reserved.add('$key:$from-$to:$seats');
+    final json = reservationJson(voyage);
+    reservations.add(json);
+    return ReservationView.parse(json);
+  }
+  @override
+  Future<List<ReservationView>> myVoyageReservations(LoginSession s, String c) async =>
+      ReservationView.parseList(reservations);
+  @override
+  Future<ReservationView> cancelVoyageReservation(LoginSession s, String c, String id) async =>
+      ReservationView.parse(reservationJson(voyageId, state: 'cancelled_by_client', refund: 10200, fee: 15));
+}
+
+Future<(LoginFlow, VoyageFixture)> show(WidgetTester tester, {PickDateTime? pick}) async {
+  tester.view.physicalSize = const Size(900, 2400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final (login, gateway) = (await tester.runAsync(() async {
+    final session = fixture.grant();
+    final store = fixture.MemoryStore();
+    await store.write(LoginSnapshot(randomLoginId(), session: session));
+    final gateway = VoyageFixture(session);
+    final login = LoginFlow(gateway, store);
+    await login.initialize();
+    return (login, gateway);
+  }))!;
+  await tester.pumpWidget(MaterialApp(home: VoyagesPage(login: login, pickDateTime: pick ?? (_) async => null)));
+  await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+  await tester.pumpAndSettle();
+  return (login, gateway);
+}
+
+Future<void> settle(WidgetTester tester) async {
+  await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  test('lecture stricte : total incohérent, règlement faux ou prix au-dessus du plafond refusés', () {
+    final id = randomLoginId();
+    expect(() => ReservationView.parse({...reservationJson(id), 'totalXaf': 11000}), throwsA(isA<PhotoProblem>()));
+    expect(() => ReservationView.parse({...reservationJson(id, state: 'cancelled_by_client', refund: 10200, fee: 15), 'wakaXaf': 1}),
+        throwsA(isA<PhotoProblem>()));
+    expect(() => VoyageView.parse({...voyageJson(id), 'prices': {'0-1': 4000, '0-2': 10001, '1-2': 2000}}), throwsA(isA<PhotoProblem>()));
+    expect(() => VoyageView.parse({...voyageJson(id), 'driverAccountId': 'x'}), throwsA(isA<PhotoProblem>()));
+  });
+
+  testWidgets('réserver le trajet complet : prix du chauffeur, attente de paiement annoncée honnêtement', (tester) async {
+    final (login, gateway) = await show(tester);
+    expect(find.text('Yaoundé → Edéa → Douala'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Réserver'));
+    await tester.pumpAndSettle();
+    expect(find.text('Total : 6000 F (6000 F la place).'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Réserver'));
+    await settle(tester);
+    expect(gateway.reserved.single, endsWith(':0-2:1'));
+    expect(find.textContaining('paiement Mobile Money n’est pas encore ouvert'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('annuler une réservation affiche le remboursement calculé par le serveur', (tester) async {
+    final (login, gateway) = await show(tester);
+    gateway.reservations.add(reservationJson(gateway.voyageId, state: 'confirmed'));
+    await tester.tap(find.byIcon(Icons.refresh));
+    await settle(tester);
+    await tester.tap(find.text('Mes réservations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Annuler'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Gratuit jusqu’à 12 h avant le départ'), findsOneWidget);
+    await tester.tap(find.text('Annuler la réservation'));
+    await settle(tester);
+    expect(find.text('Réservation annulée : 10200 F remboursés (frais 15 %).'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('publier : un prix par paire d’arrêts, plafonné à 10 000 F', (tester) async {
+    var calls = 0;
+    final (login, gateway) = await show(tester, pick: (_) async => DateTime(2026, 11, 15, 6 + 4 * calls++));
+    await tester.tap(find.text('Mes voyages'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Publier un voyage'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Lieu de départ'), 'Yaoundé');
+    await tester.enterText(find.widgetWithText(TextField, 'Lieu d’arrivée'), 'Douala');
+    await tester.tap(find.text('Choisir — départ'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choisir — arrêt 2'));
+    await tester.pumpAndSettle();
+    final price = find.widgetWithText(TextField, 'Yaoundé → Douala (F)');
+    await tester.enterText(price, '10001');
+    await tester.pump();
+    expect(find.text('Chaque prix va de 1 à 10 000 F la place.'), findsOneWidget);
+    await tester.enterText(price, '6000');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Publier'));
+    await settle(tester);
+    final (stops, seats, prices) = gateway.published.single;
+    expect(stops.map((s) => s.place), ['Yaoundé', 'Douala']);
+    expect(seats, 1);
+    expect(prices, {'0-1': 6000});
+    expect(find.text('Voyage publié.'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+}

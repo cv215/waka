@@ -129,7 +129,7 @@ class AdmissionReviewMySqlVerificationTest {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                for (String table : List.of("voyage_reservation", "voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
                         "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
                         "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
@@ -312,11 +312,51 @@ class AdmissionReviewMySqlVerificationTest {
         var listed = voyages.upcoming(agent.token, client);
         assertEquals(List.of(published.voyageId()), listed.stream().map(com.waka.mobility.voyage.PersistentVoyageService.VoyageView::voyageId).toList());
         assertEquals("Edéa", listed.getFirst().stops().get(1).place());
+        // Seats are counted per leg (0: Yaoundé -> Edéa, 1: Edéa -> Douala); the car offers 4.
+        java.util.function.Function<Runnable, com.waka.mobility.voyage.VoyageException.Code> code =
+                action -> assertThrows(com.waka.mobility.voyage.VoyageException.class, action::run).code();
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.OWN_VOYAGE,
+                code.apply(() -> voyages.reserve(candidate.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1)));
+        UUID firstKey = UUID.randomUUID();
+        var first = voyages.reserve(agent.token, client, firstKey, published.voyageId(), 0, 1, 2);
+        assertEquals("awaiting_payment", first.state());
+        assertEquals(8000, first.totalXaf(), "2 seats x 4 000 F from the driver's list");
+        assertEquals(first.reservationId(), voyages.reserve(agent.token, client, firstKey, published.voyageId(), 0, 1, 2).reservationId());
+        var second = voyages.reserve(agent.token, client, UUID.randomUUID(), published.voyageId(), 1, 2, 4);
+        assertEquals(java.util.Map.of("0-1", 2, "0-2", 0, "1-2", 0), voyages.upcoming(agent.token, client).getFirst().availableSeats());
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_ENOUGH_SEATS,
+                code.apply(() -> voyages.reserve(agent.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1)), "leg 1 is full");
+        assertEquals("cancelled_by_client", voyages.cancelReservation(agent.token, client, second.reservationId()).state());
+        assertNull(voyages.myReservations(agent.token, client).stream().filter(r -> r.reservationId().equals(second.reservationId()))
+                .findFirst().orElseThrow().refundXaf(), "never paid: nothing to refund");
+        // Payment does not exist yet: a confirmed reservation is simulated to check the R11 settlement.
+        jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, first.reservationId().toString());
+        clock.advance(Duration.ofDays(2).minus(Duration.ofHours(5)).toSeconds());
+        // Sessions last at most two hours here: both people log in again.
+        Login rider = login(agentPhone);
+        clock.advance(61);
+        Login driver = login(candidatePhone);
+        var cancelled = voyages.cancelReservation(rider.token, client, first.reservationId());
+        assertEquals(15, cancelled.feePercent(), "5 h before departure");
+        assertEquals(6800, cancelled.refundXaf());
+        assertEquals(600, cancelled.driverXaf());
+        assertEquals(600, cancelled.wakaXaf());
+        assertEquals(cancelled.refundXaf(), voyages.cancelReservation(rider.token, client, first.reservationId()).refundXaf(), "repeat changes nothing");
+        var held = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 3);
+        clock.advance(181);
+        assertEquals("expired", voyages.myReservations(rider.token, client).getFirst().state(), "payment window over");
+        assertEquals(4, voyages.upcoming(rider.token, client).getFirst().availableSeats().get("0-2"), "expired holds free their seats");
+        var paid = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1);
+        jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, paid.reservationId().toString());
+        assertNotNull(held);
         assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_FOUND, assertThrows(com.waka.mobility.voyage.VoyageException.class,
-                () -> voyages.cancel(agent.token, client, published.voyageId(), "CHANGE_OF_PLAN")).code(), "only its driver cancels");
-        assertEquals("cancelled", voyages.cancel(candidate.token, client, published.voyageId(), "CHANGE_OF_PLAN").state());
-        assertTrue(voyages.upcoming(agent.token, client).isEmpty());
-        assertEquals(1, voyages.mine(candidate.token, client).size());
+                () -> voyages.cancel(rider.token, client, published.voyageId(), "CHANGE_OF_PLAN")).code(), "only its driver cancels");
+        assertEquals("cancelled", voyages.cancel(driver.token, client, published.voyageId(), "CHANGE_OF_PLAN").state());
+        var refunded = voyages.myReservations(rider.token, client).stream().filter(r -> r.reservationId().equals(paid.reservationId())).findFirst().orElseThrow();
+        assertEquals("cancelled_by_driver", refunded.state());
+        assertEquals(6000, refunded.refundXaf(), "driver cancellation: full refund");
+        assertTrue(voyages.upcoming(rider.token, client).isEmpty());
+        assertEquals(1, voyages.mine(driver.token, client).size());
     }
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
         Login candidate = login(candidatePhone);

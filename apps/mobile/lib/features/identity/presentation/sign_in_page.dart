@@ -9,6 +9,7 @@ import '../../drivers/presentation/driver_access_page.dart';
 import '../../drivers/presentation/driver_application_page.dart';
 import '../../privacy/presentation/my_data_page.dart';
 import '../../referrals/presentation/referral_page.dart';
+import '../../voyages/presentation/voyages_page.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
 import '../data/login_models.dart';
@@ -185,7 +186,16 @@ class _SignInPageState extends State<SignInPage> {
                   icon: const Icon(Icons.badge_outlined),
                   label: const Text('Ma candidature chauffeur'),
                 ),
-              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PrivacyGateway)
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is VoyageGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => VoyagesPage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.route_outlined),
+                  label: const Text('Voyage entre villes'),
+                ),              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PrivacyGateway)
                 TextButton.icon(
                   onPressed: _flow.busy
                       ? null

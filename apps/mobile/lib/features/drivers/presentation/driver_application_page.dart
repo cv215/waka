@@ -129,7 +129,9 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.notApplicable => 'Cette pièce n’est pas demandée pour ta situation.',
     PhotoFailure.registrationRequired => 'Renseigne d’abord l’immatriculation du véhicule.',
     PhotoFailure.expired => 'La date de fin de validité est déjà passée : il faut une pièce en cours de validité.',
-    PhotoFailure.selfReferral || PhotoFailure.codeNotRecognized || PhotoFailure.referrerAlreadySet =>
+    PhotoFailure.selfReferral || PhotoFailure.codeNotRecognized || PhotoFailure.referrerAlreadySet ||
+    PhotoFailure.driverNotAllowed || PhotoFailure.notEnoughSeats || PhotoFailure.ownVoyage || PhotoFailure.departed ||
+    PhotoFailure.tooManySeats =>
       'Cette action n’est pas possible maintenant.',
     null => null,
   };
@@ -377,7 +379,9 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.notApplicable => 'Cette pièce n’est pas demandée pour ta situation.',
     PhotoFailure.registrationRequired => 'Renseigne d’abord l’immatriculation du véhicule.',
     PhotoFailure.expired => 'La date de fin de validité est déjà passée : il faut une pièce en cours de validité.',
-    PhotoFailure.selfReferral || PhotoFailure.codeNotRecognized || PhotoFailure.referrerAlreadySet =>
+    PhotoFailure.selfReferral || PhotoFailure.codeNotRecognized || PhotoFailure.referrerAlreadySet ||
+    PhotoFailure.driverNotAllowed || PhotoFailure.notEnoughSeats || PhotoFailure.ownVoyage || PhotoFailure.departed ||
+    PhotoFailure.tooManySeats =>
       'Cette action n’est pas possible maintenant.',
     PhotoFailure.tooLarge => 'L’image dépasse 10 Mo. Choisis une image plus légère.',
     PhotoFailure.unsupported => 'Format non accepté : seules les images JPEG ou PNG sont possibles.',

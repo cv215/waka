@@ -11,6 +11,7 @@ import 'privacy_models.dart';
 import 'profile_models.dart';
 import 'referral_models.dart';
 import 'vehicle_photo_models.dart';
+import 'voyage_models.dart';
 
 abstract interface class LoginGateway {
   Future<LoginChallenge> request(LoginAttempt attempt, String client);
@@ -48,6 +49,20 @@ abstract interface class DriverAccessGateway {
   void dispose();
 }
 
+/// Intercity voyages (K25): listings, seat reservations and cancellations. No payment here yet.
+abstract interface class VoyageGateway {
+  Future<List<VoyageView>> upcomingVoyages(LoginSession session, String client);
+  Future<List<VoyageView>> myVoyages(LoginSession session, String client);
+  Future<VoyageView> publishVoyage(LoginSession session, String client, String key, List<VoyageStop> stops, int seats,
+      Map<String, int> prices);
+  Future<VoyageView> cancelVoyage(LoginSession session, String client, String voyageId, String reasonCode);
+  Future<ReservationView> reserveVoyage(LoginSession session, String client, String key, String voyageId, int from, int to,
+      int seats);
+  Future<List<ReservationView>> myVoyageReservations(LoginSession session, String client);
+  Future<ReservationView> cancelVoyageReservation(LoginSession session, String client, String reservationId);
+  void dispose();
+}
+
 /// Own referral code and the single referrer attachment (K22).
 abstract interface class ReferralGateway {
   Future<ReferralView> referral(LoginSession session, String client);
@@ -73,7 +88,7 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway, ReferralGateway, DriverAccessGateway {
+        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -154,6 +169,50 @@ class LoginClient
   Future<DriverAccessView> driverAccess(LoginSession session, String client) async =>
       DriverAccessView.parse(await _photoSend(session, client, 'GET', '/api/v1/driver/access', 200));
 
+  @override
+  Future<List<VoyageView>> upcomingVoyages(LoginSession session, String client) async =>
+      VoyageView.parseList(await _photoSend(session, client, 'GET', '/api/v1/voyages', 200, maxBytes: 262144));
+
+  @override
+  Future<List<VoyageView>> myVoyages(LoginSession session, String client) async =>
+      VoyageView.parseList(await _photoSend(session, client, 'GET', '/api/v1/driver/voyages', 200, maxBytes: 262144));
+
+  @override
+  Future<VoyageView> publishVoyage(LoginSession session, String client, String key, List<VoyageStop> stops, int seats,
+      Map<String, int> prices) async {
+    if (!isLoginUuid(key)) throw const PhotoProblem(PhotoFailure.invalid);
+    return VoyageView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json', maxBytes: 16384,
+        bytes: utf8.encode(jsonEncode({'stops': [for (final s in stops) s.toJson()], 'seats': seats, 'prices': prices}))));
+  }
+
+  @override
+  Future<VoyageView> cancelVoyage(LoginSession session, String client, String voyageId, String reasonCode) async {
+    if (!isLoginUuid(voyageId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return VoyageView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages/$voyageId/cancellations', 200,
+        contentType: 'application/json', maxBytes: 16384, bytes: utf8.encode(jsonEncode({'reasonCode': reasonCode}))));
+  }
+
+  @override
+  Future<ReservationView> reserveVoyage(LoginSession session, String client, String key, String voyageId, int from, int to,
+      int seats) async {
+    if (!isLoginUuid(key) || !isLoginUuid(voyageId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return ReservationView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages/$voyageId/reservations', 201,
+        alsoExpected: 200, key: key, contentType: 'application/json',
+        bytes: utf8.encode(jsonEncode({'fromIndex': from, 'toIndex': to, 'seats': seats}))));
+  }
+
+  @override
+  Future<List<ReservationView>> myVoyageReservations(LoginSession session, String client) async =>
+      ReservationView.parseList(await _photoSend(session, client, 'GET', '/api/v1/me/voyage-reservations', 200, maxBytes: 131072));
+
+  @override
+  Future<ReservationView> cancelVoyageReservation(LoginSession session, String client, String reservationId) async {
+    if (!isLoginUuid(reservationId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return ReservationView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyage-reservations/$reservationId/cancellations',
+        200, bytes: const [], contentType: 'application/json'));
+  }
+
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,
       {String? key, List<int>? bytes, String? contentType, Map<String, String> extra = const {},
       int maxBytes = 8192, int? alsoExpected}) async {
@@ -195,6 +254,7 @@ class LoginClient
         final problem = jsonDecode(utf8.decode(received));
         final code = problem is Map && problem['code'] is String ? problem['code'] as String : null;
         throw PhotoProblem(switch ((status, code)) {
+          (403, 'DRIVER_NOT_ALLOWED') => PhotoFailure.driverNotAllowed,
           (401 || 403, _) => PhotoFailure.denied,
           (404, _) => PhotoFailure.notFound,
           (400, 'FILE_REJECTED') => PhotoFailure.rejectedFile,
@@ -206,6 +266,10 @@ class LoginClient
           (422, 'SELF_REFERRAL') => PhotoFailure.selfReferral,
           (422, 'CODE_NOT_RECOGNIZED') => PhotoFailure.codeNotRecognized,
           (409, 'REFERRER_ALREADY_SET') => PhotoFailure.referrerAlreadySet,
+          (409, 'NOT_ENOUGH_SEATS') => PhotoFailure.notEnoughSeats,
+          (422, 'OWN_VOYAGE') => PhotoFailure.ownVoyage,
+          (422, 'DEPARTED') => PhotoFailure.departed,
+          (422, 'TOO_MANY_SEATS') => PhotoFailure.tooManySeats,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

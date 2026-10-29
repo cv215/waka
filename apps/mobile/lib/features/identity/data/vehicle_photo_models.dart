@@ -30,6 +30,12 @@ enum PhotoFailure {
   selfReferral,
   codeNotRecognized,
   referrerAlreadySet,
+  /// Voyages (K25): driver without effective access, section full, own voyage, too late, more seats than the car.
+  driverNotAllowed,
+  notEnoughSeats,
+  ownVoyage,
+  departed,
+  tooManySeats,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];
