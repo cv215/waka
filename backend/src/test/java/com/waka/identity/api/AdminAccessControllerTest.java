@@ -26,14 +26,12 @@ class AdminAccessControllerTest {
     private final String client = UUID.randomUUID().toString();
     private final String token = "A".repeat(43), adminToken = "B".repeat(43);
 
-    @Test void noAssemblyFailsClosedAndNoGrantRouteExists() throws Exception {
+    @Test void noAssemblyFailsClosed() throws Exception {
         MockMvc mvc = mvc(null);
         mvc.perform(withClient(post("/api/v1/admin/second-factor/enrollments"))).andExpect(status().isServiceUnavailable())
                 .andExpect(header().string("Cache-Control", "no-store"));
         mvc.perform(code("/api/v1/admin/sessions", "123456")).andExpect(status().isServiceUnavailable());
         mvc.perform(admin(get("/api/v1/admin/me"))).andExpect(status().isServiceUnavailable());
-        mvc.perform(withClient(post("/api/v1/admin/grants")).contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/admin/sessions").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"123456\"}"))
                 .andExpect(status().isUnauthorized());
     }

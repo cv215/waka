@@ -79,6 +79,57 @@ class AdminApi {
     return value;
   }
 
+  Future<List<GrantView>> grants(ClientSession session, String clientRef, AdminSession admin) async =>
+      GrantView.parseList(await _json('GET', '/api/v1/admin/grants', 200,
+          session: session, clientRef: clientRef, admin: admin, maxBytes: 131072));
+
+  /// K19: an identical active grant comes back unchanged (200) instead of a second one (201).
+  Future<GrantView> grant(ClientSession session, String clientRef, AdminSession admin, String accountId,
+      String function, String reasonCode) async {
+    if (!adminFunctions.contains(function) || !reasonPattern.hasMatch(reasonCode)) throw const ApiProblem(400, null);
+    final response = await _send('POST', '/api/v1/admin/grants', session: session, clientRef: clientRef, admin: admin,
+        body: {'accountId': uuid(accountId), 'function': function, 'reasonCode': reasonCode});
+    return GrantView.parse(_accepted(response, {200, 201}));
+  }
+
+  Future<GrantView> revoke(ClientSession session, String clientRef, AdminSession admin, String grantId,
+      String reasonCode) async {
+    if (!reasonPattern.hasMatch(reasonCode)) throw const ApiProblem(400, null);
+    return GrantView.parse(await _json('POST', '/api/v1/admin/grants/${uuid(grantId)}/revocations', 200,
+        session: session, clientRef: clientRef, admin: admin, body: {'reasonCode': reasonCode}));
+  }
+
+  /// A41: newest first; [cursor] is the id of the last entry already shown.
+  Future<List<AuditEntry>> audit(ClientSession session, String clientRef, AdminSession admin,
+      {String? objectType, String? objectId, int? cursor, int limit = 50}) async {
+    final safe = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+    if (objectType != null && !safe.hasMatch(objectType) || objectId != null && !safe.hasMatch(objectId) ||
+        cursor != null && cursor < 1 || limit < 1 || limit > 100) {
+      throw const ApiProblem(400, null);
+    }
+    final query = [
+      if (objectType != null) 'objectType=$objectType',
+      if (objectId != null) 'objectId=$objectId',
+      if (cursor != null) 'cursor=$cursor',
+      'limit=$limit',
+    ].join('&');
+    return AuditEntry.parseList(await _json('GET', '/api/v1/admin/audit?$query', 200,
+        session: session, clientRef: clientRef, admin: admin, maxBytes: 131072));
+  }
+
+  Object? _accepted(http.Response response, Set<int> expected) {
+    if (!expected.contains(response.statusCode)) throw _problem(response);
+    if (response.headers['cache-control'] != 'no-store' ||
+        !(response.headers['content-type'] ?? '').startsWith('application/json') || response.bodyBytes.length > 32768) {
+      throw const ApiProblem(0, null);
+    }
+    try {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
+      throw const ApiProblem(0, null);
+    }
+  }
+
   Future<Object?> _json(String method, String path, int expected, {ClientSession? session, String? clientRef,
       AdminSession? admin, String? key, Map<String, Object?>? body, int maxBytes = 32768}) async {
     final response = await _send(method, path, session: session, clientRef: clientRef, admin: admin, key: key, body: body);

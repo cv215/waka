@@ -29,8 +29,10 @@ String messageFor(Object error) {
     'INCOMPLETE' => 'Approbation impossible : toutes les photos et pièces doivent être jugées acceptables et valides.',
     'VERSION_CONFLICT' => 'Le dossier a changé depuis ta lecture. Relis-le avant de décider.',
     'IDEMPOTENCY_KEY_REUSED' => 'Cette décision ne correspond plus à la précédente tentative. Relis le dossier.',
-    'RESOURCE_NOT_FOUND' => 'Dossier ou fichier introuvable dans ton périmètre.',
+    'RESOURCE_NOT_FOUND' => 'Élément introuvable dans ton périmètre (dossier, fichier, compte actif ou habilitation).',
     'SERVICE_UNAVAILABLE' => 'Service momentanément indisponible.',
+    'SELF_GRANT_FORBIDDEN' => 'Tu ne peux ni t’attribuer ni te retirer une habilitation : un autre agent habilité doit le faire.',
+    'LAST_HABILITATIONS_HOLDER' => 'Impossible : il doit toujours rester au moins une personne pouvant gérer les habilitations.',
     _ => error.status == 400 ? 'Demande refusée : vérifie les informations saisies.' : 'Action refusée (${error.status}).',
   };
 }
@@ -54,6 +56,8 @@ class AgentSession extends ChangeNotifier {
   ClientSession? get client => _client;
   AdminSession? get admin => _admin;
   bool get canExamine => _admin?.functions.contains('ADMISSION') ?? false;
+  bool get canManageGrants => _admin?.functions.contains('HABILITATIONS') ?? false;
+  bool get canReadAudit => _admin?.functions.contains('AUDIT') ?? false;
 
   static String? normalizePhone(String input) {
     final compact = input.replaceAll(RegExp(r'[ ()-]'), '');
