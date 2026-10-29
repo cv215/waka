@@ -38,6 +38,8 @@ public final class DriverAccessService {
         if (!"approved".equals(basis.state())) return view(Access.NONE, null, basis, List.of("NOT_APPROVED"), List.of(), now);
         List<String> reasons = new ArrayList<>(), renew = new ArrayList<>();
         for (var requirement : basis.requirements()) {
+            // A document waived at approval (catalogue v2) does not block; it stays "to provide" for the driver.
+            if (basis.waivedCodes().contains(requirement.code())) continue;
             if (!"established".equals(requirement.status())) {
                 if (!reasons.contains("REQUIREMENTS_NOT_QUALIFIED")) reasons.add("REQUIREMENTS_NOT_QUALIFIED");
             } else if (requirement.expired()) {

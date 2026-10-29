@@ -57,7 +57,9 @@ public final class PersistentDriverApplicationService {
         @Override public String toString() { return "RequirementContext[REDACTED]"; }
     }
     /**
-     * One applicable requirement. {@code requiredForSubmission} is true for ESTABLISHED ones; a TO_CONFIRM
+     * One applicable requirement. {@code requiredForSubmission} is true for ESTABLISHED person documents
+     * (identity, licence), which are never waived; vehicle documents may be missing at submission and are
+     * judged, or waived with a reason, by the agent (catalogue v2). A TO_CONFIRM
      * requirement is never {@code satisfied}.
      */
     public record RequirementStatus(String code, String document, String explanation, String status,
@@ -76,7 +78,7 @@ public final class PersistentDriverApplicationService {
     /** Uses the catalogue in force, {@link DocumentCatalog#V1}. */
     public PersistentDriverApplicationService(PersistentSessionService sessions, JdbcTemplate jdbc,
             DataSourceTransactionManager manager, AdmissionCrypto crypto, Duration responseLifetime, Clock clock) {
-        this(sessions, jdbc, manager, crypto, responseLifetime, clock, DocumentCatalog.V1);
+        this(sessions, jdbc, manager, crypto, responseLifetime, clock, DocumentCatalog.CURRENT);
     }
 
     /** A different catalogue is a new, dated version decided by the founder (or a test fixture). */
@@ -211,11 +213,13 @@ public final class PersistentDriverApplicationService {
             Integer photos = jdbc.queryForObject("SELECT COUNT(*) FROM vehicle_photo WHERE gate_hash=? AND application_id=? AND current_marker=1",
                     Integer.class, gate, applicationId.toString());
             if (!fields.missing().isEmpty() || photos == null || photos != 6) return new Outcome(null, AdmissionException.Code.INCOMPLETE);
-            // Established documents must be present, valid and not waiting for a correction;
-            // documents of requirements still to be confirmed are optional and never satisfied.
-            boolean documentsReady = statuses(account, row.category, fields, now).stream()
-                    .filter(RequirementStatus::requiredForSubmission)
-                    .allMatch(s -> s.documentId() != null && !s.expired() && !"to_correct".equals(s.reviewState()));
+            // Identity and licence must be present, valid and not waiting for a correction; vehicle
+            // documents may be missing here (the agent judges or waives them); to-confirm ones are never satisfied.
+            // A document the agent asked to correct must be replaced first, waivable or not.
+            var statuses = statuses(account, row.category, fields, now);
+            boolean documentsReady = statuses.stream().filter(RequirementStatus::requiredForSubmission)
+                    .allMatch(s -> s.documentId() != null && !s.expired())
+                    && statuses.stream().noneMatch(s -> "to_correct".equals(s.reviewState()));
             if (!documentsReady) return new Outcome(null, AdmissionException.Code.INCOMPLETE);
             long next = reencrypt(actor, row, fields, now);
             jdbc.update("UPDATE driver_application SET state='submitted',submitted_at=? WHERE gate_hash=? AND id=?",
@@ -252,7 +256,9 @@ public final class PersistentDriverApplicationService {
     }
 
     /** What A32 needs about the caller's open file; null when the account has none. */
-    public record AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements) {
+    /** {@code waivedCodes}: vehicle documents waived by the approving decision (catalogue v2), with their traced reason. */
+    public record AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements,
+            Set<String> waivedCodes) {
         @Override public String toString() { return "AccessBasis[REDACTED]"; }
     }
 
@@ -261,12 +267,20 @@ public final class PersistentDriverApplicationService {
         requireTransaction();
         Row row = openApplication(candidate);
         if (row == null) return null;
+        // Only the latest approval counts: a later file version is approved again with its own waivers.
+        Set<String> waived = "approved".equals(row.state) ? Set.copyOf(jdbc.query(
+                "SELECT w.requirement_code FROM admission_waiver w JOIN admission_decision d ON d.gate_hash=w.gate_hash AND d.id=w.decision_id "
+                        + "WHERE w.gate_hash=? AND d.id=(SELECT id FROM admission_decision WHERE gate_hash=? AND application_id=? AND action='approve' "
+                        + "ORDER BY decided_at DESC,id DESC LIMIT 1)",
+                (rs, n) -> rs.getString(1), gate, gate, row.id.toString())) : Set.of();
         return new AccessBasis(row.id, row.category, row.state,
-                statuses(candidate, row.category, current(candidate, row, now).vehicleFields(), now));
+                statuses(candidate, row.category, current(candidate, row, now).vehicleFields(), now), waived);
     }
 
-    /** Recorded with each decision: "v1" for the catalogue in force, "test" for any other list. */
-    String catalogueVersion() { return catalog.equals(DocumentCatalog.V1) ? DocumentCatalog.VERSION : "test"; }
+    /** Recorded with each decision: the catalogue version used ("v1", "v2"), or "test" for any other list. */
+    String catalogueVersion() {
+        return catalog.equals(DocumentCatalog.V2) ? "v2" : catalog.equals(DocumentCatalog.V1) ? "v1" : "test";
+    }
 
     /** The requirement with this code in the catalogue in force, or null. */
     public DocumentCatalog.Requirement requirement(String code) {
@@ -295,8 +309,8 @@ public final class PersistentDriverApplicationService {
                     .filter(d -> d.type.equals(requirement.code()) && d.vehicleKey.equals(key)).findFirst().orElse(null);
             boolean established = requirement.status() == DocumentCatalog.Status.ESTABLISHED;
             boolean expired = doc != null && doc.validUntil != null && doc.validUntil.isBefore(today);
-            result.add(new RequirementStatus(requirement.code(), requirement.document(), requirement.explanation(),
-                    established ? "established" : "to_confirm", established,
+            result.add(new RequirementStatus(requirement.code(), requirement.documentFor(category), requirement.explanationFor(category),
+                    established ? "established" : "to_confirm", established && !requirement.waivable(),
                     doc == null ? null : doc.id, doc == null ? null : doc.review, doc == null ? null : doc.validUntil,
                     expired, established && doc != null && "accepted".equals(doc.review) && !expired));
         }

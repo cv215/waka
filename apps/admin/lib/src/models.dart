@@ -130,11 +130,13 @@ class WorkItem {
 
 class Requirement {
   const Requirement(this.code, this.document, this.established, this.documentId, this.reviewState, this.validUntil,
-      this.expired);
+      this.expired, {this.requiredForSubmission = false});
   final String code, document;
-  final bool established, expired;
+  final bool established, expired, requiredForSubmission;
   final String? documentId, reviewState;
   final DateTime? validUntil;
+  /// Catalogue v2: a vehicle document may be waived at approval; identity and licence (required to send) never.
+  bool get waivable => established && !requiredForSubmission;
 }
 
 class Detail {
@@ -185,13 +187,14 @@ class Detail {
         'expired', 'satisfied',
       });
       if (r['code'] is! String || !reasonPattern.hasMatch(r['code'] as String) || r['document'] is! String ||
-          !{'established', 'to_confirm'}.contains(r['status']) || r['expired'] is! bool ||
+          !{'established', 'to_confirm'}.contains(r['status']) || r['expired'] is! bool || r['requiredForSubmission'] is! bool ||
+          (r['requiredForSubmission'] == true && r['status'] != 'established') ||
           (r['reviewState'] != null && !{'received', 'accepted', 'to_correct'}.contains(r['reviewState']))) {
         throw const ResponseShapeError();
       }
       return Requirement(r['code'] as String, r['document'] as String, r['status'] == 'established',
           r['documentId'] == null ? null : uuid(r['documentId']), r['reviewState'] as String?, day(r['validUntil']),
-          r['expired'] as bool);
+          r['expired'] as bool, requiredForSubmission: r['requiredForSubmission'] as bool);
     }).toList();
     return Detail(
       applicationId: uuid(a['applicationId']),

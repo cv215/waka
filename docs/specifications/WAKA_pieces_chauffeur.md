@@ -1,4 +1,4 @@
-# WAKA — pièces justificatives des chauffeurs (catalogue v1)
+# WAKA — pièces justificatives des chauffeurs (catalogue v2 en vigueur)
 
 29 octobre 2026. Établi à la demande du fondateur : un dossier simple, adapté à chaque catégorie, sans pièce inutile ni demandée deux fois. **Ce catalogue ne déclare aucune conformité légale obtenue.** Chaque exigence porte un statut :
 
@@ -6,6 +6,38 @@
 - **À confirmer** : une source existe, mais le texte officiel, la catégorie exacte, le champ d'application ou la pièce recevable restent incertains. Une exigence à confirmer **n'est jamais considérée comme satisfaite**. Tant qu'elle s'applique à un dossier, **l'approbation est impossible**. Elle reste affichée au candidat, avec la mention « en cours de confirmation par WAKA ».
 
 Passer une exigence de « à confirmer » à « établie » demande une décision datée du fondateur, appuyée par le texte officiel ou une réponse écrite de l'administration. Cela crée une nouvelle version du catalogue. Rien n'est validé par précaution.
+
+## Catalogue v2 en vigueur — décision du fondateur du 29 octobre 2026
+
+Le fondateur a tranché les quatre exigences « à confirmer » de la v1. Sa décision s'appuie sur les sources [S4][S5][S6][S8] ci-dessous : des sources commerciales et de presse. **Aucun texte officiel n'a été consulté.** La v1 reste décrite plus bas, à titre d'historique ; chaque décision d'admission enregistre la version du catalogue utilisée.
+
+| Code | Taxi | Voiture personnelle | Décision v2 |
+|---|---|---|---|
+| `IDENTITY`, `DRIVING_LICENCE` | Oui | Oui | Inchangé. **Exigés pour envoyer le dossier, jamais dérogeables.** |
+| `REGISTRATION_CERTIFICATE` | Oui | Oui | Inchangé. |
+| `INSURANCE` | Oui : **couvrant le transport de passagers** | Oui : **assurance ordinaire du véhicule acceptée** | Exigence différente selon le parcours. |
+| `TECHNICAL_INSPECTION` | **Oui** | **Non** | Établie, pour les taxis seulement. |
+| `TRANSPORT_LICENCE` | **Oui, licence de première catégorie**, au nom du propriétaire ou exploitant | Non | Établie [S6]. |
+| `PUBLIC_TRANSPORT_CARD` | **Oui** (« carte bleue ») | Non | Établie [S6][S8]. |
+| `USE_AUTHORIZATION` | Si `authorized_use` | Si `authorized_use` | Inchangé. |
+| `PAID_TRANSPORT_AUTHORIZATION` | — | **Retirée** | Aucune autorisation n'est demandée au chauffeur. **C'est WAKA, en tant que plateforme, qui doit détenir l'autorisation applicable** (licence S10 ou autre) : c'est une obligation de l'entreprise, à suivre hors de ce catalogue. |
+
+L'enregistrement communal des taxis à Yaoundé (QR code, numéro de portière) n'est **pas demandé pour l'instant**.
+
+**Dérogation par l'agent (décision du fondateur).** Un agent ADMISSION peut approuver un dossier incomplet.
+- Il déroge pièce par pièce, avec un motif codé inscrit dans la décision (table `admission_waiver`).
+- **L'identité et le permis de conduire ne sont jamais dérogeables.**
+- La pièce dérogée reste « à fournir » pour le chauffeur et ne bloque pas son accès.
+- Le candidat peut donc envoyer son dossier avec seulement son identité, son permis, les huit champs et les six photos. Une pièce que l'agent a demandé de corriger doit toutefois être remplacée avant le nouvel envoi.
+
+**Risques signalés au fondateur** (ils ne changent pas sa décision) :
+- Ces exigences reposent sur des sources secondaires.
+- Une assurance « ordinaire » peut ne pas couvrir un transport rémunéré.
+- Une dérogation peut laisser circuler un véhicule sans titre exigé.
+
+Il est recommandé de confirmer ces trois points par écrit auprès du ministère des Transports et d'un assureur avant le lancement réel.
+
+## Historique : catalogue v1
 
 ## Deux parcours dès le départ
 
@@ -42,7 +74,7 @@ Les informations du véhicule (huit champs C03) et ses six photos PH01–PH06 re
 - En cas de problème, l'agent demande la correction de **la pièce concernée seulement**. Les autres pièces acceptées le restent.
 - Au renouvellement, les pièces acceptées et encore valides sont conservées. Une pièce dont la date de fin est dépassée redevient à fournir.
 - Une pièce reçue n'est pas une pièce acceptée. L'acceptation est faite par un agent habilité, avec motif.
-- **Approbation** seulement si : toutes les exigences applicables sont **établies** ; chaque pièce applicable est **acceptée et valide** ; les huit champs et les six photos sont **jugés acceptables** dans la même décision.
+- **Approbation** seulement si : toutes les exigences applicables sont **établies** ; chaque pièce applicable est **acceptée et valide**, ou, en v2, **dérogée avec motif** (jamais l'identité ni le permis) ; les huit champs et les six photos sont **jugés acceptables** dans la même décision.
 
 ## Sources consultées le 29 octobre 2026
 

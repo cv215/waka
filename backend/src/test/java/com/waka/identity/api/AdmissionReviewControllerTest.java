@@ -73,10 +73,10 @@ class AdmissionReviewControllerTest {
         var documents = List.of(new AdmissionReviewService.DocumentReview(document, null, "to_correct", "DOCUMENT_UNREADABLE"));
         var created = new AdmissionReviewService.Decision(UUID.randomUUID(), app, 3, "request_correction", "PHOTO_BLURRED",
                 "Plaque illisible", List.of(new AdmissionReviewService.PhotoReview("PH02", photo, "to_correct", "PLATE_UNREADABLE")),
-                List.of(new AdmissionReviewService.DocumentReview(document, "INSURANCE", "to_correct", "DOCUMENT_UNREADABLE")), now, false);
+                List.of(new AdmissionReviewService.DocumentReview(document, "INSURANCE", "to_correct", "DOCUMENT_UNREADABLE")), List.of(), now, false);
         when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), eq(3L), eq("request_correction"),
-                eq("PHOTO_BLURRED"), eq("Plaque illisible"), eq(created.photoReviews()), eq(documents))).thenReturn(created);
-        when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), anyLong(), eq("approve"), any(), any(), any(), any()))
+                eq("PHOTO_BLURRED"), eq("Plaque illisible"), eq(created.photoReviews()), eq(documents), eq(List.of()))).thenReturn(created);
+        when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), anyLong(), eq("approve"), any(), any(), any(), any(), any()))
                 .thenThrow(new AdmissionException(AdmissionException.Code.APPROVAL_NOT_AVAILABLE));
         when(service.detail(any(), eq(client), any(), eq(app)))
                 .thenThrow(new AdmissionException(AdmissionException.Code.CONFLICT_OF_INTEREST))
@@ -87,6 +87,10 @@ class AdmissionReviewControllerTest {
                 .andExpect(jsonPath("$.photoReviews[0].result").value("to_correct"))
                 .andExpect(jsonPath("$.documentReviews[0].documentType").value("INSURANCE"));
         mvc.perform(decide(withDocument(document.toString()).replace("\"documentId\"", "\"documentType\":\"INSURANCE\",\"documentId\"")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(decide("{\"expectedVersion\":3,\"action\":\"approve\",\"reasonCode\":\"ALL_GOOD\",\"waivers\":[{\"code\":\"INSURANCE\"}]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(decide("{\"expectedVersion\":3,\"action\":\"approve\",\"reasonCode\":\"ALL_GOOD\",\"waivers\":[{\"code\":\"INSURANCE\",\"reasonCode\":\"X_Y\",\"extra\":\"1\"}]}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(decide("{\"expectedVersion\":3,\"action\":\"approve\",\"reasonCode\":\"ALL_GOOD\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("APPROVAL_NOT_AVAILABLE"));

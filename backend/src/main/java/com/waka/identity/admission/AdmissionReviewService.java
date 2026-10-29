@@ -31,8 +31,10 @@ public final class AdmissionReviewService {
     public record PhotoReview(String view, UUID fileId, String result, String reasonCode) { }
     /** {@code documentType} is filled by the server from the catalogue; it is ignored on input. */
     public record DocumentReview(UUID documentId, String documentType, String result, String reasonCode) { }
+    /** Catalogue v2: approval without this vehicle document, with a traced reason; never identity or licence. */
+    public record Waiver(String code, String reasonCode) { }
     public record Decision(UUID decisionId, UUID applicationId, long examinedVersion, String action, String reasonCode,
-            String details, List<PhotoReview> photoReviews, List<DocumentReview> documentReviews, Instant decidedAt,
+            String details, List<PhotoReview> photoReviews, List<DocumentReview> documentReviews, List<Waiver> waivers, Instant decidedAt,
             boolean idempotentReplay) {
         @Override public String toString() { return "Decision[REDACTED]"; }
     }
@@ -87,17 +89,32 @@ public final class AdmissionReviewService {
     /**
      * A38. request_correction targets only the pieces marked to_correct; refuse closes the file; approve
      * requires that every applicable requirement is ESTABLISHED, every document accepted and valid
-     * (earlier or in this decision), the eight vehicle fields complete and all six photos acceptable.
+     * (earlier or in this decision) unless waived, the eight vehicle fields complete and all six photos acceptable.
      */
     public Decision decide(char[] token, String client, char[] adminToken, UUID applicationId, UUID key,
             long expectedVersion, String action, String reasonCode, String details, List<PhotoReview> reviews,
             List<DocumentReview> documents) {
+        return decide(token, client, adminToken, applicationId, key, expectedVersion, action, reasonCode, details, reviews,
+                documents, List.of());
+    }
+
+    /** Same, with waivers: only with approve, one per vehicle document, each with its reason code. */
+    public Decision decide(char[] token, String client, char[] adminToken, UUID applicationId, UUID key,
+            long expectedVersion, String action, String reasonCode, String details, List<PhotoReview> reviews,
+            List<DocumentReview> documents, List<Waiver> waiverList) {
         if (applicationId == null || key == null || expectedVersion < 1) throw invalid();
         if (!"request_correction".equals(action) && !"refuse".equals(action) && !"approve".equals(action)) throw invalid();
         if (reasonCode == null || !reasonCode.matches("[A-Z][A-Z0-9_]{2,47}")) throw invalid();
         String text = details(details);
         List<PhotoReview> photoReviews = reviews == null ? List.of() : List.copyOf(reviews);
         List<DocumentReview> documentReviews = documents == null ? List.of() : List.copyOf(documents);
+        List<Waiver> waivers = waiverList == null ? List.of() : List.copyOf(waiverList);
+        if (!waivers.isEmpty() && !"approve".equals(action)) throw invalid();
+        var waivedCodes = new HashSet<String>();
+        for (Waiver waiver : waivers) {
+            if (waiver == null || waiver.code == null || !waiver.code.matches("[A-Z][A-Z0-9_]{2,39}") || !waivedCodes.add(waiver.code)
+                    || waiver.reasonCode == null || !waiver.reasonCode.matches("[A-Z][A-Z0-9_]{2,47}")) throw invalid();
+        }
         var seen = new HashSet<String>();
         for (PhotoReview review : photoReviews) {
             if (review == null || !VIEWS.contains(review.view) || review.fileId == null || !seen.add(review.view)
@@ -110,8 +127,13 @@ public final class AdmissionReviewService {
         return unwrap(admin.withAdmin(token, client, adminToken, AdminFunction.ADMISSION, (session, context) -> {
             String agent = context.accountId().toString();
             String request = crypto.mac("admission-decision-request-v1", agent, applicationId.toString(), key.toString());
-            String payload = crypto.mac("admission-decision-payload-v2", agent, applicationId.toString(), Long.toString(expectedVersion),
-                    action, reasonCode, text == null ? "" : text, canonical(photoReviews), canonicalDocuments(documentReviews));
+            // Without waivers the payload stays the v2 one, so earlier decisions are still found on replay.
+            String payload = waivers.isEmpty()
+                    ? crypto.mac("admission-decision-payload-v2", agent, applicationId.toString(), Long.toString(expectedVersion),
+                            action, reasonCode, text == null ? "" : text, canonical(photoReviews), canonicalDocuments(documentReviews))
+                    : crypto.mac("admission-decision-payload-v3", agent, applicationId.toString(), Long.toString(expectedVersion),
+                            action, reasonCode, text == null ? "" : text, canonical(photoReviews), canonicalDocuments(documentReviews),
+                            canonicalWaivers(waivers));
             var previous = jdbc.query("SELECT id,payload_mac FROM admission_decision WHERE gate_hash=? AND request_mac=? FOR UPDATE",
                     (rs, n) -> new String[] { rs.getString(1), rs.getString(2) }, gate, request);
             if (!previous.isEmpty()) {
@@ -140,8 +162,15 @@ public final class AdmissionReviewService {
                 }
                 boolean photosAcceptable = photoReviews.size() == VIEWS.size()
                         && photoReviews.stream().allMatch(r -> "acceptable".equals(r.result));
+                // A waiver must name an applicable vehicle document; identity and licence are never waived.
+                for (String code : waivedCodes) {
+                    var waived = applications.requirement(code);
+                    if (waived == null || !waived.waivable() || requirements.stream().noneMatch(r -> r.code().equals(code))) {
+                        return new Out<Decision>(null, AdmissionException.Code.INVALID_REQUEST);
+                    }
+                }
                 boolean documentsAcceptable = documentReviews.stream().allMatch(r -> "acceptable".equals(r.result))
-                        && requirements.stream().allMatch(r -> r.documentId() != null && !r.expired()
+                        && requirements.stream().allMatch(r -> waivedCodes.contains(r.code()) || r.documentId() != null && !r.expired()
                                 && ("accepted".equals(r.reviewState()) || documentReviews.stream()
                                         .anyMatch(d -> d.documentId.equals(r.documentId()))));
                 if (!photosAcceptable || !documentsAcceptable || !examined.view().missingVehicleFields().isEmpty()) {
@@ -172,8 +201,12 @@ public final class AdmissionReviewService {
                 jdbc.update("UPDATE driver_document SET review_state=?,reviewed_at=? WHERE gate_hash=? AND id=? AND current_marker=1",
                         "acceptable".equals(review.result) ? "accepted" : "to_correct", sql(now), gate, review.documentId.toString());
             }
+            for (Waiver waiver : waivers) {
+                jdbc.update("INSERT INTO admission_waiver (gate_hash,decision_id,requirement_code,reason_code) VALUES (?,?,?,?)",
+                        gate, id.toString(), waiver.code, waiver.reasonCode);
+            }
             return new Out<>(new Decision(id, applicationId, expectedVersion, action, reasonCode, text,
-                    sortedReviews(photoReviews), documentReviewsOf(id), now, false), null);
+                    sortedReviews(photoReviews), documentReviewsOf(id), waiversOf(id), now, false), null);
         }, AdmissionReviewService::refusedByAdmin));
     }
 
@@ -186,6 +219,14 @@ public final class AdmissionReviewService {
         return reviews.stream().sorted((a, b) -> a.documentId.compareTo(b.documentId))
                 .map(r -> r.documentId + ":" + r.result + ":" + (r.reasonCode == null ? "" : r.reasonCode))
                 .collect(Collectors.joining(";"));
+    }
+    private static String canonicalWaivers(List<Waiver> waivers) {
+        return waivers.stream().sorted((a, b) -> a.code.compareTo(b.code)).map(w -> w.code + ":" + w.reasonCode)
+                .collect(Collectors.joining(";"));
+    }
+    private List<Waiver> waiversOf(UUID decision) {
+        return jdbc.query("SELECT requirement_code,reason_code FROM admission_waiver WHERE gate_hash=? AND decision_id=? ORDER BY requirement_code",
+                (rs, n) -> new Waiver(rs.getString(1), rs.getString(2)), gate, decision.toString());
     }
     private List<DocumentReview> documentReviewsOf(UUID decision) {
         return jdbc.query("SELECT document_id,document_type,result,reason_code FROM admission_document_review WHERE gate_hash=? AND decision_id=? ORDER BY document_type",
@@ -225,7 +266,7 @@ public final class AdmissionReviewService {
                 (rs, n) -> new PhotoReview(rs.getString(1), UUID.fromString(rs.getString(2)), rs.getString(3), rs.getString(4)),
                 gate, id.toString());
         return new Decision(id, applicationId, ((Number) row.get("examined_version")).longValue(), (String) row.get("action"),
-                (String) row.get("reason_code"), details, reviews, documentReviewsOf(id),
+                (String) row.get("reason_code"), details, reviews, documentReviewsOf(id), waiversOf(id),
                 instant((LocalDateTime) row.get("decided_at")), false);
     }
     private Map<String, UUID> currentPhotos(UUID applicationId) {
@@ -261,7 +302,7 @@ public final class AdmissionReviewService {
     }
     private static Decision withReplay(Decision d) {
         return new Decision(d.decisionId, d.applicationId, d.examinedVersion, d.action, d.reasonCode, d.details,
-                d.photoReviews, d.documentReviews, d.decidedAt, true);
+                d.photoReviews, d.documentReviews, d.waivers, d.decidedAt, true);
     }
     private byte[] detailsAad(UUID decision, UUID application) {
         return AdmissionCrypto.aad("waka-admission-decision-v1", gate, decision.toString(), application.toString(), crypto.keyId());

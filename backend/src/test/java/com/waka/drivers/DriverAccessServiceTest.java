@@ -20,7 +20,7 @@ class DriverAccessServiceTest {
                 UUID.randomUUID(), satisfied ? "accepted" : "received", LocalDate.of(2027, 1, 1), expired, satisfied);
     }
     private AccessBasis basis(String category, String state, RequirementStatus... requirements) {
-        return new AccessBasis(id, category, state, List.of(requirements));
+        return new AccessBasis(id, category, state, List.of(requirements), java.util.Set.of());
     }
 
     @Test void noFileOrNoApprovalGivesNoAccess() {
@@ -42,6 +42,15 @@ class DriverAccessServiceTest {
         assertEquals("provisional", personal.access());
         assertEquals("provisional_before_first_service", personal.basis());
         assertEquals("not_started", personal.trial(), "the trial starts only with a first completed paid service");
+    }
+
+    @Test void aDocumentWaivedAtApprovalDoesNotBlockButOthersStillDo() {
+        var waived = new AccessBasis(id, "taxi", "approved", List.of(req("IDENTITY", "established", false, true),
+                req("PUBLIC_TRANSPORT_CARD", "established", false, false)), java.util.Set.of("PUBLIC_TRANSPORT_CARD"));
+        assertEquals("active", DriverAccessService.evaluate(waived, now).access());
+        var other = new AccessBasis(id, "taxi", "approved", List.of(req("PUBLIC_TRANSPORT_CARD", "established", false, false),
+                req("INSURANCE", "established", true, false)), java.util.Set.of("PUBLIC_TRANSPORT_CARD"));
+        assertEquals(List.of("INSURANCE"), DriverAccessService.evaluate(other, now).documentsToRenew());
     }
 
     @Test void anExpiredOrInvalidEssentialDocumentBlocksNewReservations() {

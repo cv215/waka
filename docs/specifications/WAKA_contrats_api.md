@@ -570,3 +570,17 @@ Un seul niveau : le parrain est gardé tel quel, sans chaîne. Le rattachement n
 Lire cet accès ne l'accorde pas, ne le prolonge pas et ne consomme pas l'essai. Un blocage ne touche que les **nouvelles** réservations ; les engagements existants relèvent de l'assistance (R02).
 
 **Hors de ce point**, parce que les objets correspondants n'existent pas encore : l'essai de sept périodes de 24 h, les périodes payées et les achats (R06, A33), ainsi que les cas ouverts listés dans `docs/decisions/README.md` (achat avant la première prestation, première prestation interrompue, prolongation et remboursement). Ils seront ajoutés avec les réservations et les paiements, sans changer les règles ci-dessus.
+
+### K24 — Catalogue v2 et dérogations à l'approbation (A29, A38)
+
+Les règles suivent la décision du fondateur du 29 octobre 2026, décrite dans `WAKA_pieces_chauffeur.md`.
+
+- **A29 (envoi du dossier)** : seules les pièces de la personne (identité, permis) sont `requiredForSubmission`. Elles doivent être présentes et valides. Les pièces du véhicule peuvent manquer au moment de l'envoi ; l'agent les juge ou y déroge. Une pièce marquée `to_correct` doit être remplacée avant le nouvel envoi.
+- **A38 (approbation)** : le champ facultatif `waivers: [{code, reasonCode}]` n'est admis qu'avec `approve`.
+  - Une dérogation porte sur une pièce du véhicule applicable au dossier, avec un motif codé obligatoire.
+  - Si elle vise `IDENTITY` ou `DRIVING_LICENCE`, ou une pièce non applicable : 400 `INVALID_REQUEST`.
+  - Une pièce du véhicule sans document acceptable et sans dérogation : 409 `INCOMPLETE`.
+  - Les dérogations sont enregistrées avec la décision (`admission_waiver`) et renvoyées dans `waivers`, à l'agent comme au candidat.
+  - Sans dérogation, l'empreinte de la décision reste celle d'avant : les décisions antérieures sont retrouvées à l'identique.
+- **A32 (accès effectif)** : une pièce dérogée par la dernière approbation ne bloque pas l'accès. Elle reste « à fournir » dans la liste des pièces du chauffeur.
+- La version du catalogue enregistrée avec chaque décision vaut désormais `v2`.
