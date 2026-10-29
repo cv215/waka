@@ -149,7 +149,8 @@ class DriverApplicationControllerTest {
     private static MockMvc mvc(PersistentDriverApplicationService service) {
         var beans = new DefaultListableBeanFactory();
         if (service != null) beans.registerSingleton("applications", service);
-        return MockMvcBuilders.standaloneSetup(new DriverApplicationController(beans.getBeanProvider(PersistentDriverApplicationService.class)))
+        return MockMvcBuilders.standaloneSetup(new DriverApplicationController(beans.getBeanProvider(PersistentDriverApplicationService.class),
+                        beans.getBeanProvider(com.waka.identity.admission.AdmissionReviewService.class)))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .addFilters(new RequestDiagnosticsFilter()).build();
     }

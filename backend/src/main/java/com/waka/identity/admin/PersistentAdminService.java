@@ -1,7 +1,10 @@
 package com.waka.identity.admin;
 
 import com.waka.identity.session.PersistentSessionService;
+import com.waka.identity.session.PersistentSessionService.AuthenticatedSession;
 import java.net.URLEncoder;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -170,36 +173,50 @@ public final class PersistentAdminService {
 
     /** Checks both proofs and the current grants; every administrative route starts here. */
     public AdminContext authenticate(char[] token, String client, char[] adminToken) {
+        return unwrap(withAdmin(token, client, adminToken, null,
+                (session, context) -> new Outcome<>(context, null), code -> new Outcome<AdminContext>(null, code)));
+    }
+
+    /**
+     * Runs {@code operation} in the same transaction as the client session, administrative session and
+     * grant checks, so a revocation cannot slip between authorization and effect. Refusals are values
+     * (never thrown inside the transaction) so that session expiry markers are committed.
+     */
+    public <T> T withAdmin(char[] token, String client, char[] adminToken, AdminFunction required,
+            BiFunction<AuthenticatedSession, AdminContext, T> operation, Function<AdminException.Code, T> refused) {
         if (adminToken == null) throw new AdminException(AdminException.Code.INVALID_ADMIN_SESSION);
+        Objects.requireNonNull(operation); Objects.requireNonNull(refused);
         String hash = crypto.tokenHash(adminToken);
-        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+        return sessions.withAuthenticatedSession(token, client, session -> {
             String actor = session.accountId().toString();
             var rows = jdbc.query("SELECT id,account_id,base_session_id,token_hash,idle_expires_at,absolute_expires_at,ended_at FROM admin_session WHERE gate_hash=? AND token_hash=? FOR UPDATE",
                     (rs, n) -> new Object[] { rs.getString("id"), rs.getString("account_id"), rs.getString("base_session_id"),
                             rs.getString("token_hash"), instant(rs.getObject("idle_expires_at", LocalDateTime.class)),
                             instant(rs.getObject("absolute_expires_at", LocalDateTime.class)), rs.getObject("ended_at", LocalDateTime.class) },
                     gate, hash);
-            if (rows.isEmpty()) return new Outcome<AdminContext>(null, AdminException.Code.INVALID_ADMIN_SESSION);
+            if (rows.isEmpty()) return refused.apply(AdminException.Code.INVALID_ADMIN_SESSION);
             Object[] row = rows.getFirst();
             String id = (String) row[0];
             Instant now = session.serverTime(), idle = (Instant) row[4], absolute = (Instant) row[5];
             if (!actor.equals(row[1]) || !session.sessionId().toString().equals(row[2])
                     || !AdminCrypto.equal(hash, (String) row[3]) || row[6] != null) {
-                return new Outcome<AdminContext>(null, AdminException.Code.INVALID_ADMIN_SESSION);
+                return refused.apply(AdminException.Code.INVALID_ADMIN_SESSION);
             }
             if (!now.isBefore(idle) || !now.isBefore(absolute)) {
                 end(id, now, "EXPIRED");
-                return new Outcome<AdminContext>(null, AdminException.Code.INVALID_ADMIN_SESSION);
+                return refused.apply(AdminException.Code.INVALID_ADMIN_SESSION);
             }
             List<AdminFunction> functions = activeFunctions(actor);
             if (functions.isEmpty()) {
                 end(id, now, "NO_GRANT");
-                return new Outcome<AdminContext>(null, AdminException.Code.NOT_AUTHORIZED);
+                return refused.apply(AdminException.Code.NOT_AUTHORIZED);
             }
             Instant nextIdle = earliest(now.plus(policy.idleLifetime()), absolute);
             jdbc.update("UPDATE admin_session SET last_seen_at=?,idle_expires_at=? WHERE gate_hash=? AND id=?", sql(now), sql(nextIdle), gate, id);
-            return new Outcome<>(new AdminContext(session.accountId(), UUID.fromString(id), functions, nextIdle, absolute, now), null);
-        }));
+            var context = new AdminContext(session.accountId(), UUID.fromString(id), functions, nextIdle, absolute, now);
+            if (required != null && !context.allows(required)) return refused.apply(AdminException.Code.NOT_AUTHORIZED);
+            return operation.apply(session, context);
+        });
     }
 
     /** Explicit end of the administrative session; the client session stays open. */

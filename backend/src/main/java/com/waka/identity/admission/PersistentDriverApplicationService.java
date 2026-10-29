@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -41,7 +42,11 @@ public final class PersistentDriverApplicationService {
     }
     private record Outcome(ApplicationView view, AdmissionException.Code refusal) { }
     private static final String DRAFT = "draft";
+    static final Set<String> STATES = Set.of("draft", "submitted", "correction_requested", "refused", "approved");
+    /** States in which the candidate may change the vehicle or photos. */
+    public static final Set<String> EDITABLE = Set.of("draft", "correction_requested");
     private static final long MAX_VERSION = 9007199254740991L;
+    private final boolean documentRequirementsQualified;
     private final PersistentSessionService sessions;
     private final JdbcTemplate jdbc;
     private final AdmissionCrypto crypto;
@@ -50,8 +55,20 @@ public final class PersistentDriverApplicationService {
     private final TransactionTemplate maintenance;
     private final Clock clock;
 
+    /** Document requirements are not qualified by default: submission is then refused (A29). */
     public PersistentDriverApplicationService(PersistentSessionService sessions, JdbcTemplate jdbc,
             DataSourceTransactionManager manager, AdmissionCrypto crypto, Duration responseLifetime, Clock clock) {
+        this(sessions, jdbc, manager, crypto, responseLifetime, clock, false);
+    }
+
+    /**
+     * {@code documentRequirementsQualified} must only be true once the founder has qualified the
+     * required documents; tests use it explicitly with no document family.
+     */
+    public PersistentDriverApplicationService(PersistentSessionService sessions, JdbcTemplate jdbc,
+            DataSourceTransactionManager manager, AdmissionCrypto crypto, Duration responseLifetime, Clock clock,
+            boolean documentRequirementsQualified) {
+        this.documentRequirementsQualified = documentRequirementsQualified;
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
         this.crypto = Objects.requireNonNull(crypto);
@@ -139,7 +156,7 @@ public final class PersistentDriverApplicationService {
             if (replay != null) return replay;
             Row row = owned(account, applicationId);
             if (row == null) return new Outcome(null, AdmissionException.Code.NOT_FOUND);
-            if (!DRAFT.equals(row.state)) return new Outcome(null, AdmissionException.Code.VERSION_CONFLICT);
+            if (!EDITABLE.contains(row.state)) return new Outcome(null, AdmissionException.Code.NOT_EDITABLE);
             if (expectedVersion != row.version || row.version == MAX_VERSION) {
                 return new Outcome(null, AdmissionException.Code.VERSION_CONFLICT);
             }
@@ -154,6 +171,80 @@ public final class PersistentDriverApplicationService {
             remember(actor, request, payload, view, now);
             return new Outcome(view, null);
         }));
+    }
+
+    /**
+     * A29: sends a complete draft (or corrected file) to examination. Requires the eight vehicle fields,
+     * the six current photos and qualified document requirements; never an approval or an access.
+     */
+    public ApplicationView submit(char[] token, String client, UUID applicationId, UUID key, long expectedVersion) {
+        if (applicationId == null || key == null || expectedVersion < 1 || expectedVersion > MAX_VERSION) throw invalid();
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            UUID account = session.accountId();
+            String actor = account.toString();
+            Instant now = session.serverTime();
+            String request = crypto.mac("admission-request-v1", actor,
+                    "POST /api/v1/driver-applications/" + applicationId + "/submissions", key.toString());
+            String payload = crypto.mac("admission-submit-v1", actor, applicationId.toString(), Long.toString(expectedVersion));
+            Outcome replay = replay(account, request, payload, now);
+            if (replay != null) return replay;
+            Row row = owned(account, applicationId);
+            if (row == null) return new Outcome(null, AdmissionException.Code.NOT_FOUND);
+            if (!EDITABLE.contains(row.state)) return new Outcome(null, AdmissionException.Code.NOT_EDITABLE);
+            if (expectedVersion != row.version || row.version == MAX_VERSION) return new Outcome(null, AdmissionException.Code.VERSION_CONFLICT);
+            if (!documentRequirementsQualified) return new Outcome(null, AdmissionException.Code.REQUIREMENTS_NOT_QUALIFIED);
+            VehicleFields fields = current(account, row, now).vehicleFields();
+            Integer photos = jdbc.queryForObject("SELECT COUNT(*) FROM vehicle_photo WHERE gate_hash=? AND application_id=? AND current_marker=1",
+                    Integer.class, gate, applicationId.toString());
+            if (!fields.missing().isEmpty() || photos == null || photos != 6) return new Outcome(null, AdmissionException.Code.INCOMPLETE);
+            long next = reencrypt(actor, row, fields, now);
+            jdbc.update("UPDATE driver_application SET state='submitted',submitted_at=? WHERE gate_hash=? AND id=?",
+                    sql(now), gate, applicationId.toString());
+            ApplicationView view = view(applicationId, account, row.category, "submitted", next, fields, row.createdAt, now, now, false);
+            remember(actor, request, payload, view, now);
+            return new Outcome(view, null);
+        }));
+    }
+
+    /** Examination support, called inside the caller's administrative transaction (gate held). */
+    record Examined(UUID candidate, ApplicationView view, Instant submittedAt) {
+        @Override public String toString() { return "Examined[REDACTED]"; }
+    }
+
+    Examined examinedLocked(UUID applicationId, Instant now) {
+        var rows = jdbc.query("SELECT account_id,submitted_at FROM driver_application WHERE gate_hash=? AND id=? FOR UPDATE",
+                (rs, n) -> new Object[] { UUID.fromString(rs.getString(1)), rs.getObject(2, LocalDateTime.class) },
+                gate, applicationId.toString());
+        if (rows.isEmpty()) return null;
+        UUID candidate = (UUID) rows.getFirst()[0];
+        LocalDateTime submitted = (LocalDateTime) rows.getFirst()[1];
+        Row row = owned(candidate, applicationId);
+        return new Examined(candidate, current(candidate, row, now), submitted == null ? null : instant(submitted));
+    }
+
+    /**
+     * Moves a submitted file after a decision; the vehicle is re-encrypted because its protection is
+     * bound to the version. Returns the new version, or -1 when the examined version is stale.
+     */
+    long decideLocked(UUID candidate, UUID applicationId, long examinedVersion, String toState, Instant now) {
+        Row row = owned(candidate, applicationId);
+        if (row == null || !"submitted".equals(row.state) || row.version != examinedVersion || row.version == MAX_VERSION) return -1;
+        VehicleFields fields = current(candidate, row, now).vehicleFields();
+        long next = reencrypt(candidate.toString(), row, fields, now);
+        jdbc.update("UPDATE driver_application SET state=?,open_marker=? WHERE gate_hash=? AND id=?",
+                toState, "refused".equals(toState) ? null : 1, gate, applicationId.toString());
+        return next;
+    }
+
+    private long reencrypt(String actor, Row row, VehicleFields fields, Instant now) {
+        long next = row.version + 1;
+        byte[] vehicle = encryptVehicle(actor, row.id, next, now, fields);
+        try {
+            int changed = jdbc.update("UPDATE driver_application SET version=?,key_id=?,vehicle_cipher=?,updated_at=? WHERE gate_hash=? AND id=? AND version=?",
+                    next, crypto.keyId(), vehicle, sql(now), gate, row.id.toString(), row.version);
+            if (changed != 1) throw unavailable();
+        } finally { Arrays.fill(vehicle, (byte) 0); }
+        return next;
     }
 
     /** Explicitly scheduled by the runtime owner; retains request markers so nothing is reapplied. */
@@ -266,7 +357,7 @@ public final class PersistentDriverApplicationService {
             VehicleFields fields = VehicleFields.read(input);
             Instant created = Instant.parse(input.readUTF()), updated = Instant.parse(input.readUTF()),
                     server = Instant.parse(input.readUTF());
-            if (input.available() != 0 || version < 1 || version > MAX_VERSION || !DRAFT.equals(state)
+            if (input.available() != 0 || version < 1 || version > MAX_VERSION || !STATES.contains(state)
                     || !("taxi".equals(category) || "private".equals(category))) throw unavailable();
             return view(id, account, category, state, version, fields, created, updated, server, true);
         } catch (IOException | IllegalArgumentException hidden) { throw unavailable(); }
