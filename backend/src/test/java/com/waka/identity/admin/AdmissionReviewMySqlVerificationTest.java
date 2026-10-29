@@ -231,6 +231,8 @@ class AdmissionReviewMySqlVerificationTest {
         UUID newInsurance = upload(established, candidate, app, "INSURANCE").documentId();
         long resubmitted = established.applications.submit(candidate.token, client, app, UUID.randomUUID(), version).version();
 
+        var access = new com.waka.drivers.DriverAccessService(sessions, established.applications);
+        assertEquals("none", access.access(candidate.token, client).access(), "submitted is not approved");
         var again = established.reviews.detail(agent.token, client, adminToken, app);
         assertEquals(newInsurance, documentOf(again.requirements(), "INSURANCE"));
         var approval = established.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), resubmitted, "approve",
@@ -239,6 +241,13 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals("approve", approval.action());
         assertEquals("approved", established.applications.read(candidate.token, client, app).state());
         assertEquals("test", jdbc.queryForObject("SELECT catalogue_version FROM admission_decision WHERE gate_hash=? AND action='approve'", String.class, gate));
+        var granted = access.access(candidate.token, client);
+        assertEquals("provisional", granted.access(), "approved private driver before a first service");
+        assertEquals("not_started", granted.trial());
+        jdbc.update("UPDATE driver_document SET valid_until=? WHERE gate_hash=? AND id=?", java.time.LocalDate.of(2020, 1, 1), gate, newInsurance.toString());
+        var blocked = access.access(candidate.token, client);
+        assertEquals("new_reservations_blocked", blocked.access(), "an expired essential document blocks new reservations");
+        assertEquals(List.of("INSURANCE"), blocked.documentsToRenew());
     }
 
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {

@@ -552,3 +552,21 @@ Un seul niveau : le parrain est gardé tel quel, sans chaîne. Le rattachement n
 1. Jusqu'à quand un compte peut-il rattacher un parrain ? Par exemple, seulement avant sa première réservation payée et terminée. R05 ne fixe pas ce délai, et aucun délai n'est appliqué tant que la décision n'est pas prise ; aucune réservation n'existe encore.
 2. Deux comptes peuvent-ils se parrainer mutuellement ? Ce n'est pas un auto-parrainage, et ce n'est pas interdit en l'état.
 3. Faut-il limiter le nombre d'essais de codes par compte ? Il y a environ 850 milliards de codes possibles, mais aucune limite n'est encore appliquée.
+
+### K23 — Accès effectif du chauffeur (A32, lecture seule)
+
+`GET /api/v1/driver/access` renvoie `{access, basis, applicationId, category, admissionState, reasons, documentsToRenew, trial, serverTime}` pour le seul titulaire. Comme les routes précédentes, elle est réalisée côté serveur et n'est pas assemblée par défaut (503).
+
+| Situation | `access` | `basis` / `reasons` |
+|---|---|---|
+| Aucun dossier | `none` | `NO_APPLICATION` |
+| Dossier non approuvé (brouillon, envoyé, correction demandée, refusé) | `none` | `NOT_APPROVED` |
+| Taxi approuvé, pièces essentielles valides | `active` | `taxi_no_subscription` : aucun abonnement pour un taxi (R02/R06) |
+| Particulier approuvé, pièces valides | `provisional` | `provisional_before_first_service`, `trial: not_started` (R06, K06) |
+| Approuvé, mais une pièce essentielle expirée | `new_reservations_blocked` | `DOCUMENT_EXPIRED` + `documentsToRenew` (R02) |
+| Approuvé, mais une pièce non valide | `new_reservations_blocked` | `DOCUMENT_NOT_VALID` |
+| Approuvé, mais une exigence redevenue à confirmer | `new_reservations_blocked` | `REQUIREMENTS_NOT_QUALIFIED` |
+
+Lire cet accès ne l'accorde pas, ne le prolonge pas et ne consomme pas l'essai. Un blocage ne touche que les **nouvelles** réservations ; les engagements existants relèvent de l'assistance (R02).
+
+**Hors de ce point**, parce que les objets correspondants n'existent pas encore : l'essai de sept périodes de 24 h, les périodes payées et les achats (R06, A33), ainsi que les cas ouverts listés dans `docs/decisions/README.md` (achat avant la première prestation, première prestation interrompue, prolongation et remboursement). Ils seront ajoutés avec les réservations et les paiements, sans changer les règles ci-dessus.
