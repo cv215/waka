@@ -123,21 +123,32 @@ public final class VehiclePhotoController {
             throw new ResponseStatusException(error.code() == SessionException.Code.SERVICE_UNAVAILABLE
                     ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.UNAUTHORIZED);
         } catch (FileException error) {
-            HttpStatus status = switch (error.code()) {
-                case INVALID_REQUEST, INVALID_FILE -> HttpStatus.BAD_REQUEST;
-                case NOT_FOUND -> HttpStatus.NOT_FOUND;
-                case IDEMPOTENCY_KEY_REUSED, NOT_EDITABLE -> HttpStatus.CONFLICT;
-                case NOT_AUTHORIZED -> HttpStatus.FORBIDDEN;
-                case INVALID_ADMIN_SESSION -> HttpStatus.UNAUTHORIZED;
-                case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
-            };
-            String code = switch (error.code()) {
-                case NOT_FOUND -> "RESOURCE_NOT_FOUND";
-                case INVALID_FILE -> "FILE_REJECTED";
-                case NOT_AUTHORIZED -> "ACTION_NOT_ALLOWED";
-                default -> error.code().name();
-            };
-            throw new ProfileHttpException(status, code);
+            throw fileError(error);
         }
     }
+
+    /** Shared with the document routes. */
+    static ProfileHttpException fileError(FileException error) {
+        HttpStatus status = switch (error.code()) {
+            case INVALID_REQUEST, INVALID_FILE, EXPIRED -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case IDEMPOTENCY_KEY_REUSED, NOT_EDITABLE, NOT_APPLICABLE, VEHICLE_REQUIRED -> HttpStatus.CONFLICT;
+            case NOT_AUTHORIZED -> HttpStatus.FORBIDDEN;
+            case INVALID_ADMIN_SESSION -> HttpStatus.UNAUTHORIZED;
+            case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+        };
+        String code = switch (error.code()) {
+            case NOT_FOUND -> "RESOURCE_NOT_FOUND";
+            case INVALID_FILE -> "FILE_REJECTED";
+            case NOT_AUTHORIZED -> "ACTION_NOT_ALLOWED";
+            case NOT_APPLICABLE -> "DOCUMENT_NOT_APPLICABLE";
+            case VEHICLE_REQUIRED -> "REGISTRATION_REQUIRED";
+            case EXPIRED -> "DOCUMENT_EXPIRED";
+            default -> error.code().name();
+        };
+        return new ProfileHttpException(status, code);
+    }
+
+    static String imageType(HttpServletRequest request) { return contentType(request); }
+    static byte[] imageBody(HttpServletRequest request) throws IOException { return rawBody(request); }
 }

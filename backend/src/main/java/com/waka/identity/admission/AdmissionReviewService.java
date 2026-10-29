@@ -29,12 +29,16 @@ public final class AdmissionReviewService {
     public record WorkItem(UUID applicationId, String requestedCategory, long version, Instant submittedAt) { }
     public record PhotoRef(String view, UUID fileId) { }
     public record PhotoReview(String view, UUID fileId, String result, String reasonCode) { }
+    /** {@code documentType} is filled by the server from the catalogue; it is ignored on input. */
+    public record DocumentReview(UUID documentId, String documentType, String result, String reasonCode) { }
     public record Decision(UUID decisionId, UUID applicationId, long examinedVersion, String action, String reasonCode,
-            String details, List<PhotoReview> photoReviews, Instant decidedAt, boolean idempotentReplay) {
+            String details, List<PhotoReview> photoReviews, List<DocumentReview> documentReviews, Instant decidedAt,
+            boolean idempotentReplay) {
         @Override public String toString() { return "Decision[REDACTED]"; }
     }
     public record Detail(PersistentDriverApplicationService.ApplicationView application, Instant submittedAt,
-            List<PhotoRef> photos, List<Decision> decisions) {
+            List<PhotoRef> photos, List<PersistentDriverApplicationService.RequirementStatus> requirements,
+            List<Decision> decisions) {
         @Override public String toString() { return "AdmissionDetail[REDACTED]"; }
     }
     private record Out<T>(T value, AdmissionException.Code refusal) { }
@@ -74,30 +78,40 @@ public final class AdmissionReviewService {
             if (examined.candidate().equals(context.accountId())) return new Out<Detail>(null, AdmissionException.Code.CONFLICT_OF_INTEREST);
             List<PhotoRef> photos = currentPhotos(applicationId).entrySet().stream()
                     .map(e -> new PhotoRef(e.getKey(), e.getValue())).sorted((a, b) -> a.view.compareTo(b.view)).toList();
-            return new Out<>(new Detail(examined.view(), examined.submittedAt(), photos, decisions(applicationId)), null);
+            return new Out<>(new Detail(examined.view(), examined.submittedAt(), photos,
+                    applications.requirementsLocked(examined.candidate(), applicationId, session.serverTime()),
+                    decisions(applicationId)), null);
         }, AdmissionReviewService::refusedByAdmin));
     }
 
-    /** A38 for request_correction or refuse; approve is refused until document requirements are qualified. */
+    /**
+     * A38. request_correction targets only the pieces marked to_correct; refuse closes the file; approve
+     * requires that every applicable requirement is ESTABLISHED, every document accepted and valid
+     * (earlier or in this decision), the eight vehicle fields complete and all six photos acceptable.
+     */
     public Decision decide(char[] token, String client, char[] adminToken, UUID applicationId, UUID key,
-            long expectedVersion, String action, String reasonCode, String details, List<PhotoReview> reviews) {
+            long expectedVersion, String action, String reasonCode, String details, List<PhotoReview> reviews,
+            List<DocumentReview> documents) {
         if (applicationId == null || key == null || expectedVersion < 1) throw invalid();
         if (!"request_correction".equals(action) && !"refuse".equals(action) && !"approve".equals(action)) throw invalid();
         if (reasonCode == null || !reasonCode.matches("[A-Z][A-Z0-9_]{2,47}")) throw invalid();
         String text = details(details);
         List<PhotoReview> photoReviews = reviews == null ? List.of() : List.copyOf(reviews);
+        List<DocumentReview> documentReviews = documents == null ? List.of() : List.copyOf(documents);
         var seen = new HashSet<String>();
         for (PhotoReview review : photoReviews) {
             if (review == null || !VIEWS.contains(review.view) || review.fileId == null || !seen.add(review.view)
-                    || !("acceptable".equals(review.result) || "to_correct".equals(review.result))
-                    || (review.reasonCode != null && !review.reasonCode.matches("[A-Z][A-Z0-9_]{2,47}"))
-                    || ("to_correct".equals(review.result) && review.reasonCode == null)) throw invalid();
+                    || invalidResult(review.result, review.reasonCode)) throw invalid();
+        }
+        for (DocumentReview review : documentReviews) {
+            if (review == null || review.documentId == null || !seen.add(review.documentId.toString())
+                    || invalidResult(review.result, review.reasonCode)) throw invalid();
         }
         return unwrap(admin.withAdmin(token, client, adminToken, AdminFunction.ADMISSION, (session, context) -> {
             String agent = context.accountId().toString();
             String request = crypto.mac("admission-decision-request-v1", agent, applicationId.toString(), key.toString());
-            String payload = crypto.mac("admission-decision-payload-v1", agent, applicationId.toString(), Long.toString(expectedVersion),
-                    action, reasonCode, text == null ? "" : text, canonical(photoReviews));
+            String payload = crypto.mac("admission-decision-payload-v2", agent, applicationId.toString(), Long.toString(expectedVersion),
+                    action, reasonCode, text == null ? "" : text, canonical(photoReviews), canonicalDocuments(documentReviews));
             var previous = jdbc.query("SELECT id,payload_mac FROM admission_decision WHERE gate_hash=? AND request_mac=? FOR UPDATE",
                     (rs, n) -> new String[] { rs.getString(1), rs.getString(2) }, gate, request);
             if (!previous.isEmpty()) {
@@ -105,7 +119,6 @@ public final class AdmissionReviewService {
                 Decision original = decision(UUID.fromString(previous.getFirst()[0]));
                 return new Out<>(withReplay(original), null);
             }
-            if ("approve".equals(action)) return new Out<Decision>(null, AdmissionException.Code.APPROVAL_NOT_AVAILABLE);
             Instant now = session.serverTime();
             var examined = applications.examinedLocked(applicationId, now);
             if (examined == null || examined.submittedAt() == null) return new Out<Decision>(null, AdmissionException.Code.NOT_FOUND);
@@ -114,7 +127,28 @@ public final class AdmissionReviewService {
             for (PhotoReview review : photoReviews) {
                 if (!review.fileId.equals(current.get(review.view))) return new Out<Decision>(null, AdmissionException.Code.VERSION_CONFLICT);
             }
-            String target = "refuse".equals(action) ? "refused" : "correction_requested";
+            var requirements = applications.requirementsLocked(examined.candidate(), applicationId, now);
+            Map<UUID, String> currentDocuments = new java.util.HashMap<>();
+            for (var requirement : requirements) if (requirement.documentId() != null) currentDocuments.put(requirement.documentId(), requirement.code());
+            for (DocumentReview review : documentReviews) {
+                if (!currentDocuments.containsKey(review.documentId)) return new Out<Decision>(null, AdmissionException.Code.VERSION_CONFLICT);
+            }
+            if ("approve".equals(action)) {
+                // A requirement still to be confirmed is never satisfied: no approval while one applies.
+                if (requirements.stream().anyMatch(r -> !"established".equals(r.status()))) {
+                    return new Out<Decision>(null, AdmissionException.Code.APPROVAL_NOT_AVAILABLE);
+                }
+                boolean photosAcceptable = photoReviews.size() == VIEWS.size()
+                        && photoReviews.stream().allMatch(r -> "acceptable".equals(r.result));
+                boolean documentsAcceptable = documentReviews.stream().allMatch(r -> "acceptable".equals(r.result))
+                        && requirements.stream().allMatch(r -> r.documentId() != null && !r.expired()
+                                && ("accepted".equals(r.reviewState()) || documentReviews.stream()
+                                        .anyMatch(d -> d.documentId.equals(r.documentId()))));
+                if (!photosAcceptable || !documentsAcceptable || !examined.view().missingVehicleFields().isEmpty()) {
+                    return new Out<Decision>(null, AdmissionException.Code.INCOMPLETE);
+                }
+            }
+            String target = switch (action) { case "refuse" -> "refused"; case "approve" -> "approved"; default -> "correction_requested"; };
             long next = applications.decideLocked(examined.candidate(), applicationId, expectedVersion, target, now);
             if (next < 0) return new Out<Decision>(null, AdmissionException.Code.VERSION_CONFLICT);
             UUID id = UUID.randomUUID();
@@ -124,16 +158,39 @@ public final class AdmissionReviewService {
                 try { cipher = crypto.encrypt(plain, detailsAad(id, applicationId)); }
                 finally { Arrays.fill(plain, (byte) 0); }
             }
-            jdbc.update("INSERT INTO admission_decision (gate_hash,id,application_id,examined_version,agent_account_id,admin_function,action,reason_code,key_id,details_cipher,request_mac,payload_mac,decided_at) VALUES (?,?,?,?,?,'ADMISSION',?,?,?,?,?,?,?)",
+            jdbc.update("INSERT INTO admission_decision (gate_hash,id,application_id,examined_version,agent_account_id,admin_function,action,reason_code,key_id,details_cipher,request_mac,payload_mac,decided_at,catalogue_version) VALUES (?,?,?,?,?,'ADMISSION',?,?,?,?,?,?,?,?)",
                     gate, id.toString(), applicationId.toString(), expectedVersion, agent, action, reasonCode, crypto.keyId(),
-                    cipher, request, payload, sql(now));
+                    cipher, request, payload, sql(now), applications.catalogueVersion());
             for (PhotoReview review : photoReviews) {
                 jdbc.update("INSERT INTO admission_photo_review (gate_hash,decision_id,photo_view,file_id,result,reason_code) VALUES (?,?,?,?,?,?)",
                         gate, id.toString(), review.view, review.fileId.toString(), review.result, review.reasonCode);
             }
+            for (DocumentReview review : documentReviews) {
+                jdbc.update("INSERT INTO admission_document_review (gate_hash,decision_id,document_id,document_type,result,reason_code) VALUES (?,?,?,?,?,?)",
+                        gate, id.toString(), review.documentId.toString(), currentDocuments.get(review.documentId), review.result, review.reasonCode);
+                // The piece keeps this examination for later files while it stays current and valid.
+                jdbc.update("UPDATE driver_document SET review_state=?,reviewed_at=? WHERE gate_hash=? AND id=? AND current_marker=1",
+                        "acceptable".equals(review.result) ? "accepted" : "to_correct", sql(now), gate, review.documentId.toString());
+            }
             return new Out<>(new Decision(id, applicationId, expectedVersion, action, reasonCode, text,
-                    sortedReviews(photoReviews), now, false), null);
+                    sortedReviews(photoReviews), documentReviewsOf(id), now, false), null);
         }, AdmissionReviewService::refusedByAdmin));
+    }
+
+    private static boolean invalidResult(String result, String reason) {
+        return !("acceptable".equals(result) || "to_correct".equals(result))
+                || (reason != null && !reason.matches("[A-Z][A-Z0-9_]{2,47}"))
+                || ("to_correct".equals(result) && reason == null);
+    }
+    private static String canonicalDocuments(List<DocumentReview> reviews) {
+        return reviews.stream().sorted((a, b) -> a.documentId.compareTo(b.documentId))
+                .map(r -> r.documentId + ":" + r.result + ":" + (r.reasonCode == null ? "" : r.reasonCode))
+                .collect(Collectors.joining(";"));
+    }
+    private List<DocumentReview> documentReviewsOf(UUID decision) {
+        return jdbc.query("SELECT document_id,document_type,result,reason_code FROM admission_document_review WHERE gate_hash=? AND decision_id=? ORDER BY document_type",
+                (rs, n) -> new DocumentReview(UUID.fromString(rs.getString(1)), rs.getString(2), rs.getString(3), rs.getString(4)),
+                gate, decision.toString());
     }
 
     /** The candidate reads the decisions about their own file, without the agent's identity. */
@@ -168,7 +225,8 @@ public final class AdmissionReviewService {
                 (rs, n) -> new PhotoReview(rs.getString(1), UUID.fromString(rs.getString(2)), rs.getString(3), rs.getString(4)),
                 gate, id.toString());
         return new Decision(id, applicationId, ((Number) row.get("examined_version")).longValue(), (String) row.get("action"),
-                (String) row.get("reason_code"), details, reviews, instant((LocalDateTime) row.get("decided_at")), false);
+                (String) row.get("reason_code"), details, reviews, documentReviewsOf(id),
+                instant((LocalDateTime) row.get("decided_at")), false);
     }
     private Map<String, UUID> currentPhotos(UUID applicationId) {
         return jdbc.query("SELECT photo_view,id FROM vehicle_photo WHERE gate_hash=? AND application_id=? AND current_marker=1",
@@ -202,7 +260,8 @@ public final class AdmissionReviewService {
         return List.copyOf(sorted);
     }
     private static Decision withReplay(Decision d) {
-        return new Decision(d.decisionId, d.applicationId, d.examinedVersion, d.action, d.reasonCode, d.details, d.photoReviews, d.decidedAt, true);
+        return new Decision(d.decisionId, d.applicationId, d.examinedVersion, d.action, d.reasonCode, d.details,
+                d.photoReviews, d.documentReviews, d.decidedAt, true);
     }
     private byte[] detailsAad(UUID decision, UUID application) {
         return AdmissionCrypto.aad("waka-admission-decision-v1", gate, decision.toString(), application.toString(), crypto.keyId());

@@ -9,7 +9,9 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -46,7 +48,21 @@ public final class PersistentDriverApplicationService {
     /** States in which the candidate may change the vehicle or photos. */
     public static final Set<String> EDITABLE = Set.of("draft", "correction_requested");
     private static final long MAX_VERSION = 9007199254740991L;
-    private final boolean documentRequirementsQualified;
+    /** Validity dates are read in Cameroon's civil time. */
+    static final ZoneId CAMEROON = ZoneId.of("Africa/Douala");
+    /** Vehicle key of PERSON documents, which do not depend on a vehicle. */
+    public static final String PERSON_KEY = "-";
+    /** Opaque context used by the document service inside its own authenticated transaction. */
+    public record RequirementContext(String state, String category, String usageRight, String vehicleKey) {
+        @Override public String toString() { return "RequirementContext[REDACTED]"; }
+    }
+    /**
+     * One applicable requirement. {@code requiredForSubmission} is true for ESTABLISHED ones; a TO_CONFIRM
+     * requirement is never {@code satisfied}.
+     */
+    public record RequirementStatus(String code, String document, String explanation, String status,
+            boolean requiredForSubmission, UUID documentId, String reviewState, LocalDate validUntil,
+            boolean expired, boolean satisfied) { }
     private final PersistentSessionService sessions;
     private final JdbcTemplate jdbc;
     private final AdmissionCrypto crypto;
@@ -55,20 +71,19 @@ public final class PersistentDriverApplicationService {
     private final TransactionTemplate maintenance;
     private final Clock clock;
 
-    /** Document requirements are not qualified by default: submission is then refused (A29). */
+    private final List<DocumentCatalog.Requirement> catalog;
+
+    /** Uses the catalogue in force, {@link DocumentCatalog#V1}. */
     public PersistentDriverApplicationService(PersistentSessionService sessions, JdbcTemplate jdbc,
             DataSourceTransactionManager manager, AdmissionCrypto crypto, Duration responseLifetime, Clock clock) {
-        this(sessions, jdbc, manager, crypto, responseLifetime, clock, false);
+        this(sessions, jdbc, manager, crypto, responseLifetime, clock, DocumentCatalog.V1);
     }
 
-    /**
-     * {@code documentRequirementsQualified} must only be true once the founder has qualified the
-     * required documents; tests use it explicitly with no document family.
-     */
+    /** A different catalogue is a new, dated version decided by the founder (or a test fixture). */
     public PersistentDriverApplicationService(PersistentSessionService sessions, JdbcTemplate jdbc,
             DataSourceTransactionManager manager, AdmissionCrypto crypto, Duration responseLifetime, Clock clock,
-            boolean documentRequirementsQualified) {
-        this.documentRequirementsQualified = documentRequirementsQualified;
+            List<DocumentCatalog.Requirement> catalog) {
+        this.catalog = List.copyOf(catalog);
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
         this.crypto = Objects.requireNonNull(crypto);
@@ -192,11 +207,16 @@ public final class PersistentDriverApplicationService {
             if (row == null) return new Outcome(null, AdmissionException.Code.NOT_FOUND);
             if (!EDITABLE.contains(row.state)) return new Outcome(null, AdmissionException.Code.NOT_EDITABLE);
             if (expectedVersion != row.version || row.version == MAX_VERSION) return new Outcome(null, AdmissionException.Code.VERSION_CONFLICT);
-            if (!documentRequirementsQualified) return new Outcome(null, AdmissionException.Code.REQUIREMENTS_NOT_QUALIFIED);
             VehicleFields fields = current(account, row, now).vehicleFields();
             Integer photos = jdbc.queryForObject("SELECT COUNT(*) FROM vehicle_photo WHERE gate_hash=? AND application_id=? AND current_marker=1",
                     Integer.class, gate, applicationId.toString());
             if (!fields.missing().isEmpty() || photos == null || photos != 6) return new Outcome(null, AdmissionException.Code.INCOMPLETE);
+            // Established documents must be present, valid and not waiting for a correction;
+            // documents of requirements still to be confirmed are optional and never satisfied.
+            boolean documentsReady = statuses(account, row.category, fields, now).stream()
+                    .filter(RequirementStatus::requiredForSubmission)
+                    .allMatch(s -> s.documentId() != null && !s.expired() && !"to_correct".equals(s.reviewState()));
+            if (!documentsReady) return new Outcome(null, AdmissionException.Code.INCOMPLETE);
             long next = reencrypt(actor, row, fields, now);
             jdbc.update("UPDATE driver_application SET state='submitted',submitted_at=? WHERE gate_hash=? AND id=?",
                     sql(now), gate, applicationId.toString());
@@ -205,6 +225,80 @@ public final class PersistentDriverApplicationService {
             return new Outcome(view, null);
         }));
     }
+
+    /** The documents of the caller's own file, only those that apply to the declared situation. */
+    public List<RequirementStatus> requirements(char[] token, String client, UUID applicationId) {
+        if (applicationId == null) throw invalid();
+        Outcome2<List<RequirementStatus>> outcome = sessions.withAuthenticatedSession(token, client, session -> {
+            Row row = owned(session.accountId(), applicationId);
+            if (row == null) return new Outcome2<List<RequirementStatus>>(null, AdmissionException.Code.NOT_FOUND);
+            VehicleFields fields = current(session.accountId(), row, session.serverTime()).vehicleFields();
+            return new Outcome2<>(statuses(session.accountId(), row.category, fields, session.serverTime()), null);
+        });
+        if (outcome.refusal() != null) throw new AdmissionException(outcome.refusal());
+        return outcome.value();
+    }
+
+    /**
+     * For the document service, inside its authenticated transaction: the owner's file state, category,
+     * declared use right and opaque vehicle key (null while no registration is declared).
+     */
+    public RequirementContext requirementContextLocked(UUID candidate, UUID applicationId, Instant now) {
+        requireTransaction();
+        Row row = owned(candidate, applicationId);
+        if (row == null) return null;
+        VehicleFields fields = current(candidate, row, now).vehicleFields();
+        return new RequirementContext(row.state, row.category, fields.usageRight(), vehicleKey(candidate, fields));
+    }
+
+    /** Recorded with each decision: "v1" for the catalogue in force, "test" for any other list. */
+    String catalogueVersion() { return catalog.equals(DocumentCatalog.V1) ? DocumentCatalog.VERSION : "test"; }
+
+    /** The requirement with this code in the catalogue in force, or null. */
+    public DocumentCatalog.Requirement requirement(String code) {
+        return catalog.stream().filter(r -> r.code().equals(code)).findFirst().orElse(null);
+    }
+
+    /** Requirement statuses for an examined file, inside the caller's administrative transaction. */
+    public List<RequirementStatus> requirementsLocked(UUID candidate, UUID applicationId, Instant now) {
+        requireTransaction();
+        Row row = owned(candidate, applicationId);
+        if (row == null) return List.of();
+        return statuses(candidate, row.category, current(candidate, row, now).vehicleFields(), now);
+    }
+
+    private List<RequirementStatus> statuses(UUID candidate, String category, VehicleFields fields, Instant now) {
+        String vehicleKey = vehicleKey(candidate, fields);
+        LocalDate today = LocalDate.ofInstant(now, CAMEROON);
+        record Doc(UUID id, String type, String vehicleKey, String review, LocalDate validUntil) { }
+        List<Doc> docs = jdbc.query("SELECT id,document_type,vehicle_key,review_state,valid_until FROM driver_document WHERE gate_hash=? AND account_id=? AND current_marker=1",
+                (rs, n) -> new Doc(UUID.fromString(rs.getString(1)), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getObject(5, LocalDate.class)), gate, candidate.toString());
+        List<RequirementStatus> result = new java.util.ArrayList<>();
+        for (DocumentCatalog.Requirement requirement : catalog.stream().filter(r -> r.appliesTo(category, fields.usageRight())).toList()) {
+            String key = requirement.scope() == DocumentCatalog.Scope.PERSON ? PERSON_KEY : vehicleKey;
+            Doc doc = key == null ? null : docs.stream()
+                    .filter(d -> d.type.equals(requirement.code()) && d.vehicleKey.equals(key)).findFirst().orElse(null);
+            boolean established = requirement.status() == DocumentCatalog.Status.ESTABLISHED;
+            boolean expired = doc != null && doc.validUntil != null && doc.validUntil.isBefore(today);
+            result.add(new RequirementStatus(requirement.code(), requirement.document(), requirement.explanation(),
+                    established ? "established" : "to_confirm", established,
+                    doc == null ? null : doc.id, doc == null ? null : doc.review, doc == null ? null : doc.validUntil,
+                    expired, established && doc != null && "accepted".equals(doc.review) && !expired));
+        }
+        return List.copyOf(result);
+    }
+    /** Same registration, same key: vehicle documents follow the vehicle, not the file. */
+    private String vehicleKey(UUID candidate, VehicleFields fields) {
+        return fields.registration() == null ? null
+                : crypto.mac("admission-vehicle-key-v1", candidate.toString(), fields.registration());
+    }
+    private static void requireTransaction() {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new AdmissionException(AdmissionException.Code.SERVICE_UNAVAILABLE);
+        }
+    }
+    private record Outcome2<T>(T value, AdmissionException.Code refusal) { }
 
     /** Examination support, called inside the caller's administrative transaction (gate held). */
     record Examined(UUID candidate, ApplicationView view, Instant submittedAt) {

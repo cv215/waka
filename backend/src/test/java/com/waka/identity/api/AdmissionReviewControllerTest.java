@@ -30,6 +30,12 @@ class AdmissionReviewControllerTest {
     private final String decision = "{\"expectedVersion\":3,\"action\":\"request_correction\",\"reasonCode\":\"PHOTO_BLURRED\","
             + "\"details\":\"Plaque illisible\",\"photoDecisions\":[{\"view\":\"PH02\",\"fileId\":\"" + photo + "\",\"result\":\"to_correct\",\"reasonCode\":\"PLATE_UNREADABLE\"}]}";
 
+    /** The decision body with one document marked to correct; the agent never sends a document type. */
+    private String withDocument(String documentId) {
+        return decision.substring(0, decision.length() - 1)
+                + ",\"documentDecisions\":[{\"documentId\":\"" + documentId + "\",\"result\":\"to_correct\",\"reasonCode\":\"DOCUMENT_UNREADABLE\"}]}";
+    }
+
     @Test void noAssemblyFailsClosedAndScopeIsNeverFree() throws Exception {
         MockMvc mvc = mvc(null);
         mvc.perform(admin(get("/api/v1/admin/work-items").queryParam("category", "admission"))).andExpect(status().isServiceUnavailable());
@@ -48,7 +54,9 @@ class AdmissionReviewControllerTest {
                 "{\"expectedVersion\":\"3\",\"action\":\"refuse\",\"reasonCode\":\"X_Y\"}",
                 "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"approved\":true}",
                 "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"state\":\"approved\"}",
-                "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"documentDecisions\":[]}",
+                "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"documentApprovals\":[]}",
+                "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"documentDecisions\":[{\"documentId\":\"x\",\"result\":\"acceptable\"}]}",
+                "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"documentDecisions\":[{\"result\":\"acceptable\"}]}",
                 "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"photoDecisions\":[{\"view\":\"PH01\"}]}",
                 "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"photoDecisions\":[{\"view\":\"PH01\",\"fileId\":\"x\",\"result\":\"acceptable\"}]}",
                 "{\"expectedVersion\":3,\"action\":\"refuse\",\"reasonCode\":\"X_Y\",\"action\":\"approve\"}",
@@ -61,19 +69,25 @@ class AdmissionReviewControllerTest {
     @Test void decisionsAndRefusalsUseSafeCodes() throws Exception {
         var service = mock(AdmissionReviewService.class);
         Instant now = Instant.parse("2026-10-29T10:00:00Z");
+        UUID document = UUID.randomUUID();
+        var documents = List.of(new AdmissionReviewService.DocumentReview(document, null, "to_correct", "DOCUMENT_UNREADABLE"));
         var created = new AdmissionReviewService.Decision(UUID.randomUUID(), app, 3, "request_correction", "PHOTO_BLURRED",
-                "Plaque illisible", List.of(new AdmissionReviewService.PhotoReview("PH02", photo, "to_correct", "PLATE_UNREADABLE")), now, false);
+                "Plaque illisible", List.of(new AdmissionReviewService.PhotoReview("PH02", photo, "to_correct", "PLATE_UNREADABLE")),
+                List.of(new AdmissionReviewService.DocumentReview(document, "INSURANCE", "to_correct", "DOCUMENT_UNREADABLE")), now, false);
         when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), eq(3L), eq("request_correction"),
-                eq("PHOTO_BLURRED"), eq("Plaque illisible"), eq(created.photoReviews()))).thenReturn(created);
-        when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), anyLong(), eq("approve"), any(), any(), any()))
+                eq("PHOTO_BLURRED"), eq("Plaque illisible"), eq(created.photoReviews()), eq(documents))).thenReturn(created);
+        when(service.decide(any(), eq(client), any(), eq(app), any(UUID.class), anyLong(), eq("approve"), any(), any(), any(), any()))
                 .thenThrow(new AdmissionException(AdmissionException.Code.APPROVAL_NOT_AVAILABLE));
         when(service.detail(any(), eq(client), any(), eq(app)))
                 .thenThrow(new AdmissionException(AdmissionException.Code.CONFLICT_OF_INTEREST))
                 .thenThrow(new AdmissionException(AdmissionException.Code.NOT_AUTHORIZED));
         MockMvc mvc = mvc(service);
-        mvc.perform(decide(decision)).andExpect(status().isCreated()).andExpect(header().string("Cache-Control", "no-store"))
+        mvc.perform(decide(withDocument(document.toString()))).andExpect(status().isCreated()).andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.action").value("request_correction"))
-                .andExpect(jsonPath("$.photoReviews[0].result").value("to_correct"));
+                .andExpect(jsonPath("$.photoReviews[0].result").value("to_correct"))
+                .andExpect(jsonPath("$.documentReviews[0].documentType").value("INSURANCE"));
+        mvc.perform(decide(withDocument(document.toString()).replace("\"documentId\"", "\"documentType\":\"INSURANCE\",\"documentId\"")))
+                .andExpect(status().isBadRequest());
         mvc.perform(decide("{\"expectedVersion\":3,\"action\":\"approve\",\"reasonCode\":\"ALL_GOOD\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("APPROVAL_NOT_AVAILABLE"));
         mvc.perform(admin(get("/api/v1/admin/driver-applications/" + app))).andExpect(status().isForbidden())
