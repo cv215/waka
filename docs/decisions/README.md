@@ -15,3 +15,13 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - **Dérogation** : un agent peut approuver un dossier incomplet, pièce par pièce, avec un motif inscrit au journal. Jamais pour l'identité ni le permis.
 - **Enregistrement communal** des taxis à Yaoundé : non demandé pour l'instant.
 - **Sources** : celles déjà citées [S4][S5][S6][S8]. Aucun texte officiel n'a été consulté. Une confirmation écrite du ministère des Transports et d'un assureur reste recommandée avant le lancement réel.
+
+29 octobre 2026, décisions du fondateur sur le lancement (règle R11 dans `specifications/WAKA_regles_adoptees.md`) :
+- **Lancement** : Yaoundé, dans un cercle de 20 km choisi par Claude à sa demande ; grille **launch-v1** en vente.
+- **Voyages entre villes** :
+  - publiés par tout chauffeur approuvé, sans abonnement ;
+  - prix par paire d'arrêts fixé par le chauffeur, au plus 10 000 F la place ; commission WAKA de 10 % ;
+  - argent versé au chauffeur à l'embarquement ;
+  - annulation par le chauffeur : sans frais ;
+  - annulation par le client : gratuite jusqu'à 12 h avant le départ, puis 15 % de frais, et 30 % à moins de 3 h ; les frais sont partagés moitié-moitié.
+- **Porte-monnaie rechargeable** par Mobile Money, détenu par un partenaire agréé ; à traiter avec les paiements.

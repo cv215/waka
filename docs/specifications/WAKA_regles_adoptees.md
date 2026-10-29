@@ -199,6 +199,28 @@ Les frais illustratifs et provisions du budget restent des hypothèses. Ni un ta
 
 Sources : dossier §1.2, §3.1–3.4, §5.1–5.3, §6.4, §6.11 et plan objectif 02. La récupération indépendante du coffre et l’édition de documents réels restent au point 01.10.d.
 
+## R11 — Lancement, zone et voyages entre villes (décisions du fondateur du 29 octobre 2026)
+
+**Zone et grille.**
+- Lancement à **Yaoundé** seulement ; d'autres villes suivront rapidement.
+- La zone desservie est un cercle de 20 km autour du centre de Yaoundé (3,848° N ; 11,502° E). C'est un choix technique fait par Claude à la demande du fondateur (« le plus pratique pour les utilisateurs ») : large pour ne refuser personne en ville, gratuit, sans service de cartes. Ajouter une ville revient à ajouter un centre et un rayon.
+- La grille **launch-v1** (R04) est celle mise en vente.
+
+**Voyages entre villes (« Voyage »), dès le lancement.**
+- **Annonce** : un chauffeur approuvé, taxi ou particulier, publie un voyage avec le lieu et la date de départ, ses escales éventuelles et l'arrivée. **Aucun abonnement n'est exigé pour les voyages**, même d'un particulier.
+- **Places** : au plus les places passagers proposées du véhicule approuvé, et jamais plus de cinq (R01).
+- **Prix** : le chauffeur fixe un prix par place pour **chaque paire départ–arrivée** possible entre ses arrêts. Un passager peut monter et descendre à une escale. Chaque prix est un nombre entier de francs, d'au moins 1 F et d'au plus **10 000 F par place**.
+- **Commission WAKA : 10 %** du prix payé, arrondie au franc (moitié vers le haut) ; le chauffeur reçoit le reste. Pas de bonus de parrainage sur un voyage tant que le fondateur ne l'a pas décidé (R05 ne s'y applique pas automatiquement).
+- **Paiement** : le client est débité à la réservation. L'argent n'est versé au chauffeur **qu'à l'embarquement** ; jusque-là, il reste dû au client.
+- **Annulation par le chauffeur** : possible à tout moment avant l'embarquement ; chaque client est remboursé intégralement, sans frais.
+- **Annulation par le client** : possible à tout moment avant l'embarquement. Il est remboursé intégralement si elle a lieu **12 h ou plus avant le départ**. Sinon, des frais sont retenus sur le prix : **15 %** entre 12 h et 3 h avant le départ, **30 %** à moins de 3 h. Ces frais sont partagés **moitié chauffeur, moitié WAKA**. Le reste est remboursé.
+- **Arrondis** : les frais sont arrondis au franc (moitié vers le haut). Le chauffeur reçoit la moitié arrondie au franc inférieur, et WAKA le reste. Ainsi la somme rembourse exactement le prix.
+- **Heures** : elles sont celles du serveur, à l'heure de Douala (UTC+1). La limite exacte de 12 h ou de 3 h compte dans le palier le plus favorable au client.
+
+**Porte-monnaie dans l'application.**
+- Le fondateur veut des comptes rechargeables par Mobile Money : les transferts dans l'application sont gratuits, les frais ne s'appliquent qu'aux dépôts et aux retraits.
+- Ce choix **remplace l'exclusion du portefeuille énoncée en R07**, à une condition : l'argent est détenu **par un partenaire agréé** (opérateur Mobile Money ou banque), et WAKA tient le registre.
+- Cette fonction sera traitée avec les paiements, à la fin. Elle exige un contrat avec ce partenaire et sa qualification réglementaire (monnaie électronique, COBAC/BEAC). Aucune somme réelle n'est manipulée avant.
 ## Retrouver les passages du dossier
 
 - Décisions de référence §1.1 (reference detaillee conservee hors du depot).

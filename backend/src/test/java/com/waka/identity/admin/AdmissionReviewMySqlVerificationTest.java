@@ -129,7 +129,7 @@ class AdmissionReviewMySqlVerificationTest {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                for (String table : List.of("voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
                         "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
                         "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
@@ -287,6 +287,36 @@ class AdmissionReviewMySqlVerificationTest {
         var mine = current.applications.requirements(candidate.token, client, app);
         assertNull(statusOf(mine, "PUBLIC_TRANSPORT_CARD").documentId(), "a waived document stays to provide");
         assertEquals(5, current.reviews.candidateDecisions(candidate.token, client, app).getLast().waivers().size());
+
+        // R11: the approved driver publishes an intercity voyage, no subscription needed.
+        byte[] voyageEnc = new byte[32], voyageMac = new byte[32];
+        new SecureRandom().nextBytes(voyageEnc); new SecureRandom().nextBytes(voyageMac);
+        var voyages = new com.waka.mobility.voyage.PersistentVoyageService(sessions, jdbc, current.applications,
+                new com.waka.identity.profile.ProfileCrypto(voyageEnc, voyageMac, "test-key", new SecureRandom()), clock);
+        Instant start = clock.instant().plus(Duration.ofDays(2));
+        var stops = List.of(new com.waka.mobility.voyage.PersistentVoyageService.Stop("Yaoundé, gare de Mvan", start),
+                new com.waka.mobility.voyage.PersistentVoyageService.Stop("Edéa", start.plus(Duration.ofHours(3))),
+                new com.waka.mobility.voyage.PersistentVoyageService.Stop("Douala, Akwa", start.plus(Duration.ofHours(4))));
+        var prices = java.util.Map.of("0-1", 4000, "0-2", 6000, "1-2", 2000);
+        UUID voyageKey = UUID.randomUUID();
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.TOO_MANY_SEATS, assertThrows(com.waka.mobility.voyage.VoyageException.class,
+                () -> voyages.publish(candidate.token, client, UUID.randomUUID(), stops, 5, prices)).code(), "the car offers 4 seats");
+        var published = voyages.publish(candidate.token, client, voyageKey, stops, 4, prices);
+        assertEquals("published", published.state());
+        assertEquals(6000, published.prices().get("0-2"));
+        assertEquals(published.voyageId(), voyages.publish(candidate.token, client, voyageKey, stops, 4, prices).voyageId(), "same key, same voyage");
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.IDEMPOTENCY_KEY_REUSED, assertThrows(com.waka.mobility.voyage.VoyageException.class,
+                () -> voyages.publish(candidate.token, client, voyageKey, stops, 3, prices)).code());
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.DRIVER_NOT_ALLOWED, assertThrows(com.waka.mobility.voyage.VoyageException.class,
+                () -> voyages.publish(agent.token, client, UUID.randomUUID(), stops, 1, prices)).code(), "no approved file");
+        var listed = voyages.upcoming(agent.token, client);
+        assertEquals(List.of(published.voyageId()), listed.stream().map(com.waka.mobility.voyage.PersistentVoyageService.VoyageView::voyageId).toList());
+        assertEquals("Edéa", listed.getFirst().stops().get(1).place());
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_FOUND, assertThrows(com.waka.mobility.voyage.VoyageException.class,
+                () -> voyages.cancel(agent.token, client, published.voyageId(), "CHANGE_OF_PLAN")).code(), "only its driver cancels");
+        assertEquals("cancelled", voyages.cancel(candidate.token, client, published.voyageId(), "CHANGE_OF_PLAN").state());
+        assertTrue(voyages.upcoming(agent.token, client).isEmpty());
+        assertEquals(1, voyages.mine(candidate.token, client).size());
     }
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
         Login candidate = login(candidatePhone);
