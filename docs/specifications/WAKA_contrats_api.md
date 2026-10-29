@@ -624,3 +624,17 @@ Règles :
 - **Annulation du voyage par son chauffeur** : chaque réservation active est annulée ; une réservation payée est remboursée en entier.
 - La liste des voyages indique, pour chaque paire d'arrêts, les places encore libres (`availableSeats`).
 - **Aucune somme ne bouge** : les montants enregistrés serviront au prestataire de paiement.
+
+### K27 — Voyages entre villes : passagers et embarquement (R11, troisième partie)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+| Route | Rôle |
+|---|---|
+| `GET /api/v1/voyages/{id}/passengers` | Pour le chauffeur de ce voyage seulement : réservations actives et embarquées, avec tronçon, places et état. **Ni l'identité du client ni son code ne sont montrés.** Un autre compte reçoit 404. |
+| `POST /api/v1/voyages/{id}/boardings` | Corps `{boardingCode}` (6 chiffres), saisi par le chauffeur. Une réservation payée passe à `boarded`, et le règlement R11 est enregistré : chauffeur 90 %, WAKA 10 %. Le même code renvoyé retrouve le même embarquement. |
+
+Règles :
+- **Code d'embarquement** : à la réservation, le serveur tire un code de 6 chiffres, unique dans le voyage. Il est conservé sous forme d'empreinte à clé (pour la recherche) et chiffré (pour l'affichage). Seul son client le voit (`boardingCode`), et seulement tant que la réservation peut encore embarquer.
+- **Refus** : code inconnu, 422 `WRONG_CODE` (compté) ; réservation non payée, 409 `NOT_PAID` ; après 10 codes erronés sur un voyage, 429 `BOARDING_LOCKED`, et l'assistance doit intervenir. Cette protection empêche de deviner un code.
+- **Argent** : le règlement est seulement calculé et enregistré ; le versement réel au chauffeur viendra avec le prestataire de paiement.

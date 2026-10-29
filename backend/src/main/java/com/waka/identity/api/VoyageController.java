@@ -92,6 +92,33 @@ public final class VoyageController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** The driver's own voyage only; no passenger identity or code is ever returned. */
+    @GetMapping(path = "/api/v1/voyages/{voyageId}/passengers", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentVoyageService.PassengerView>> passengers(@PathVariable String voyageId, HttpServletRequest request)
+            throws IOException {
+        UUID id = LoginRequestReader.uuid(voyageId);
+        MeRequestReader.emptyGet(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().passengers(token, client, id)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
+    /** Body {boardingCode}: six digits given by the passenger. Naturally idempotent for the same code. */
+    @PostMapping(path = "/api/v1/voyages/{voyageId}/boardings", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentVoyageService.PassengerView> board(@PathVariable String voyageId, HttpServletRequest request)
+            throws IOException {
+        UUID id = LoginRequestReader.uuid(voyageId);
+        String code = LoginRequestReader.body(request, Set.of("boardingCode")).get("boardingCode");
+        if (!code.matches("[0-9]{6}")) throw LoginRequestReader.invalid();
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(invoke(() -> service().board(token, client, id, code)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
     /** Exactly {fromIndex, toIndex, seats}: the price comes from the driver's list, never from the client. */
     @PostMapping(path = "/api/v1/voyages/{voyageId}/reservations", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
@@ -251,7 +278,9 @@ public final class VoyageController {
                 case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
                 case DRIVER_NOT_ALLOWED -> HttpStatus.FORBIDDEN;
                 case TOO_MANY_SEATS, OWN_VOYAGE, DEPARTED -> HttpStatus.UNPROCESSABLE_CONTENT;
-                case NOT_ENOUGH_SEATS, ALREADY_BOARDED -> HttpStatus.CONFLICT;
+                case NOT_ENOUGH_SEATS, ALREADY_BOARDED, NOT_PAID -> HttpStatus.CONFLICT;
+                case WRONG_CODE -> HttpStatus.UNPROCESSABLE_CONTENT;
+                case BOARDING_LOCKED -> HttpStatus.TOO_MANY_REQUESTS;
                 case NOT_FOUND -> HttpStatus.NOT_FOUND;
                 case IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;
                 case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;

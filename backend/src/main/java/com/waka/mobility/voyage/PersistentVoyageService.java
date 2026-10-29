@@ -6,6 +6,7 @@ import com.waka.identity.profile.ProfileCrypto;
 import com.waka.identity.session.PersistentSessionService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Duration;
@@ -42,7 +43,18 @@ public final class PersistentVoyageService {
      */
     public record ReservationView(UUID reservationId, UUID voyageId, int fromIndex, int toIndex, int seats, int seatPriceXaf,
             int totalXaf, String state, Instant holdExpiresAt, Instant boardingAt, Integer refundXaf, Integer driverXaf,
-            Integer wakaXaf, Integer feePercent, boolean idempotentReplay) { }
+            Integer wakaXaf, Integer feePercent, String boardingCode, boolean idempotentReplay) {
+        @Override public String toString() { return "ReservationView[REDACTED]"; }
+    }
+    /** What the driver sees of a passenger: the section and seats, never who it is nor the code. */
+    public record PassengerView(UUID reservationId, int fromIndex, int toIndex, int seats, String state, Instant boardingAt,
+            Integer driverXaf) {
+        private static PassengerView from(Reservation r) {
+            return new PassengerView(UUID.fromString(r.id), r.from, r.to, r.seats, r.state, r.boardingAt, r.driver);
+        }
+    }
+    /** Wrong codes accepted per voyage before boarding is locked (guessing protection). */
+    public static final int MAX_BOARDING_FAILURES = 10;
     /** R10 payment window, reused for voyages until a payment provider exists. */
     public static final Duration PAYMENT_WINDOW = Duration.ofMinutes(3);
     private record Out<T>(T value, VoyageException.Code refusal) { }
@@ -52,6 +64,7 @@ public final class PersistentVoyageService {
     private final PersistentDriverApplicationService applications;
     private final ProfileCrypto crypto;
     private final String gate;
+    private final SecureRandom random = new SecureRandom();
 
     public PersistentVoyageService(PersistentSessionService sessions, JdbcTemplate jdbc,
             PersistentDriverApplicationService applications, ProfileCrypto crypto, Clock clock) {
@@ -197,9 +210,20 @@ public final class PersistentVoyageService {
             }
             int seatPrice = (Integer) price.getFirst()[0];
             UUID id = UUID.randomUUID();
-            jdbc.update("INSERT INTO voyage_reservation (gate_hash,id,voyage_id,client_account_id,from_index,to_index,seats,seat_price_xaf,total_xaf,state,request_mac,payload_mac,created_at,hold_expires_at) VALUES (?,?,?,?,?,?,?,?,?,'awaiting_payment',?,?,?,?)",
+            // A 6-digit code, unique among this voyage's reservations, shown to the client only.
+            String code = null, codeMac = null;
+            for (int attempt = 0; attempt < 10 && code == null; attempt++) {
+                String candidate = String.format("%06d", random.nextInt(1_000_000));
+                String mac = codeMac(voyageId, candidate);
+                Integer taken = jdbc.queryForObject("SELECT COUNT(*) FROM voyage_reservation WHERE gate_hash=? AND voyage_id=? AND boarding_code_mac=?",
+                        Integer.class, gate, voyageId.toString(), mac);
+                if (taken != null && taken == 0) { code = candidate; codeMac = mac; }
+            }
+            if (code == null) return new Out<ReservationView>(null, VoyageException.Code.SERVICE_UNAVAILABLE);
+            byte[] codeCipher = crypto.encrypt(code.getBytes(StandardCharsets.US_ASCII), codeAad(id.toString(), crypto.keyId()));
+            jdbc.update("INSERT INTO voyage_reservation (gate_hash,id,voyage_id,client_account_id,from_index,to_index,seats,seat_price_xaf,total_xaf,state,request_mac,payload_mac,created_at,hold_expires_at,boarding_code_mac,boarding_code_cipher,key_id) VALUES (?,?,?,?,?,?,?,?,?,'awaiting_payment',?,?,?,?,?,?,?)",
                     gate, id.toString(), voyageId.toString(), actor, fromIndex, toIndex, seats, seatPrice, seatPrice * seats,
-                    request, payload, sql(now), sql(now.plus(PAYMENT_WINDOW)));
+                    request, payload, sql(now), sql(now.plus(PAYMENT_WINDOW)), codeMac, codeCipher, crypto.keyId());
             return new Out<>(reservationView(reservations("id", id.toString()).getFirst(), now, false), null);
         }));
     }
@@ -233,8 +257,63 @@ public final class PersistentVoyageService {
         }));
     }
 
+    /** The driver's passengers on their own voyage: active or boarded reservations, without identity or code. */
+    public List<PassengerView> passengers(char[] token, String client, UUID voyageId) {
+        if (voyageId == null) throw invalid();
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            if (!owns(session.accountId().toString(), voyageId)) return new Out<List<PassengerView>>(null, VoyageException.Code.NOT_FOUND);
+            Instant now = session.serverTime();
+            return new Out<>(reservations("voyage_id", voyageId.toString()).stream()
+                    .filter(r -> r.active(now) || "boarded".equals(r.state))
+                    .sorted((a, b) -> a.from != b.from ? Integer.compare(a.from, b.from) : a.id.compareTo(b.id))
+                    .map(PassengerView::from).toList(), null);
+        }));
+    }
+
+    /**
+     * The driver enters the client's code at boarding. A paid reservation becomes boarded and its R11
+     * settlement (driver 90 %) is recorded; an unpaid one is refused; the same code again returns the same
+     * boarding. A wrong code counts; after ten, boarding on this voyage is locked.
+     */
+    public PassengerView board(char[] token, String client, UUID voyageId, String code) {
+        if (voyageId == null || code == null || !code.matches("[0-9]{6}")) throw invalid();
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            var voyage = jdbc.query("SELECT state,boarding_failures FROM voyage WHERE gate_hash=? AND id=? AND driver_account_id=? FOR UPDATE",
+                    (rs, n) -> new Object[] { rs.getString(1), rs.getInt(2) }, gate, voyageId.toString(), session.accountId().toString());
+            if (voyage.isEmpty()) return new Out<PassengerView>(null, VoyageException.Code.NOT_FOUND);
+            if (!"published".equals(voyage.getFirst()[0])) return new Out<PassengerView>(null, VoyageException.Code.NOT_FOUND);
+            if ((Integer) voyage.getFirst()[1] >= MAX_BOARDING_FAILURES) return new Out<PassengerView>(null, VoyageException.Code.BOARDING_LOCKED);
+            String mac = codeMac(voyageId, code);
+            Instant now = session.serverTime();
+            var match = reservations("voyage_id", voyageId.toString()).stream()
+                    .filter(r -> r.codeMac != null && MessageDigest.isEqual(r.codeMac.getBytes(StandardCharsets.US_ASCII), mac.getBytes(StandardCharsets.US_ASCII)))
+                    .filter(r -> r.active(now) || "boarded".equals(r.state)).findFirst();
+            if (match.isEmpty()) {
+                jdbc.update("UPDATE voyage SET boarding_failures=boarding_failures+1 WHERE gate_hash=? AND id=?", gate, voyageId.toString());
+                return new Out<PassengerView>(null, VoyageException.Code.WRONG_CODE);
+            }
+            Reservation r = match.get();
+            if ("boarded".equals(r.state)) return new Out<>(PassengerView.from(r), null);
+            if (!"confirmed".equals(r.state)) return new Out<PassengerView>(null, VoyageException.Code.NOT_PAID);
+            var settlement = VoyageRules.boarding(r.total);
+            jdbc.update("UPDATE voyage_reservation SET state='boarded',boarded_at=?,ended_at=?,refund_xaf=?,driver_xaf=?,waka_xaf=?,fee_percent=0 WHERE gate_hash=? AND id=?",
+                    sql(now), sql(now), settlement.refundXaf(), settlement.driverXaf(), settlement.wakaXaf(), gate, r.id);
+            return new Out<>(PassengerView.from(reservations("id", r.id).getFirst()), null);
+        }));
+    }
+
+    private boolean owns(String driver, UUID voyageId) {
+        return !jdbc.query("SELECT id FROM voyage WHERE gate_hash=? AND id=? AND driver_account_id=?",
+                (rs, n) -> rs.getString(1), gate, voyageId.toString(), driver).isEmpty();
+    }
+    private String codeMac(UUID voyageId, String code) { return crypto.requestMac(voyageId.toString(), "voyage-boarding-code-v1", code); }
+    private byte[] codeAad(String reservationId, String keyId) {
+        return ProfileCrypto.aad("waka-voyage-boarding-code-v1", gate, reservationId, keyId);
+    }
+
     private record Reservation(String id, String voyage, String client, int from, int to, int seats, int seatPrice, int total,
-            String state, Instant holdExpiresAt, Instant boardingAt, Integer refund, Integer driver, Integer waka, Integer fee) {
+            String state, Instant holdExpiresAt, Instant boardingAt, Integer refund, Integer driver, Integer waka, Integer fee,
+            String codeMac, byte[] codeCipher, String keyId) {
         /** Holds seats: paid, or still within its payment window. */
         boolean active(Instant now) {
             return "confirmed".equals(state) || ("awaiting_payment".equals(state) && now.isBefore(holdExpiresAt));
@@ -247,7 +326,8 @@ public final class PersistentVoyageService {
                         rs.getInt("from_index"), rs.getInt("to_index"), rs.getInt("seats"), rs.getInt("seat_price_xaf"), rs.getInt("total_xaf"),
                         rs.getString("state"), instant(rs.getObject("hold_expires_at", LocalDateTime.class)),
                         instant(rs.getObject("planned_at", LocalDateTime.class)), (Integer) rs.getObject("refund_xaf"),
-                        (Integer) rs.getObject("driver_xaf"), (Integer) rs.getObject("waka_xaf"), (Integer) rs.getObject("fee_percent")),
+                        (Integer) rs.getObject("driver_xaf"), (Integer) rs.getObject("waka_xaf"), (Integer) rs.getObject("fee_percent"),
+                        rs.getString("boarding_code_mac"), rs.getBytes("boarding_code_cipher"), rs.getString("key_id")),
                 gate, value);
     }
     private void end(String id, String state, Instant now, VoyageRules.Settlement settlement) {
@@ -257,8 +337,14 @@ public final class PersistentVoyageService {
     }
     private ReservationView reservationView(Reservation r, Instant now, boolean replay) {
         String state = "awaiting_payment".equals(r.state) && !now.isBefore(r.holdExpiresAt) ? "expired" : r.state;
+        // The code is shown to its client only while it can still be used for boarding.
+        String code = null;
+        if (r.codeCipher != null && ("confirmed".equals(state) || "awaiting_payment".equals(state))) {
+            if (!crypto.keyId().equals(r.keyId)) throw new VoyageException(VoyageException.Code.SERVICE_UNAVAILABLE);
+            code = new String(crypto.decrypt(r.codeCipher, codeAad(r.id, r.keyId)), StandardCharsets.US_ASCII);
+        }
         return new ReservationView(UUID.fromString(r.id), UUID.fromString(r.voyage), r.from, r.to, r.seats, r.seatPrice, r.total,
-                state, r.holdExpiresAt, r.boardingAt, r.refund, r.driver, r.waka, r.fee, replay);
+                state, r.holdExpiresAt, r.boardingAt, r.refund, r.driver, r.waka, r.fee, code, replay);
     }
     /** Seats held on each leg k (from stop k to stop k+1). */
     private int[] legUse(UUID voyageId, Instant now) {

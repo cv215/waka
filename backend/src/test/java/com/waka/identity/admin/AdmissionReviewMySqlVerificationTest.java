@@ -349,6 +349,36 @@ class AdmissionReviewMySqlVerificationTest {
         var paid = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1);
         jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, paid.reservationId().toString());
         assertNotNull(held);
+
+        // Boarding: the driver sees sections and seats only, and boards with the code shown to the client.
+        var boardedOne = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 0, 2, 1);
+        jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, boardedOne.reservationId().toString());
+        var unpaid = voyages.reserve(rider.token, client, UUID.randomUUID(), published.voyageId(), 1, 2, 1);
+        String boardingCode = voyages.myReservations(rider.token, client).stream()
+                .filter(r -> r.reservationId().equals(boardedOne.reservationId())).findFirst().orElseThrow().boardingCode();
+        assertTrue(boardingCode.matches("[0-9]{6}"));
+        var passengers = voyages.passengers(driver.token, client, published.voyageId());
+        assertEquals(3, passengers.size(), "two paid, one awaiting payment; the expired hold is gone");
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_FOUND,
+                code.apply(() -> voyages.passengers(rider.token, client, published.voyageId())), "only the driver sees them");
+        String wrong = boardingCode.equals("000000") ? "000001" : "000000";
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.WRONG_CODE,
+                code.apply(() -> voyages.board(driver.token, client, published.voyageId(), wrong)));
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_PAID, code.apply(() -> voyages.board(driver.token, client,
+                published.voyageId(), voyages.myReservations(rider.token, client).stream()
+                        .filter(r -> r.reservationId().equals(unpaid.reservationId())).findFirst().orElseThrow().boardingCode())));
+        var boarded = voyages.board(driver.token, client, published.voyageId(), boardingCode);
+        assertEquals("boarded", boarded.state());
+        assertEquals(5400, boarded.driverXaf(), "6 000 F minus 10 % at boarding");
+        assertEquals(boarded.reservationId(), voyages.board(driver.token, client, published.voyageId(), boardingCode).reservationId(), "same code again");
+        assertNull(voyages.myReservations(rider.token, client).stream().filter(r -> r.reservationId().equals(boardedOne.reservationId()))
+                .findFirst().orElseThrow().boardingCode(), "a used code is no longer shown");
+        for (int i = 0; i < 9; i++) {
+            assertEquals(com.waka.mobility.voyage.VoyageException.Code.WRONG_CODE,
+                    code.apply(() -> voyages.board(driver.token, client, published.voyageId(), wrong)));
+        }
+        assertEquals(com.waka.mobility.voyage.VoyageException.Code.BOARDING_LOCKED,
+                code.apply(() -> voyages.board(driver.token, client, published.voyageId(), boardingCode)), "ten wrong codes lock boarding");
         assertEquals(com.waka.mobility.voyage.VoyageException.Code.NOT_FOUND, assertThrows(com.waka.mobility.voyage.VoyageException.class,
                 () -> voyages.cancel(rider.token, client, published.voyageId(), "CHANGE_OF_PLAN")).code(), "only its driver cancels");
         assertEquals("cancelled", voyages.cancel(driver.token, client, published.voyageId(), "CHANGE_OF_PLAN").state());

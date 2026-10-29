@@ -36,6 +36,10 @@ enum PhotoFailure {
   ownVoyage,
   departed,
   tooManySeats,
+  /// Boarding (K27): wrong code, reservation not paid, too many wrong codes on this voyage.
+  wrongCode,
+  notPaid,
+  boardingLocked,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];
