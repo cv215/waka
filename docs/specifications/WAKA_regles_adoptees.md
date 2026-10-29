@@ -221,6 +221,27 @@ Sources : dossier §1.2, §3.1–3.4, §5.1–5.3, §6.4, §6.11 et plan objecti
 - Le fondateur veut des comptes rechargeables par Mobile Money : les transferts dans l'application sont gratuits, les frais ne s'appliquent qu'aux dépôts et aux retraits.
 - Ce choix **remplace l'exclusion du portefeuille énoncée en R07**, à une condition : l'argent est détenu **par un partenaire agréé** (opérateur Mobile Money ou banque), et WAKA tient le registre.
 - Cette fonction sera traitée avec les paiements, à la fin. Elle exige un contrat avec ce partenaire et sa qualification réglementaire (monnaie électronique, COBAC/BEAC). Aucune somme réelle n'est manipulée avant.
+## R12 — Décisions prises par Claude sur délégation du fondateur (30 octobre 2026)
+
+Le fondateur a écrit : « prends les décisions toi-même ». Chaque choix ci-dessous est **le plus prudent** des options présentées. C'est un choix de Claude, que le fondateur peut changer à tout moment par une nouvelle version de règle.
+
+**Parrainage (complète R05).**
+- **Délai** : on ne peut saisir le code d'un parrain que tant que son compte n'a participé à **aucune course terminée et payée**, comme client ou comme chauffeur. Aujourd'hui, cela couvre l'embarquement d'un voyage payé, client ou chauffeur.
+- **Parrainage mutuel interdit** : si A est le filleul de B, A ne peut pas devenir le parrain de B.
+- **Essais de codes** : au plus **5 codes erronés par compte sur 24 heures glissantes**. Au-delà, il faut attendre.
+- **Voyages entre villes** : aucun bonus de parrainage pour l'instant.
+
+**Voyages (complète R11).**
+- **Passager absent** : un passager payé qui ne se présente pas est traité **comme une annulation tardive**. 30 % sont retenus (moitié chauffeur, moitié WAKA) et 70 % sont remboursés. Seul le chauffeur peut le déclarer, et seulement après l'heure prévue à l'arrêt de montée.
+
+**Abonnement particulier (cas ouverts de R06).**
+- **Achat avant la première prestation** : refusé. L'accès provisoire suffit avant la première course, et l'essai doit pouvoir commencer sans être consommé par un achat.
+- **Première prestation interrompue** : elle ne déclenche **ni l'essai** ni la **fenêtre de douze mois** du parrainage. Seule une prestation menée à son terme et payée les déclenche.
+- **Remboursement d'une période** : une période payée **pas encore commencée** est remboursable en entier. Une période commencée n'est pas remboursée, sauf décision motivée de l'assistance (K06).
+
+**Données personnelles (A06).**
+- Les demandes sont traitées par une **habilitation dédiée** `PRIVACY`, distincte de l'assistance aux courses.
+- Les **durées de conservation** relèvent du droit applicable et ne peuvent pas être fixées par Claude. Elles restent **à qualifier** avant toute collecte réelle, comme prévu par les règles d'accès et de conservation.
 ## Retrouver les passages du dossier
 
 - Décisions de référence §1.1 (reference detaillee conservee hors du depot).

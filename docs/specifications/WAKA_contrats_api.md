@@ -638,3 +638,17 @@ Règles :
 - **Code d'embarquement** : à la réservation, le serveur tire un code de 6 chiffres, unique dans le voyage. Il est conservé sous forme d'empreinte à clé (pour la recherche) et chiffré (pour l'affichage). Seul son client le voit (`boardingCode`), et seulement tant que la réservation peut encore embarquer.
 - **Refus** : code inconnu, 422 `WRONG_CODE` (compté) ; réservation non payée, 409 `NOT_PAID` ; après 10 codes erronés sur un voyage, 429 `BOARDING_LOCKED`, et l'assistance doit intervenir. Cette protection empêche de deviner un code.
 - **Argent** : le règlement est seulement calculé et enregistré ; le versement réel au chauffeur viendra avec le prestataire de paiement.
+
+### K28 — Décisions déléguées R12 : parrainage et passager absent
+
+**`POST /api/v1/me/referral-linkages`** (complète K22) ajoute trois refus :
+- 422 `MUTUAL_REFERRAL` : la personne visée est déjà le filleul de ce compte ;
+- 422 `WINDOW_CLOSED` : le compte a déjà participé à une course terminée et payée, aujourd'hui un voyage embarqué, comme client ou comme chauffeur ;
+- 429 `TOO_MANY_ATTEMPTS` : 5 codes non reconnus en 24 heures glissantes. Le verrou s'applique avant toute recherche, même pour un code valable. Seuls les échecs sont comptés, sans garder le code essayé.
+
+**`POST /api/v1/voyages/{id}/no-shows`**, corps `{reservationId}`, réservé au chauffeur du voyage :
+- une réservation payée passe à `no_show` et le règlement d'une annulation tardive est enregistré : 30 % retenus, moitié chauffeur, moitié WAKA ; 70 % remboursés ;
+- refus avant l'heure prévue à l'arrêt de montée : 422 `TOO_EARLY` ; refus pour une réservation non payée : 409 `NOT_PAID` ;
+- répéter l'opération rend le même résultat.
+
+**Correction de capacité.** Un passager embarqué garde sa place sur son tronçon : elle n'est pas revendue pendant le trajet.

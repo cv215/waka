@@ -40,6 +40,14 @@ class VoyageFixture extends fixture.Gateway implements VoyageGateway {
   final published = <(List<VoyageStop>, int, Map<String, int>)>[];
   final reservations = <Map<String, Object?>>[];
   final boardings = <String>[];
+  final absents = <String>[];
+
+  @override
+  Future<PassengerView> markNoShow(LoginSession s, String c, String voyage, String reservation) async {
+    absents.add(reservation);
+    return PassengerView.parse({'reservationId': reservation, 'fromIndex': 0, 'toIndex': 2, 'seats': 2, 'state': 'no_show',
+      'boardingAt': iso(departure), 'driverXaf': 1800});
+  }
   bool mineHasVoyage = false;
 
   @override
@@ -205,6 +213,23 @@ void main() {
     await settle(tester);
     expect(find.text('Passager embarqué : 2 place(s). Tu recevras 10800 F.'), findsOneWidget);
     expect(find.text('Embarqué · 10800 F pour toi'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('le chauffeur déclare un passager payé absent : 30 % retenus', (tester) async {
+    final (login, gateway) = await show(tester);
+    gateway.mineHasVoyage = true;
+    await tester.tap(find.byIcon(Icons.refresh));
+    await settle(tester);
+    await tester.tap(find.text('Mes voyages'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Passagers'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(TextButton, 'Absent'));
+    await settle(tester);
+    expect(gateway.absents, hasLength(1));
+    expect(find.text('Passager déclaré absent : 30 % retenus, 1800 F pour toi, le reste lui est remboursé.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

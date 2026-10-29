@@ -264,7 +264,7 @@ public final class PersistentVoyageService {
             if (!owns(session.accountId().toString(), voyageId)) return new Out<List<PassengerView>>(null, VoyageException.Code.NOT_FOUND);
             Instant now = session.serverTime();
             return new Out<>(reservations("voyage_id", voyageId.toString()).stream()
-                    .filter(r -> r.active(now) || "boarded".equals(r.state))
+                    .filter(r -> r.active(now) || "boarded".equals(r.state) || "no_show".equals(r.state))
                     .sorted((a, b) -> a.from != b.from ? Integer.compare(a.from, b.from) : a.id.compareTo(b.id))
                     .map(PassengerView::from).toList(), null);
         }));
@@ -302,6 +302,29 @@ public final class PersistentVoyageService {
         }));
     }
 
+    /**
+     * R12: the driver declares a paid passenger absent, after the planned time at their boarding stop. The
+     * reservation is settled like a late cancellation (30 %, split between driver and WAKA). Repeating it
+     * returns the same result.
+     */
+    public PassengerView markNoShow(char[] token, String client, UUID voyageId, UUID reservationId) {
+        if (voyageId == null || reservationId == null) throw invalid();
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            var voyage = jdbc.query("SELECT state FROM voyage WHERE gate_hash=? AND id=? AND driver_account_id=? FOR UPDATE",
+                    (rs, n) -> rs.getString(1), gate, voyageId.toString(), session.accountId().toString());
+            if (voyage.isEmpty()) return new Out<PassengerView>(null, VoyageException.Code.NOT_FOUND);
+            var rows = reservations("id", reservationId.toString()).stream().filter(r -> r.voyage.equals(voyageId.toString())).toList();
+            if (rows.isEmpty()) return new Out<PassengerView>(null, VoyageException.Code.NOT_FOUND);
+            Reservation r = rows.getFirst();
+            Instant now = session.serverTime();
+            if ("no_show".equals(r.state)) return new Out<>(PassengerView.from(r), null);
+            if (!"confirmed".equals(r.state)) return new Out<PassengerView>(null, VoyageException.Code.NOT_PAID);
+            if (now.isBefore(r.boardingAt)) return new Out<PassengerView>(null, VoyageException.Code.TOO_EARLY);
+            end(r.id, "no_show", now, VoyageRules.cancelledByClient(r.total, r.boardingAt, r.boardingAt));
+            return new Out<>(PassengerView.from(reservations("id", r.id).getFirst()), null);
+        }));
+    }
+
     private boolean owns(String driver, UUID voyageId) {
         return !jdbc.query("SELECT id FROM voyage WHERE gate_hash=? AND id=? AND driver_account_id=?",
                 (rs, n) -> rs.getString(1), gate, voyageId.toString(), driver).isEmpty();
@@ -318,6 +341,8 @@ public final class PersistentVoyageService {
         boolean active(Instant now) {
             return "confirmed".equals(state) || ("awaiting_payment".equals(state) && now.isBefore(holdExpiresAt));
         }
+        /** A boarded passenger keeps their seat for the whole section. */
+        boolean holdsSeat(Instant now) { return active(now) || "boarded".equals(state); }
     }
     private List<Reservation> reservations(String column, String value) {
         return jdbc.query("SELECT r.*,s.planned_at FROM voyage_reservation r JOIN voyage_stop s ON s.gate_hash=r.gate_hash AND s.voyage_id=r.voyage_id "
@@ -350,7 +375,7 @@ public final class PersistentVoyageService {
     private int[] legUse(UUID voyageId, Instant now) {
         int[] used = new int[VoyageRules.MAX_STOPS];
         for (var r : reservations("voyage_id", voyageId.toString())) {
-            if (!r.active(now)) continue;
+            if (!r.holdsSeat(now)) continue;
             for (int leg = r.from; leg < r.to; leg++) used[leg] += r.seats;
         }
         return used;

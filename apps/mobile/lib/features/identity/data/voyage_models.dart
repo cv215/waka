@@ -4,7 +4,8 @@ import 'vehicle_photo_models.dart';
 const maxSeatPriceXaf = 10000;
 final _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 final _pair = RegExp(r'^[0-5]-[0-5]$');
-const reservationStates = {'awaiting_payment', 'expired', 'confirmed', 'boarded', 'cancelled_by_client', 'cancelled_by_driver'};
+const reservationStates = {'awaiting_payment', 'expired', 'confirmed', 'boarded', 'cancelled_by_client', 'cancelled_by_driver',
+  'no_show'};
 
 Map<String, dynamic> _exact(Object? value, Set<String> fields) {
   if (value is! Map<String, dynamic> || value.length != fields.length || !value.keys.every(fields.contains)) {
@@ -137,8 +138,8 @@ class PassengerView {
       final m = _exact(value, {'reservationId', 'fromIndex', 'toIndex', 'seats', 'state', 'boardingAt', 'driverXaf'});
       final from = m['fromIndex'], to = m['toIndex'], seats = m['seats'], driver = m['driverXaf'];
       if (from is! int || to is! int || from < 0 || to <= from || to > 5 || seats is! int || seats < 1 || seats > 5 ||
-          !{'awaiting_payment', 'confirmed', 'boarded'}.contains(m['state']) || (driver != null && driver is! int) ||
-          ((m['state'] == 'boarded') != (driver != null))) {
+          !{'awaiting_payment', 'confirmed', 'boarded', 'no_show'}.contains(m['state']) || (driver != null && driver is! int) ||
+          ({'boarded', 'no_show'}.contains(m['state']) != (driver != null))) {
         throw const FormatException();
       }
       _instant(m['boardingAt']);

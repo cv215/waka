@@ -29,6 +29,7 @@ String voyageMessage(PhotoFailure failure) => switch (failure) {
   PhotoFailure.tooManySeats => 'Ton véhicule approuvé ne propose pas autant de places.',
   PhotoFailure.wrongCode => 'Ce code ne correspond à aucun passager de ce voyage.',
   PhotoFailure.notPaid => 'Cette réservation n’est pas encore payée : le passager ne peut pas embarquer.',
+  PhotoFailure.tooEarly => 'Un passager ne peut être déclaré absent qu’après l’heure de départ prévue.',
   PhotoFailure.boardingLocked => 'Trop de codes erronés : l’embarquement de ce voyage est bloqué. Contacte l’assistance WAKA.',
   PhotoFailure.notFound => 'Ce voyage n’est plus disponible.',
   PhotoFailure.keyReused => 'Cette demande ne correspond plus au serveur. Recommence.',
@@ -235,6 +236,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
     'boarded' => 'embarqué',
     'cancelled_by_client' => 'annulée par toi',
     'cancelled_by_driver' => 'annulée par le chauffeur',
+    'no_show' => 'absent au départ',
     _ => state,
   };
 }
@@ -442,6 +444,14 @@ class _PassengersPageState extends State<PassengersPage> {
     await _load();
   });
 
+  Future<void> _noShow(PassengerView p) => _run(() async {
+    final session = widget.login.session, client = widget.login.clientInstance;
+    if (session == null || client == null) throw const PhotoProblem(PhotoFailure.invalid);
+    final result = await _gateway.markNoShow(session, client, widget.voyage.voyageId, p.reservationId);
+    _message = 'Passager déclaré absent : 30 % retenus, ${result.driverXaf} F pour toi, le reste lui est remboursé.';
+    await _load();
+  });
+
   String _section(PassengerView p) => '${widget.voyage.stops[p.fromIndex].place} → ${widget.voyage.stops[p.toIndex].place}';
 
   @override
@@ -469,8 +479,12 @@ class _PassengersPageState extends State<PassengersPage> {
             subtitle: Text(switch (p.state) {
               'awaiting_payment' => 'En attente de paiement',
               'confirmed' => 'Payé, à embarquer',
+              'no_show' => 'Absent · ${p.driverXaf} F pour toi',
               _ => 'Embarqué · ${p.driverXaf} F pour toi',
             }),
+            trailing: p.state == 'confirmed'
+                ? TextButton(onPressed: _busy ? null : () => _noShow(p), child: const Text('Absent'))
+                : null,
           ),
       ]),
     );

@@ -25,3 +25,9 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
   - annulation par le chauffeur : sans frais ;
   - annulation par le client : gratuite jusqu'à 12 h avant le départ, puis 15 % de frais, et 30 % à moins de 3 h ; les frais sont partagés moitié-moitié.
 - **Porte-monnaie rechargeable** par Mobile Money, détenu par un partenaire agréé ; à traiter avec les paiements.
+
+30 octobre 2026 : le fondateur délègue les décisions restantes (« prends les décisions toi-même »). Claude retient chaque fois l'option la plus prudente, consignée dans la règle R12 :
+- parrainage : saisie du code avant toute course terminée et payée ; parrainage mutuel interdit ; 5 codes erronés au plus sur 24 h ; pas de bonus sur les voyages ;
+- voyages : un passager absent est traité comme une annulation tardive (30 %) ;
+- abonnement : pas d'achat avant la première prestation ; une prestation interrompue ne déclenche ni l'essai ni la fenêtre de parrainage ; une période payée non commencée est remboursable ;
+- données : une habilitation `PRIVACY` traite les demandes. Les durées de conservation restent à qualifier juridiquement.
