@@ -33,7 +33,7 @@ public final class DriverAccessService {
                 applications.accessBasisLocked(session.accountId(), session.serverTime()), session.serverTime()));
     }
 
-    static AccessView evaluate(PersistentDriverApplicationService.AccessBasis basis, Instant now) {
+    public static AccessView evaluate(PersistentDriverApplicationService.AccessBasis basis, Instant now) {
         if (basis == null) return view(Access.NONE, null, null, List.of("NO_APPLICATION"), List.of(), now);
         if (!"approved".equals(basis.state())) return view(Access.NONE, null, basis, List.of("NOT_APPROVED"), List.of(), now);
         List<String> reasons = new ArrayList<>(), renew = new ArrayList<>();

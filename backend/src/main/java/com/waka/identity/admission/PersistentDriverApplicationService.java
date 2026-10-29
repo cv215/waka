@@ -258,7 +258,11 @@ public final class PersistentDriverApplicationService {
     /** What A32 needs about the caller's open file; null when the account has none. */
     /** {@code waivedCodes}: vehicle documents waived by the approving decision (catalogue v2), with their traced reason. */
     public record AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements,
-            Set<String> waivedCodes) {
+            Set<String> waivedCodes, Integer offeredSeats) {
+        public AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements,
+                Set<String> waivedCodes) {
+            this(applicationId, category, state, requirements, waivedCodes, null);
+        }
         @Override public String toString() { return "AccessBasis[REDACTED]"; }
     }
 
@@ -273,8 +277,9 @@ public final class PersistentDriverApplicationService {
                         + "WHERE w.gate_hash=? AND d.id=(SELECT id FROM admission_decision WHERE gate_hash=? AND application_id=? AND action='approve' "
                         + "ORDER BY decided_at DESC,id DESC LIMIT 1)",
                 (rs, n) -> rs.getString(1), gate, gate, row.id.toString())) : Set.of();
-        return new AccessBasis(row.id, row.category, row.state,
-                statuses(candidate, row.category, current(candidate, row, now).vehicleFields(), now), waived);
+        VehicleFields fields = current(candidate, row, now).vehicleFields();
+        return new AccessBasis(row.id, row.category, row.state, statuses(candidate, row.category, fields, now), waived,
+                fields.offeredPassengerSeats());
     }
 
     /** Recorded with each decision: the catalogue version used ("v1", "v2"), or "test" for any other list. */

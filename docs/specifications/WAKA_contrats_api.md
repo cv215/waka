@@ -584,3 +584,22 @@ Les règles suivent la décision du fondateur du 29 octobre 2026, décrite dans 
   - Sans dérogation, l'empreinte de la décision reste celle d'avant : les décisions antérieures sont retrouvées à l'identique.
 - **A32 (accès effectif)** : une pièce dérogée par la dernière approbation ne bloque pas l'accès. Elle reste « à fournir » dans la liste des pièces du chauffeur.
 - La version du catalogue enregistrée avec chaque décision vaut désormais `v2`.
+
+### K25 — Voyages entre villes : annonces (R11, première partie)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503). Réservations et paiements viendront avec le prestataire de paiement.
+
+| Route | Rôle |
+|---|---|
+| `POST /api/v1/voyages` | Exige `Idempotency-Key`. Corps `{stops:[{place, plannedAt}], seats, prices:{"0-1": prix, ...}}`. 201 à la publication, 200 si la même annonce est renvoyée avec la même clé. |
+| `GET /api/v1/voyages` | Voyages publiés à venir, les plus proches d'abord (50 au plus), pour tout client connecté. **L'identité du chauffeur n'est jamais montrée.** |
+| `GET /api/v1/driver/voyages` | Les voyages du chauffeur connecté. |
+| `POST /api/v1/voyages/{id}/cancellations` | Corps `{reasonCode}`. Annulation par son chauffeur ; la répéter ne change rien. Un autre chauffeur reçoit 404. |
+
+Règles :
+- **Arrêts** : 2 à 6, dont le départ, les escales et l'arrivée. Chaque nom de lieu fait 2 à 60 caractères. Les heures sont des instants UTC strictement croissants.
+- **Bornes techniques**, modifiables : départ au moins 1 h et au plus 60 jours à l'avance, voyage d'au plus 48 h.
+- **Prix** : une valeur par paire d'arrêts (départ avant arrivée), en francs entiers, de 1 à 10 000 F par place. Toute paire manquante ou en trop est refusée (400).
+- **Places** : de 1 à 5, et jamais plus que les places passagers du véhicule approuvé. Au-delà : 422 `TOO_MANY_SEATS`.
+- **Chauffeur** : son accès doit être `active` ou `provisional` (K23). **Aucun abonnement n'est exigé.** Sinon : 403 `DRIVER_NOT_ALLOWED`.
+- **Calculs** (`VoyageRules`, testés) : commission de 10 % arrondie au franc ; versement au chauffeur à l'embarquement ; annulation par le client gratuite à 12 h ou plus du départ, puis 15 % de frais, et 30 % à moins de 3 h, partagés moitié chauffeur (arrondi au franc inférieur), moitié WAKA ; annulation par le chauffeur sans frais. Ces calculs seront branchés sur les réservations.
