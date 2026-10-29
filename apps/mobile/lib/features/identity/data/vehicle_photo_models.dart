@@ -26,6 +26,10 @@ enum PhotoFailure {
   registrationRequired,
   /// The validity end date is already past.
   expired,
+  /// Referral (K22): own code, unknown or inactive code, or another referrer already attached.
+  selfReferral,
+  codeNotRecognized,
+  referrerAlreadySet,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];

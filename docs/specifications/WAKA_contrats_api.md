@@ -530,3 +530,25 @@ Une seule demande ouverte par type et par compte :
 - Réponse : `{items:[{objectType, objectId, state, at}], nextCursor}`, les éléments les plus récents d'abord.
 - Contenu : le dossier chauffeur, les demandes sur ses données et les devis (`valid`/`expired`) du seul titulaire. Réservations, paiements et achats s'ajouteront avec leurs points.
 - La lecture ne modifie rien. Un paramètre inconnu ou répété est refusé (400).
+
+### K22 — Code et rattachement de parrainage (A34)
+
+Ces routes appliquent R05. Elles sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+- **`GET /api/v1/me/referral`** renvoie `{referralCode, referrerAttached, attachedAt}`.
+  - Le code est attribué à la première lecture, puis ne change plus.
+  - Il compte 8 caractères, sans 0, O, 1 ni I, pour pouvoir être dicté ou recopié sans erreur.
+  - Il ne révèle aucune identité.
+- **`POST /api/v1/me/referral-linkages`**, corps `{referralCode}`. Le premier rattachement répond 201. Le même code renvoyé répond 200 avec le même rattachement (idempotence naturelle, sans clé).
+
+Refus :
+- 422 `SELF_REFERRAL` : c'est son propre code ;
+- 422 `CODE_NOT_RECOGNIZED` : code inconnu, ou titulaire du code désactivé. La réponse est la même dans les deux cas, pour ne pas confirmer l'existence d'un code à un inconnu ;
+- 409 `REFERRER_ALREADY_SET` : un autre parrain est déjà rattaché. Il n'y a pas de réattribution libre : une correction passe par l'assistance, avec justification et journal.
+
+Un seul niveau : le parrain est gardé tel quel, sans chaîne. Le rattachement ne crée aucun bonus ; les bonus naîtront des réservations payées et terminées (R03, R05).
+
+**À décider avant activation :**
+1. Jusqu'à quand un compte peut-il rattacher un parrain ? Par exemple, seulement avant sa première réservation payée et terminée. R05 ne fixe pas ce délai, et aucun délai n'est appliqué tant que la décision n'est pas prise ; aucune réservation n'existe encore.
+2. Deux comptes peuvent-ils se parrainer mutuellement ? Ce n'est pas un auto-parrainage, et ce n'est pas interdit en l'état.
+3. Faut-il limiter le nombre d'essais de codes par compte ? Il y a environ 850 milliards de codes possibles, mais aucune limite n'est encore appliquée.
