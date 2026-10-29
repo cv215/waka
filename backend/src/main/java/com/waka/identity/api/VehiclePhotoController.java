@@ -73,6 +73,22 @@ public final class VehiclePhotoController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** ADMISSION agent read of a photo under examination; audited by the service. */
+    @GetMapping(path = "/api/v1/admin/private-files/{fileId}/content", produces = MediaType.IMAGE_JPEG_VALUE)
+    public ResponseEntity<byte[]> examinationContent(@PathVariable String fileId, HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(fileId);
+        MeRequestReader.emptyGet(request);
+        char[] token = MeRequestReader.bearer(request);
+        char[] adminToken = AdminAccessController.adminToken(request);
+        try {
+            String client = MeRequestReader.client(request);
+            byte[] jpeg = invoke(() -> service().examinationContent(token, client, adminToken, id)).jpeg();
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.IMAGE_JPEG)
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Content-Security-Policy", "default-src 'none'; sandbox").body(jpeg);
+        } finally { Arrays.fill(token, '\0'); Arrays.fill(adminToken, '\0'); }
+    }
+
     /** Exact type only; the signature bytes are checked again by the sanitizer. */
     private static String contentType(HttpServletRequest request) {
         String type = LoginRequestReader.singleHeader(request, "Content-Type");
@@ -111,11 +127,14 @@ public final class VehiclePhotoController {
                 case INVALID_REQUEST, INVALID_FILE -> HttpStatus.BAD_REQUEST;
                 case NOT_FOUND -> HttpStatus.NOT_FOUND;
                 case IDEMPOTENCY_KEY_REUSED, NOT_EDITABLE -> HttpStatus.CONFLICT;
+                case NOT_AUTHORIZED -> HttpStatus.FORBIDDEN;
+                case INVALID_ADMIN_SESSION -> HttpStatus.UNAUTHORIZED;
                 case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             };
             String code = switch (error.code()) {
                 case NOT_FOUND -> "RESOURCE_NOT_FOUND";
                 case INVALID_FILE -> "FILE_REJECTED";
+                case NOT_AUTHORIZED -> "ACTION_NOT_ALLOWED";
                 default -> error.code().name();
             };
             throw new ProfileHttpException(status, code);

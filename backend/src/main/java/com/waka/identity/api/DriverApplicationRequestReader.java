@@ -75,6 +75,39 @@ final class DriverApplicationRequestReader {
         } finally { Arrays.fill(body, (byte) 0); }
     }
 
+    /** Exactly {"expectedVersion": n}, under the same strict limits as the vehicle body. */
+    static long expectedVersionOnly(HttpServletRequest request) throws IOException {
+        if (request.getQueryString() != null) throw LoginRequestReader.invalid();
+        if (request.getCharacterEncoding() != null && !"UTF-8".equalsIgnoreCase(request.getCharacterEncoding())) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        }
+        Enumeration<String> encodings = request.getHeaders("Content-Encoding");
+        if (encodings != null && encodings.hasMoreElements()) {
+            String value = encodings.nextElement();
+            if (encodings.hasMoreElements() || !"identity".equalsIgnoreCase(value)) {
+                throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+            }
+        }
+        byte[] body = request.getInputStream().readNBytes(257);
+        try {
+            if (body.length > 256) throw new ResponseStatusException(HttpStatus.CONTENT_TOO_LARGE);
+            var decoder = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT);
+            try (var reader = new InputStreamReader(new ByteArrayInputStream(body), decoder);
+                    JsonParser parser = JSON.createParser(reader)) {
+                if (parser.nextToken() != JsonToken.START_OBJECT || parser.nextToken() != JsonToken.PROPERTY_NAME
+                        || !"expectedVersion".equals(parser.getString()) || parser.nextToken() != JsonToken.VALUE_NUMBER_INT) {
+                    throw LoginRequestReader.invalid();
+                }
+                long version = integer(parser.getText(), 16);
+                if (version > 9007199254740991L || parser.nextToken() != JsonToken.END_OBJECT || parser.nextToken() != null) {
+                    throw LoginRequestReader.invalid();
+                }
+                return version;
+            } catch (JacksonException | IllegalArgumentException | IOException hidden) { throw LoginRequestReader.invalid(); }
+        } finally { Arrays.fill(body, (byte) 0); }
+    }
+
     /** All eight keys are required; null explicitly means "not yet known" in a draft. */
     private static Map<String, Object> vehicleObject(JsonParser parser) {
         Map<String, Object> values = new HashMap<>();

@@ -1,5 +1,8 @@
 package com.waka.identity.files;
 
+import com.waka.identity.admin.AdminFunction;
+import com.waka.identity.admin.PersistentAdminService;
+import com.waka.identity.admission.PersistentDriverApplicationService;
 import com.waka.identity.session.PersistentSessionService;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -32,7 +35,16 @@ public final class VehiclePhotoService {
     private final PrivateFileStore store;
     private final String gate;
 
+    private final PersistentAdminService admin;
+
     public VehiclePhotoService(PersistentSessionService sessions, JdbcTemplate jdbc, PrivateFileStore store) {
+        this(sessions, jdbc, store, null);
+    }
+
+    /** With {@code admin}, an ADMISSION agent may also read photos of files under examination. */
+    public VehiclePhotoService(PersistentSessionService sessions, JdbcTemplate jdbc, PrivateFileStore store,
+            PersistentAdminService admin) {
+        this.admin = admin;
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
         this.store = Objects.requireNonNull(store);
@@ -66,7 +78,9 @@ public final class VehiclePhotoService {
                 var states = jdbc.query("SELECT state FROM driver_application WHERE gate_hash=? AND id=? AND account_id=? FOR UPDATE",
                         (rs, n) -> rs.getString(1), gate, applicationId.toString(), actor);
                 if (states.isEmpty()) return new Outcome<PhotoView>(null, FileException.Code.NOT_FOUND);
-                if (!"draft".equals(states.getFirst())) return new Outcome<PhotoView>(null, FileException.Code.NOT_EDITABLE);
+                if (!PersistentDriverApplicationService.EDITABLE.contains(states.getFirst())) {
+                    return new Outcome<PhotoView>(null, FileException.Code.NOT_EDITABLE);
+                }
                 Instant now = session.serverTime();
                 jdbc.update("UPDATE vehicle_photo SET current_marker=NULL,superseded_at=? WHERE gate_hash=? AND application_id=? AND photo_view=? AND current_marker=1",
                         sql(now), gate, applicationId.toString(), view);
@@ -118,6 +132,32 @@ public final class VehiclePhotoService {
         });
         if (outcome.refusal != null) throw new FileException(outcome.refusal);
         // Authorization is settled; the immutable encrypted file is read outside the gate.
+        return new Content(store.read(outcome.value, gate));
+    }
+
+    /**
+     * A31 for an ADMISSION agent: only a photo of a file already sent to examination, never the agent's
+     * own file, and every read is written to the audit journal (opaque references, no content).
+     */
+    public Content examinationContent(char[] token, String client, char[] adminToken, UUID fileId) {
+        if (admin == null) throw new FileException(FileException.Code.SERVICE_UNAVAILABLE);
+        if (fileId == null) throw new FileException(FileException.Code.INVALID_REQUEST);
+        Outcome<UUID> outcome = admin.withAdmin(token, client, adminToken, AdminFunction.ADMISSION, (session, context) -> {
+            var rows = jdbc.query("SELECT p.account_id FROM vehicle_photo p JOIN driver_application a ON a.gate_hash=p.gate_hash AND a.id=p.application_id "
+                    + "WHERE p.gate_hash=? AND p.id=? AND a.state<>'draft'", (rs, n) -> rs.getString(1), gate, fileId.toString());
+            if (rows.isEmpty() || rows.getFirst().equals(context.accountId().toString())) {
+                return new Outcome<UUID>(null, FileException.Code.NOT_FOUND);
+            }
+            jdbc.update("INSERT INTO audit_event (occurred_at,event_type,actor_ref,actor_scope,object_type,object_ref,reason_code,outcome,correlation_ref) VALUES (?,?,?,?,?,?,?,?,?)",
+                    sql(session.serverTime()), "PRIVATE_FILE_READ", context.accountId().toString(), "ADMISSION", "vehicle_photo",
+                    fileId.toString(), "EXAMINATION", "GRANTED", context.adminSessionId().toString());
+            return new Outcome<>(fileId, null);
+        }, code -> new Outcome<UUID>(null, switch (code) {
+            case NOT_AUTHORIZED -> FileException.Code.NOT_AUTHORIZED;
+            case INVALID_ADMIN_SESSION -> FileException.Code.INVALID_ADMIN_SESSION;
+            default -> FileException.Code.SERVICE_UNAVAILABLE;
+        }));
+        if (outcome.refusal != null) throw new FileException(outcome.refusal);
         return new Content(store.read(outcome.value, gate));
     }
 

@@ -1,6 +1,8 @@
 package com.waka.identity.api;
 
 import com.waka.identity.admission.AdmissionException;
+import com.waka.identity.admission.AdmissionReviewService;
+import java.util.List;
 import com.waka.identity.admission.PersistentDriverApplicationService;
 import com.waka.identity.session.SessionException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,7 +27,12 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 public final class DriverApplicationController {
     private final ObjectProvider<PersistentDriverApplicationService> services;
-    public DriverApplicationController(ObjectProvider<PersistentDriverApplicationService> services) { this.services = services; }
+    private final ObjectProvider<AdmissionReviewService> reviews;
+    public DriverApplicationController(ObjectProvider<PersistentDriverApplicationService> services,
+            ObjectProvider<AdmissionReviewService> reviews) {
+        this.services = services;
+        this.reviews = reviews;
+    }
 
     @PostMapping(path = "/api/v1/driver-applications", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
@@ -76,6 +83,36 @@ public final class DriverApplicationController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** A29: body is exactly {"expectedVersion": n}; refused while document requirements are not qualified. */
+    @PostMapping(path = "/api/v1/driver-applications/{applicationId}/submissions", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentDriverApplicationService.ApplicationView> submit(@PathVariable String applicationId,
+            HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(applicationId);
+        UUID key = LoginRequestReader.key(request);
+        long version = DriverApplicationRequestReader.expectedVersionOnly(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            return ok(invoke(() -> service().submit(token, client, id, key, version)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
+    /** The decisions and reasons about the caller's own file; the agent is never named. */
+    @GetMapping(path = "/api/v1/driver-applications/{applicationId}/decisions", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<AdmissionReviewService.Decision>> decisions(@PathVariable String applicationId,
+            HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(applicationId);
+        MeRequestReader.emptyGet(request);
+        char[] token = MeRequestReader.bearer(request);
+        try {
+            String client = MeRequestReader.client(request);
+            var reviews = this.reviews.getIfAvailable();
+            if (reviews == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+            return ok(invoke(() -> reviews.candidateDecisions(token, client, id)));
+        } finally { Arrays.fill(token, '\0'); }
+    }
+
     private static <T> ResponseEntity<T> ok(T body) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
     }
@@ -90,15 +127,28 @@ public final class DriverApplicationController {
             throw new ResponseStatusException(error.code() == SessionException.Code.SERVICE_UNAVAILABLE
                     ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.UNAUTHORIZED);
         } catch (AdmissionException error) {
-            HttpStatus status = switch (error.code()) {
-                case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
-                case NOT_FOUND -> HttpStatus.NOT_FOUND;
-                case APPLICATION_ALREADY_OPEN, VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;
-                case REPLAY_EXPIRED -> HttpStatus.GONE;
-                case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
-            };
-            // The 404 keeps the generic code: it must not reveal whether another candidate's file exists.
-            throw new ProfileHttpException(status, status == HttpStatus.NOT_FOUND ? "RESOURCE_NOT_FOUND" : error.code().name());
+            throw admissionError(error);
         }
+    }
+
+    /** Shared with the examination routes so both sides speak the same safe codes. */
+    static ProfileHttpException admissionError(AdmissionException error) {
+        HttpStatus status = switch (error.code()) {
+            case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case APPLICATION_ALREADY_OPEN, VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED, NOT_EDITABLE, INCOMPLETE,
+                 REQUIREMENTS_NOT_QUALIFIED, APPROVAL_NOT_AVAILABLE -> HttpStatus.CONFLICT;
+            case REPLAY_EXPIRED -> HttpStatus.GONE;
+            case NOT_AUTHORIZED, CONFLICT_OF_INTEREST -> HttpStatus.FORBIDDEN;
+            case INVALID_ADMIN_SESSION -> HttpStatus.UNAUTHORIZED;
+            case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+        };
+        // The 404 keeps the generic code: it must not reveal whether another candidate's file exists.
+        String code = switch (error.code()) {
+            case NOT_FOUND -> "RESOURCE_NOT_FOUND";
+            case NOT_AUTHORIZED -> "ACTION_NOT_ALLOWED";
+            default -> error.code().name();
+        };
+        return new ProfileHttpException(status, code);
     }
 }

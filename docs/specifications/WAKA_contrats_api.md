@@ -405,3 +405,26 @@ Refus :
 - 409 `IDEMPOTENCY_KEY_REUSED` ou `NOT_EDITABLE`.
 
 Un dépôt n'est jamais une approbation. Une nouvelle photo d'une vue remplace la précédente, qui reste dans l'historique comme `replaced`. Pas d'antivirus à ce stade : c'est une limite à lever avant les vraies données. Les justificatifs (familles de pièces à qualifier) ne passent pas par ces routes.
+### K17 — Envoi du dossier et examen d'admission (06.08.a)
+
+Routes réalisées côté serveur, non assemblées par défaut :
+
+| Route | Rôle |
+|---|---|
+| A29 `POST /api/v1/driver-applications/{id}/submissions` | Corps exact `{expectedVersion}` avec Idempotency-Key. Exige les huit champs véhicule, les six photos courantes **et** des exigences de pièces déclarées qualifiées dans la configuration (par défaut : non). Réponses 409 `REQUIREMENTS_NOT_QUALIFIED`, `INCOMPLETE`, `NOT_EDITABLE` ou `VERSION_CONFLICT`. |
+| `GET /api/v1/driver-applications/{id}/decisions` | Le candidat lit les décisions et motifs qui le concernent, sans le nom de l'agent. |
+| A37 `GET /api/v1/admin/work-items?category=admission` | Seule catégorie existante ; les autres sont refusées en 400. |
+| `GET /api/v1/admin/driver-applications/{id}` | Version envoyée, véhicule, photos courantes et historique des décisions. |
+| A38 `POST /api/v1/admin/driver-applications/{id}/decisions` | `{expectedVersion, action, reasonCode, details?, photoDecisions?}`. |
+| A31 côté agent : `GET /api/v1/admin/private-files/{fileId}/content` | Lecture d'une photo d'un dossier envoyé, tracée dans `audit_event`. |
+
+Toutes les routes d'agent exigent la session client, la session administrative (`X-Waka-Admin-Session`) et la fonction ADMISSION, contrôlées **dans la même transaction** que l'effet.
+
+Règles de décision :
+- actions `request_correction` et `refuse` ; `approve` répond 409 `APPROVAL_NOT_AVAILABLE` tant que les pièces ne sont pas qualifiées ;
+- `reasonCode` respecte `[A-Z][A-Z0-9_]{2,47}` ; `details` fait au plus 500 caractères et est chiffré ;
+- `photoDecisions` est lié à l'identifiant exact de chaque photo courante ;
+- une décision ne s'ajoute qu'une fois par version examinée ;
+- 403 `CONFLICT_OF_INTEREST` si l'agent examine son propre dossier.
+
+États : `draft` → `submitted` → `correction_requested` (modifiable, renvoi possible) ou `refused` (fermé, nouveau dossier possible). La réponse du dossier garde ses onze champs ; seule la liste des états grandit.
