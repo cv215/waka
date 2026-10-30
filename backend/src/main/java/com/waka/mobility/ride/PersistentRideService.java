@@ -331,7 +331,7 @@ public final class PersistentRideService {
                     // R14: the paid price goes to the driver and to WAKA as R03 settled it.
                     var split = jdbc.queryForList("SELECT driver_xaf,commission_xaf FROM ride_reservation WHERE gate_hash=? AND id=?", gate, id).getFirst();
                     com.waka.finance.Ledger.release(jdbc, gate, com.waka.finance.Ledger.hold("ride", id), now, com.waka.finance.Ledger.parts(
-                            com.waka.finance.Ledger.account(actor), (Number) split.get("driver_xaf"), com.waka.finance.Ledger.REVENUE, (Number) split.get("commission_xaf")));
+                            com.waka.finance.Ledger.earnings(actor), (Number) split.get("driver_xaf"), com.waka.finance.Ledger.REVENUE, (Number) split.get("commission_xaf")));
                     com.waka.drivers.SubscriptionService.startTrialIfFirst(jdbc, gate, actor, now, "ride_reservation", id);
                 }
                 case "client_absent" -> {

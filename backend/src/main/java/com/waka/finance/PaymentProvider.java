@@ -21,8 +21,11 @@ public interface PaymentProvider {
     Started send(String reference, long amountXaf, String channel, String phone, String description) throws ProviderUnavailable;
     Status transfer(String reference) throws ProviderUnavailable;
 
-    /** Whether a notification body really comes from the provider. */
-    boolean authentic(byte[] body, String signature);
+    /** Whether a notification really comes from the provider; {@code header} reads a request header by name. */
+    boolean authentic(byte[] body, java.util.function.UnaryOperator<String> header);
+
+    /** The references a notification mentions; each is only a hint to look the status up again. */
+    java.util.Set<String> references(byte[] body);
 
     /** The provider could not be reached or answered something unusable: the outcome is unknown. */
     final class ProviderUnavailable extends Exception {

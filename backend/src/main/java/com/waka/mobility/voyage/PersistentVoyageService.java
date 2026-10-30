@@ -371,7 +371,7 @@ public final class PersistentVoyageService {
     /** R14: the paid seats are split as R11 settled them: refund to the client, share to the driver, rest to WAKA. */
     private void settle(String id, String driver, String payer, Instant now, VoyageRules.Settlement settlement) {
         com.waka.finance.Ledger.release(jdbc, gate, com.waka.finance.Ledger.hold("voyage", id), now, com.waka.finance.Ledger.parts(
-                com.waka.finance.Ledger.account(payer), settlement.refundXaf(), com.waka.finance.Ledger.account(driver), settlement.driverXaf(),
+                com.waka.finance.Ledger.account(payer), settlement.refundXaf(), com.waka.finance.Ledger.earnings(driver), settlement.driverXaf(),
                 com.waka.finance.Ledger.REVENUE, settlement.wakaXaf()));
     }
     private ReservationView reservationView(Reservation r, Instant now, boolean replay) {

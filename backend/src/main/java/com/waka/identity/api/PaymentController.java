@@ -66,15 +66,15 @@ public final class PaymentController {
         return call(request, (token, client) -> service().wallet(token, client));
     }
 
-    /** Body {amountXaf, method, phone}: only to the account's own verified number; Idempotency-Key. */
+    /** Body {pocket: credit|earnings, amountXaf, method, phone}: only to the account's own verified number; Idempotency-Key. */
     @PostMapping(path = "/api/v1/withdrawals", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<PaymentService.WithdrawalView> withdraw(HttpServletRequest request) throws IOException {
         UUID key = LoginRequestReader.key(request);
-        Map<String, Object> body = read(request, Set.of("amountXaf", "method", "phone"), Set.of());
+        Map<String, Object> body = read(request, Set.of("pocket", "amountXaf", "method", "phone"), Set.of());
         char[] token = MeRequestReader.bearer(request);
         try {
             String client = MeRequestReader.client(request);
-            var view = invoke(() -> service().withdraw(token, client, key, (Integer) body.get("amountXaf"), (String) body.get("method"),
+            var view = invoke(() -> service().withdraw(token, client, key, (String) body.get("pocket"), (Integer) body.get("amountXaf"), (String) body.get("method"),
                     (String) body.get("phone")));
             return ResponseEntity.status(view.idempotentReplay() ? HttpStatus.OK : HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(view);
         } finally { Arrays.fill(token, '\0'); }
@@ -87,14 +87,14 @@ public final class PaymentController {
         return call(request, (token, client) -> service().readWithdrawal(token, client, id));
     }
 
-    /** Signed by the provider; no session. The body is only a reason to look the status up again. */
-    @PostMapping(path = "/api/v1/payment-notifications/notchpay")
+    /** From the provider, proved by its own header (Fapshi: x-wh-secret); no session. The body is only a reason to look the status up again. */
+    @PostMapping(path = "/api/v1/payment-notifications")
     public ResponseEntity<Void> notification(HttpServletRequest request) throws IOException {
         if (request.getQueryString() != null) throw LoginRequestReader.invalid();
         byte[] body = request.getInputStream().readNBytes(MAX_NOTIFICATION + 1);
         if (body.length > MAX_NOTIFICATION) throw new ResponseStatusException(HttpStatus.CONTENT_TOO_LARGE);
-        String signature = request.getHeader("x-notch-signature");
-        invoke(() -> { service().notification(body, signature); return null; });
+
+        invoke(() -> { service().notification(body, request::getHeader); return null; });
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 

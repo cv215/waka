@@ -19,29 +19,33 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * R14 money. A client pays a ride, a voyage seat or a subscription period by Mobile Money or with their WAKA
- * credit, or tops the credit up. The money of a service waits in its hold until the service settles it
- * (driver and WAKA at the end or at boarding, the client on a refund); refunds and driver earnings land in
- * the person's WAKA credit, which can be spent or withdrawn to their own verified number. A payment is
+ * R14 money. A client pays a ride, a voyage seat or a subscription period by Mobile Money, with their WAKA
+ * credit or with their earnings, or tops the credit up. The money of a service waits in its hold until the
+ * service settles it (driver and WAKA at the end or at boarding, the client on a refund). Each person has two
+ * pockets: the credit (top-ups, refunds) and the earnings (driver shares, sponsor bonuses); both can be spent
+ * or withdrawn to the person's own verified number. A payment is
  * confirmed only by the status read back from the provider, never by a phone or a notification body; a
  * payment that arrives too late for its service stays as credit (R07). Not assembled by default.
  */
 public final class PaymentService {
     public static final int TOPUP_MIN = 500, TOPUP_MAX = 200_000, CREDIT_MAX = 300_000;
     public static final int WITHDRAW_MIN = 500, WITHDRAW_MAX = 200_000;
-    /** Founder's rule: fees only on deposits and withdrawals, equal to what the provider charges WAKA. */
-    public static final int TOPUP_FEE_PERCENT = 2, WITHDRAW_FEE_PERCENT = 1;
-    /** Expected provider costs (Notch Pay public prices), kept for reconciliation; they are not ledger lines. */
-    public static final int PROVIDER_COLLECT_PERCENT = 2;
+    /**
+     * Founder's rule (30 October 2026): WAKA bears the provider's collection fee, so a client never sees it in
+     * their credit; the fee is charged at withdrawal: 2 % on earnings (drivers, sponsors), 3 % on the credit.
+     */
+    public static final int CREDIT_WITHDRAW_FEE_PERCENT = 3, EARNINGS_WITHDRAW_FEE_PERCENT = 2;
+    /** Expected provider cost (Fapshi public price: 3 % on collections, 0 % on payouts), kept for reconciliation. */
+    public static final int PROVIDER_COLLECT_PERCENT = 3;
     private static final Set<String> PURPOSES = Set.of("ride", "voyage", "subscription", "topup");
-    private static final Set<String> CHANNELS = Set.of("cm.mtn", "cm.orange");
+    private static final Set<String> CHANNELS = Set.of("cm.mtn", "cm.orange"), POCKETS = Set.of("credit", "earnings");
 
     public record PaymentView(UUID paymentId, String purpose, UUID targetId, String method, int chargedXaf, int creditedXaf,
             int feeXaf, String state, boolean applied, Instant createdAt, Instant settledAt, boolean idempotentReplay) { }
-    public record WithdrawalView(UUID withdrawalId, String method, int amountXaf, int feeXaf, String state, Instant createdAt,
+    public record WithdrawalView(UUID withdrawalId, String pocket, String method, int amountXaf, int feeXaf, String state, Instant createdAt,
             Instant settledAt, boolean idempotentReplay) { }
-    public record WalletLine(Instant at, long amountXaf, String kind) { }
-    public record WalletView(long balanceXaf, List<WalletLine> lines) { }
+    public record WalletLine(Instant at, String pocket, long amountXaf, String kind) { }
+    public record WalletView(long creditXaf, long earningsXaf, List<WalletLine> lines) { }
 
     private final PersistentSessionService sessions;
     private final JdbcTemplate jdbc;
@@ -67,16 +71,16 @@ public final class PaymentService {
 
     /**
      * Pays {@code purpose} (ride, voyage, subscription: {@code target} required; topup: {@code amountXaf}
-     * required) with {@code method} cm.mtn, cm.orange or credit. The amount of a service is the server's.
+     * required) with {@code method} cm.mtn, cm.orange, credit or earnings. The amount of a service is the server's.
      * Same key, same payment.
      */
     public PaymentView pay(char[] token, String client, UUID key, String purpose, UUID target, String method, String phone, Integer amountXaf) {
-        if (key == null || !PURPOSES.contains(purpose) || method == null || !(CHANNELS.contains(method) || "credit".equals(method))) throw invalid();
-        boolean topup = "topup".equals(purpose);
-        if (topup == (target != null) || topup != (amountXaf != null) || (topup && "credit".equals(method))) throw invalid();
+        if (key == null || !PURPOSES.contains(purpose) || method == null || !(CHANNELS.contains(method) || POCKETS.contains(method))) throw invalid();
+        boolean topup = "topup".equals(purpose), internal = POCKETS.contains(method);
+        if (topup == (target != null) || topup != (amountXaf != null) || (topup && internal)) throw invalid();
         if (topup && (amountXaf < TOPUP_MIN || amountXaf > TOPUP_MAX)) throw invalid();
         String normalized = null;
-        if (!"credit".equals(method)) normalized = phone(phone);
+        if (!internal) normalized = phone(phone);
         else if (phone != null) throw invalid();
         String number = normalized;
         Object[] first = sessions.withAuthenticatedSession(token, client, session -> {
@@ -90,7 +94,6 @@ public final class PaymentService {
             int fee = 0;
             if (topup) {
                 credited = amountXaf;
-                fee = percentUp(amountXaf, TOPUP_FEE_PERCENT);
                 // Deposits still waiting for the provider count too, so several at once cannot pass the cap.
                 Long waiting = jdbc.queryForObject("SELECT COALESCE(SUM(credited_xaf),0) FROM payment WHERE gate_hash=? AND account_id=? "
                         + "AND purpose='topup' AND state='pending'", Long.class, gate, actor);
@@ -104,10 +107,11 @@ public final class PaymentService {
             }
             String id = UUID.randomUUID().toString();
             long charged = credited + fee;
-            if ("credit".equals(method)) {
-                if (Ledger.balance(jdbc, gate, Ledger.account(actor)) < credited) return new Object[] { null, PaymentException.Code.INSUFFICIENT_CREDIT };
+            if (internal) {
+                String pocket = pocket(method, actor);
+                if (Ledger.balance(jdbc, gate, pocket) < credited) return new Object[] { null, PaymentException.Code.INSUFFICIENT_CREDIT };
                 insert(id, actor, purpose, target, method, charged, credited, fee, 0, "succeeded", null, request, now);
-                apply(id, purpose, target.toString(), actor, credited, now);
+                apply(id, purpose, target.toString(), pocket, credited, now);
                 jdbc.update("UPDATE payment SET applied=1,settled_at=? WHERE gate_hash=? AND id=?", sql(now), gate, id);
                 return new Object[] { view(id, false), null };
             }
@@ -177,7 +181,7 @@ public final class PaymentService {
                     new Ledger.Line(from, Ledger.REVENUE, locked.fee)));
             boolean applied = false;
             if (!"topup".equals(locked.purpose) && payable(locked.purpose, locked.target, locked.account, now) != null) {
-                apply(id, locked.purpose, locked.target, locked.account, locked.credited, now);
+                apply(id, locked.purpose, locked.target, Ledger.account(locked.account), locked.credited, now);
                 applied = true;
             }
             jdbc.update("UPDATE payment SET state='succeeded',applied=?,settled_at=? WHERE gate_hash=? AND id=?", applied ? 1 : 0, sql(now), gate, id);
@@ -188,19 +192,25 @@ public final class PaymentService {
 
     public WalletView wallet(char[] token, String client) {
         return sessions.withAuthenticatedSession(token, client, session -> {
-            String account = Ledger.account(session.accountId().toString());
+            String credit = Ledger.account(session.accountId().toString()), earnings = Ledger.earnings(session.accountId().toString());
             var lines = jdbc.query("SELECT journal,debit_account,credit_account,amount_xaf,created_at FROM ledger_entry "
-                    + "WHERE gate_hash=? AND (debit_account=? OR credit_account=?) ORDER BY id DESC LIMIT 50", (rs, n) -> new WalletLine(
-                    rs.getObject("created_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
-                    account.equals(rs.getString("credit_account")) ? rs.getLong("amount_xaf") : -rs.getLong("amount_xaf"),
-                    kind(rs.getString("journal"), account.equals(rs.getString("credit_account")))), gate, account, account);
-            return new WalletView(Ledger.balance(jdbc, gate, account), lines);
+                    + "WHERE gate_hash=? AND (debit_account IN (?,?) OR credit_account IN (?,?)) ORDER BY id DESC LIMIT 50", (rs, n) -> {
+                boolean in = credit.equals(rs.getString("credit_account")) || earnings.equals(rs.getString("credit_account"));
+                String mine = in ? rs.getString("credit_account") : rs.getString("debit_account");
+                return new WalletLine(rs.getObject("created_at", LocalDateTime.class).toInstant(ZoneOffset.UTC),
+                        mine.startsWith("earn:") ? "earnings" : "credit", in ? rs.getLong("amount_xaf") : -rs.getLong("amount_xaf"),
+                        kind(rs.getString("journal"), in));
+            }, gate, credit, earnings, credit, earnings);
+            return new WalletView(Ledger.balance(jdbc, gate, credit), Ledger.balance(jdbc, gate, earnings), lines);
         });
     }
 
-    /** Sends credit to the account's own verified number. The fee is added to the amount sent. Same key, same withdrawal. */
-    public WithdrawalView withdraw(char[] token, String client, UUID key, int amountXaf, String method, String phone) {
-        if (key == null || !CHANNELS.contains(method) || amountXaf < WITHDRAW_MIN || amountXaf > WITHDRAW_MAX) throw invalid();
+    /**
+     * Sends money from a pocket to the account's own verified number. The fee (3 % on the credit, 2 % on
+     * earnings) is taken from the same pocket on top of the amount sent. Same key, same withdrawal.
+     */
+    public WithdrawalView withdraw(char[] token, String client, UUID key, String pocketName, int amountXaf, String method, String phone) {
+        if (key == null || !POCKETS.contains(pocketName) || !CHANNELS.contains(method) || amountXaf < WITHDRAW_MIN || amountXaf > WITHDRAW_MAX) throw invalid();
         String number = phone(phone);
         Object[] first = sessions.withAuthenticatedSession(token, client, session -> {
             String actor = session.accountId().toString();
@@ -210,15 +220,16 @@ public final class PaymentService {
             if (!sessions.isAccountPhone(session.accountId(), number)) return new Object[] { null, PaymentException.Code.PHONE_NOT_ACCOUNT };
             Instant now = micros(session.serverTime());
             lockAccount(actor);
-            int fee = percentUp(amountXaf, WITHDRAW_FEE_PERCENT);
-            if (Ledger.balance(jdbc, gate, Ledger.account(actor)) < (long) amountXaf + fee) return new Object[] { null, PaymentException.Code.INSUFFICIENT_CREDIT };
+            int fee = percentUp(amountXaf, "earnings".equals(pocketName) ? EARNINGS_WITHDRAW_FEE_PERCENT : CREDIT_WITHDRAW_FEE_PERCENT);
+            String pocket = pocket(pocketName, actor);
+            if (Ledger.balance(jdbc, gate, pocket) < (long) amountXaf + fee) return new Object[] { null, PaymentException.Code.INSUFFICIENT_CREDIT };
             String id = UUID.randomUUID().toString();
-            jdbc.update("INSERT INTO withdrawal (gate_hash,id,account_id,method,amount_xaf,fee_xaf,state,provider,phone_cipher,key_id,request_mac,created_at) "
-                    + "VALUES (?,?,?,?,?,?,'pending',?,?,?,?,?)", gate, id, actor, method, amountXaf, fee, provider.name(),
+            jdbc.update("INSERT INTO withdrawal (gate_hash,id,account_id,method,pocket,amount_xaf,fee_xaf,state,provider,phone_cipher,key_id,request_mac,created_at) "
+                    + "VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?)", gate, id, actor, method, pocketName, amountXaf, fee, provider.name(),
                     crypto.encrypt(number.getBytes(StandardCharsets.US_ASCII), phoneAad("withdrawal", id)), crypto.keyId(), request, sql(now));
             Ledger.post(jdbc, gate, "withdrawal:" + id, now, List.of(
-                    new Ledger.Line(Ledger.account(actor), "payout:" + id, amountXaf),
-                    new Ledger.Line(Ledger.account(actor), Ledger.REVENUE, fee)));
+                    new Ledger.Line(pocket, "payout:" + id, amountXaf),
+                    new Ledger.Line(pocket, Ledger.REVENUE, fee)));
             return new Object[] { id, null };
         });
         if (first[1] != null) throw new PaymentException((PaymentException.Code) first[1]);
@@ -277,9 +288,9 @@ public final class PaymentService {
     // ---- Provider notifications ----
 
     /** A signed notification is only a reason to look again at the payments and withdrawals it mentions. */
-    public void notification(byte[] body, String signature) {
-        if (!provider.authentic(body, signature)) throw new PaymentException(PaymentException.Code.NOT_AUTHENTIC);
-        for (String reference : NotchPayProvider.mentionedReferences(body)) {
+    public void notification(byte[] body, java.util.function.UnaryOperator<String> header) {
+        if (!provider.authentic(body, header)) throw new PaymentException(PaymentException.Code.NOT_AUTHENTIC);
+        for (String reference : provider.references(body)) {
             for (String id : jdbc.query("SELECT id FROM payment WHERE gate_hash=? AND (provider_reference=? OR id=?)",
                     (rs, n) -> rs.getString(1), gate, reference, reference)) refreshPayment(id);
             for (String id : jdbc.query("SELECT id FROM withdrawal WHERE gate_hash=? AND (provider_reference=? OR id=?)",
@@ -302,10 +313,10 @@ public final class PaymentService {
         };
     }
 
-    /** Moves the payer's credit to the service and confirms it, with the row locked by {@link #payable}. */
-    private void apply(String paymentId, String purpose, String target, String payer, long amount, Instant now) {
+    /** Moves money from the payer's pocket to the service and confirms it, with the row locked by {@link #payable}. */
+    private void apply(String paymentId, String purpose, String target, String fromPocket, long amount, Instant now) {
         String to = "subscription".equals(purpose) ? Ledger.REVENUE : Ledger.hold(purpose, target);
-        Ledger.post(jdbc, gate, "apply:" + paymentId, now, List.of(new Ledger.Line(Ledger.account(payer), to, amount)));
+        Ledger.post(jdbc, gate, "apply:" + paymentId, now, List.of(new Ledger.Line(fromPocket, to, amount)));
         switch (purpose) {
             case "ride" -> jdbc.update("UPDATE ride_reservation SET state='confirmed' WHERE gate_hash=? AND id=? AND state='awaiting_payment'", gate, target);
             case "voyage" -> jdbc.update("UPDATE voyage_reservation SET state='confirmed' WHERE gate_hash=? AND id=? AND state='awaiting_payment'", gate, target);
@@ -316,12 +327,32 @@ public final class PaymentService {
     // ---- Helpers ----
 
     private void reverse(String id, Instant now) {
-        var w = jdbc.query("SELECT account_id,amount_xaf,fee_xaf FROM withdrawal WHERE gate_hash=? AND id=?",
-                (rs, n) -> new Object[] { rs.getString(1), rs.getLong(2), rs.getLong(3) }, gate, id).getFirst();
+        var w = jdbc.query("SELECT account_id,amount_xaf,fee_xaf,pocket FROM withdrawal WHERE gate_hash=? AND id=?",
+                (rs, n) -> new Object[] { rs.getString(1), rs.getLong(2), rs.getLong(3), rs.getString(4) }, gate, id).getFirst();
+        String pocket = pocket((String) w[3], (String) w[0]);
         Ledger.post(jdbc, gate, "reversal:" + id, now, List.of(
-                new Ledger.Line("payout:" + id, Ledger.account((String) w[0]), (Long) w[1]),
-                new Ledger.Line(Ledger.REVENUE, Ledger.account((String) w[0]), (Long) w[2])));
+                new Ledger.Line("payout:" + id, pocket, (Long) w[1]),
+                new Ledger.Line(Ledger.REVENUE, pocket, (Long) w[2])));
         jdbc.update("UPDATE withdrawal SET state='failed',settled_at=? WHERE gate_hash=? AND id=?", sql(now), gate, id);
+    }
+
+    private static String pocket(String name, String account) {
+        return "earnings".equals(name) ? Ledger.earnings(account) : Ledger.account(account);
+    }
+
+    /**
+     * Fapshi never repeats a lost notification: payments and withdrawals still open after a minute are looked
+     * up again. To be called periodically once the service is assembled. Returns how many were looked up.
+     */
+    public int refreshPending(int limit) {
+        var cutoff = sql(now().minusSeconds(60));
+        var payments = jdbc.query("SELECT id FROM payment WHERE gate_hash=? AND state='pending' AND provider_reference IS NOT NULL "
+                + "AND created_at<=? ORDER BY created_at LIMIT ?", (rs, n) -> rs.getString(1), gate, cutoff, limit);
+        payments.forEach(this::refreshPayment);
+        var withdrawals = jdbc.query("SELECT id FROM withdrawal WHERE gate_hash=? AND state='sent' AND created_at<=? ORDER BY created_at LIMIT ?",
+                (rs, n) -> rs.getString(1), gate, cutoff, limit);
+        withdrawals.forEach(this::refreshWithdrawal);
+        return payments.size() + withdrawals.size();
     }
 
     /** Serializes the money operations of one person. */
@@ -354,7 +385,7 @@ public final class PaymentService {
     }
     private WithdrawalView withdrawalView(String id, boolean replay) {
         return jdbc.query("SELECT * FROM withdrawal WHERE gate_hash=? AND id=?", (rs, n) -> new WithdrawalView(UUID.fromString(id),
-                rs.getString("method"), rs.getInt("amount_xaf"), rs.getInt("fee_xaf"),
+                rs.getString("pocket"), rs.getString("method"), rs.getInt("amount_xaf"), rs.getInt("fee_xaf"),
                 // "sent" is an internal detail: for the person the withdrawal is still pending.
                 "sent".equals(rs.getString("state")) ? "pending" : rs.getString("state"),
                 instant(rs.getObject("created_at", LocalDateTime.class)), instant(rs.getObject("settled_at", LocalDateTime.class)), replay),

@@ -583,7 +583,7 @@ class AdmissionReviewMySqlVerificationTest {
         for (byte[] key : k) random.nextBytes(key);
         var fares = new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc);
         var quotes = new com.waka.mobility.quote.PersistentQuoteService(sessions, jdbc, new com.waka.identity.profile.ProfileCrypto(k[0], k[1], "test-key", random),
-                fares, "launch-v1", (a, b) -> new java.math.BigDecimal("3000"), com.waka.geo.CircleServiceArea.LAUNCH, clock);
+                fares, "launch-v1", (a, b) -> new java.math.BigDecimal("9000"), com.waka.geo.CircleServiceArea.LAUNCH, clock);
         var rides = new com.waka.mobility.ride.PersistentRideService(sessions, jdbc, current.applications, quotes, fares, (from, to) -> 300,
                 new com.waka.identity.profile.ProfileCrypto(k[2], k[3], "test-key", random), clock);
         var fake = new FakeProvider();
@@ -599,17 +599,19 @@ class AdmissionReviewMySqlVerificationTest {
             return rides.respond(driver.token, client, rides.proposals(driver.token, client).getFirst().proposalId(), true);
         };
 
-        // Top-up: the 2 % fee is added to what Mobile Money charges; nothing is credited before the provider says so.
+        // Top-up: WAKA bears the 3 % collection fee, so the client is charged and credited the same amount;
+        // nothing is credited before the provider says so.
         UUID topupKey = UUID.randomUUID();
         var topup = pay.pay(rider.token, client, topupKey, "topup", null, "cm.mtn", "+237670000000", 5000);
-        assertEquals(5100, topup.chargedXaf());
+        assertEquals(5000, topup.chargedXaf());
+        assertEquals(0, topup.feeXaf());
         assertEquals("pending", topup.state());
-        assertEquals(5100L, fake.collected.get(topup.paymentId().toString()));
+        assertEquals(5000L, fake.collected.get(topup.paymentId().toString()));
         assertEquals(topup.paymentId(), pay.pay(rider.token, client, topupKey, "topup", null, "cm.mtn", "+237670000000", 5000).paymentId(), "same key");
-        assertEquals(0, pay.wallet(rider.token, client).balanceXaf());
-        fake.settle(topup.paymentId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, 5100L);
+        assertEquals(0, pay.wallet(rider.token, client).creditXaf());
+        fake.settle(topup.paymentId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, 5000L);
         assertEquals("succeeded", pay.read(rider.token, client, topup.paymentId()).state());
-        assertEquals(5000, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000, pay.wallet(rider.token, client).creditXaf());
         // The 300 000 F cap counts the credit and the deposits still waiting: 5 000 + 200 000 passes, 100 000 more does not.
         assertEquals("pending", pay.pay(rider.token, client, UUID.randomUUID(), "topup", null, "cm.mtn", "+237670000000", 200_000).state());
         assertEquals(com.waka.finance.PaymentException.Code.CREDIT_LIMIT,
@@ -621,7 +623,7 @@ class AdmissionReviewMySqlVerificationTest {
         var paid = pay.pay(rider.token, client, UUID.randomUUID(), "ride", first.reservationId(), "credit", null, null);
         assertTrue(paid.applied());
         assertEquals("confirmed", rides.ride(rider.token, client, first.reservationId()).state());
-        assertEquals(5000 - price, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000 - price, pay.wallet(rider.token, client).creditXaf());
         assertEquals(com.waka.finance.PaymentException.Code.NOT_PAYABLE,
                 refused.apply(() -> pay.pay(rider.token, client, UUID.randomUUID(), "ride", first.reservationId(), "credit", null, null)), "paid once");
         String hold = com.waka.finance.Ledger.hold("ride", first.reservationId().toString());
@@ -630,7 +632,8 @@ class AdmissionReviewMySqlVerificationTest {
         rides.driverAction(driver.token, client, first.reservationId(), "finish", null);
         int driverShare = (int) first.driverXaf();
         assertEquals(0, com.waka.finance.Ledger.balance(jdbc, gate, hold));
-        assertEquals(driverShare, pay.wallet(driver.token, client).balanceXaf(), "R03 share in the driver's credit");
+        assertEquals(driverShare, pay.wallet(driver.token, client).earningsXaf(), "R03 share in the driver's earnings");
+        assertEquals(0, pay.wallet(driver.token, client).creditXaf());
 
         // A ride paid by Orange Money through a signed notification, then cancelled: R08 full refund to the credit.
         var second = newRide.apply(rider);
@@ -638,12 +641,12 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(price, momo.chargedXaf(), "no fee on a direct payment");
         fake.settle(momo.paymentId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, (long) price);
         byte[] note = ("{\"type\":\"payment.complete\",\"data\":{\"reference\":\"fk-" + momo.paymentId() + "\"}}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        assertEquals(com.waka.finance.PaymentException.Code.NOT_AUTHENTIC, refused.apply(() -> pay.notification(note, "forged")));
+        assertEquals(com.waka.finance.PaymentException.Code.NOT_AUTHENTIC, refused.apply(() -> pay.notification(note, name -> "forged")));
         assertEquals("awaiting_payment", rides.ride(rider.token, client, second.reservationId()).state());
-        pay.notification(note, "good");
+        pay.notification(note, name -> "good");
         assertEquals("confirmed", rides.ride(rider.token, client, second.reservationId()).state());
         rides.cancelByClient(rider.token, client, second.reservationId());
-        assertEquals(5000, pay.wallet(rider.token, client).balanceXaf(), "paid by Orange Money, refunded in full to the credit");
+        assertEquals(5000, pay.wallet(rider.token, client).creditXaf(), "paid by Orange Money, refunded in full to the credit");
 
         // Paid after the three-minute window: the service is not confirmed and the money stays as credit (R07).
         var third = newRide.apply(rider);
@@ -653,38 +656,45 @@ class AdmissionReviewMySqlVerificationTest {
         var lateView = pay.read(rider.token, client, late.paymentId());
         assertEquals("succeeded", lateView.state());
         assertFalse(lateView.applied());
-        assertEquals(5000 + price, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000 + price, pay.wallet(rider.token, client).creditXaf());
 
         // The provider's amount must match exactly; otherwise nothing is credited and finance reviews it.
         var odd = pay.pay(rider.token, client, UUID.randomUUID(), "topup", null, "cm.mtn", "+237670000000", 1000);
         fake.settle(odd.paymentId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, 999L);
         assertEquals("review", pay.read(rider.token, client, odd.paymentId()).state());
-        assertEquals(5000 + price, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000 + price, pay.wallet(rider.token, client).creditXaf());
 
-        // Withdrawals go only to the account's own number; a failed transfer gives everything back.
+        // Withdrawals go only to the account's own number, 3 % on the credit; a failed transfer gives everything back.
         assertEquals(com.waka.finance.PaymentException.Code.PHONE_NOT_ACCOUNT,
-                refused.apply(() -> pay.withdraw(rider.token, client, UUID.randomUUID(), 500, "cm.mtn", candidatePhone)));
-        var failed = pay.withdraw(rider.token, client, UUID.randomUUID(), 500, "cm.mtn", thirdPhone);
-        assertEquals(5, failed.feeXaf());
+                refused.apply(() -> pay.withdraw(rider.token, client, UUID.randomUUID(), "credit", 500, "cm.mtn", candidatePhone)));
+        var failed = pay.withdraw(rider.token, client, UUID.randomUUID(), "credit", 500, "cm.mtn", thirdPhone);
+        assertEquals(15, failed.feeXaf());
         assertEquals("pending", failed.state());
-        assertEquals(5000 + price - 505, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000 + price - 515, pay.wallet(rider.token, client).creditXaf());
         fake.settle(failed.withdrawalId(), com.waka.finance.PaymentProvider.State.FAILED, null);
         assertEquals("failed", pay.readWithdrawal(rider.token, client, failed.withdrawalId()).state());
-        assertEquals(5000 + price, pay.wallet(rider.token, client).balanceXaf());
-        var sent = pay.withdraw(rider.token, client, UUID.randomUUID(), 500, "cm.mtn", thirdPhone);
+        assertEquals(5000 + price, pay.wallet(rider.token, client).creditXaf());
+        var sent = pay.withdraw(rider.token, client, UUID.randomUUID(), "credit", 500, "cm.mtn", thirdPhone);
         fake.settle(sent.withdrawalId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, 500L);
         assertEquals("succeeded", pay.readWithdrawal(rider.token, client, sent.withdrawalId()).state());
-        assertEquals(5000 + price - 505, pay.wallet(rider.token, client).balanceXaf());
+        assertEquals(5000 + price - 515, pay.wallet(rider.token, client).creditXaf());
         assertEquals(com.waka.finance.PaymentException.Code.INSUFFICIENT_CREDIT,
-                refused.apply(() -> pay.withdraw(rider.token, client, UUID.randomUUID(), 200_000, "cm.mtn", thirdPhone)));
+                refused.apply(() -> pay.withdraw(rider.token, client, UUID.randomUUID(), "credit", 200_000, "cm.mtn", thirdPhone)));
+
+        // A driver withdraws earnings at 2 %.
+        var earned = pay.withdraw(driver.token, client, UUID.randomUUID(), "earnings", 500, "cm.mtn", candidatePhone);
+        assertEquals(10, earned.feeXaf());
+        fake.settle(earned.withdrawalId(), com.waka.finance.PaymentProvider.State.SUCCEEDED, 500L);
+        assertEquals("succeeded", pay.readWithdrawal(driver.token, client, earned.withdrawalId()).state());
+        assertEquals(driverShare - 510, pay.wallet(driver.token, client).earningsXaf());
 
         // Every franc: what the provider holds for WAKA equals what was collected minus what was sent out,
         // and it is exactly the people's credit plus WAKA's revenue, with no money left in any hold.
         long atProvider = -com.waka.finance.Ledger.balance(jdbc, gate, "provider:fake");
-        assertEquals(5100 + price + price - 500, atProvider);
+        assertEquals(5000 + price + price - 500 - 500, atProvider);
         long revenue = com.waka.finance.Ledger.balance(jdbc, gate, com.waka.finance.Ledger.REVENUE);
-        assertEquals(100 + (price - driverShare) + 5, revenue, "top-up fee, R03 commission, withdrawal fee");
-        assertEquals(atProvider, (5000 + price - 505) + driverShare + revenue);
+        assertEquals((price - driverShare) + 15 + 10, revenue, "R03 commission, then 3 % and 2 % withdrawal fees");
+        assertEquals(atProvider, (5000 + price - 515) + (driverShare - 510) + revenue);
         assertEquals(0L, jdbc.queryForObject("SELECT COALESCE(SUM(CASE WHEN credit_account LIKE 'hold:%' THEN amount_xaf "
                 + "WHEN debit_account LIKE 'hold:%' THEN -amount_xaf ELSE 0 END),0) FROM ledger_entry WHERE gate_hash=?", Long.class, gate),
                 "no money left in a hold");
@@ -703,7 +713,11 @@ class AdmissionReviewMySqlVerificationTest {
             return new Started("fk-" + reference);
         }
         @Override public Status transfer(String reference) { return payment(reference); }
-        @Override public boolean authentic(byte[] body, String signature) { return "good".equals(signature); }
+        @Override public boolean authentic(byte[] body, java.util.function.UnaryOperator<String> header) { return "good".equals(header.apply("x-wh-secret")); }
+        @Override public Set<String> references(byte[] body) {
+            var m = java.util.regex.Pattern.compile("fk-[0-9a-f-]{36}").matcher(new String(body, java.nio.charset.StandardCharsets.UTF_8));
+            return m.find() ? Set.of(m.group()) : Set.of();
+        }
         void settle(UUID id, State state, Long amount) { statuses.put("fk-" + id, new Status(state, amount, "XAF")); }
     }
 
