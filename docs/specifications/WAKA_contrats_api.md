@@ -698,6 +698,17 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 
 Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
 
+### K35 — Recherche d'adresse pour une course en ville (R13)
+
+Réalisées côté serveur, assemblées seulement quand la clé serveur Google est fournie par l'environnement (sinon 503). Réservées à une session valide. Ce qui est tapé passe dans le corps, jamais dans l'adresse.
+
+| Route | Rôle |
+|---|---|
+| `POST /api/v1/places/suggestions` | Corps `{query, sessionToken}` : 2 à 100 caractères, et un jeton de session choisi par le téléphone. Répond au plus 5 lieux `{placeId, mainText, secondaryText}`, au Cameroun, les plus proches de Yaoundé d'abord. |
+| `POST /api/v1/places/locations` | Corps `{placeId, sessionToken}`. Répond `{placeId, latitude, longitude}` à six décimales, ou 404 si Google ne connaît pas la position. |
+
+Le même jeton regroupe la saisie et le choix final en une seule session facturée ; le téléphone en prend un nouveau après chaque lieu choisi. La clé Google reste sur le serveur. Le serveur fait au plus 300 appels par jour à Google Places et 300 à Google Routes, puis répond 503. La distance du devis (K31) est celle de la route en voiture, sans trafic en direct.
+
 ### K32 — Essai et périodes d'abonnement (R06, R12)
 
 - **Essai** : il démarre une seule fois, à la première prestation terminée et payée d'un chauffeur particulier (fin d'une course en ville, ou embarquement d'un voyage), et dure 7 × 24 h.

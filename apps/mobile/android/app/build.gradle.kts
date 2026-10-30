@@ -27,6 +27,8 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Map key from the build environment only; without it the app runs with an empty map.
+        manifestPlaceholders["googleMapsKey"] = System.getenv("WAKA_GOOGLE_MAP_KEY") ?: ""
     }
 
     buildTypes {
