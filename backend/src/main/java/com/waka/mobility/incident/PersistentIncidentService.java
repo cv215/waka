@@ -178,9 +178,12 @@ public final class PersistentIncidentService {
             String request, String payload, Instant now) {
         String id = UUID.randomUUID().toString();
         byte[] cipher = text == null ? null : crypto.encrypt(text.getBytes(StandardCharsets.UTF_8), aad(incident, id, crypto.keyId()));
-        jdbc.update("INSERT INTO incident_message (gate_hash,id,incident_id,author_account_id,author_role,kind,decision,reason_code,key_id,text_cipher,request_mac,payload_mac,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        // The incident row is locked by every caller, so positions are numbered one after the other.
+        Integer position = jdbc.queryForObject("SELECT COUNT(*) FROM incident_message WHERE gate_hash=? AND incident_id=?", Integer.class, gate, incident);
+        jdbc.update("INSERT INTO incident_message (gate_hash,id,incident_id,author_account_id,author_role,kind,decision,reason_code,key_id,text_cipher,request_mac,payload_mac,created_at,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 gate, id, incident, author, role, kind, decision, reason, crypto.keyId(), cipher,
-                "report".equals(kind) ? crypto.requestMac(author, "incident-report-message-v1", request) : request, payload, sql(now));
+                "report".equals(kind) ? crypto.requestMac(author, "incident-report-message-v1", request) : request, payload, sql(now),
+                position == null ? 0 : position + 1);
     }
     private Row row(String id) {
         return jdbc.query("SELECT * FROM incident WHERE gate_hash=? AND id=?", (rs, n) -> new Row(rs.getString("id"), rs.getString("reservation_id"),
@@ -195,7 +198,7 @@ public final class PersistentIncidentService {
     /** The viewer sees roles only (client, driver, assistance), never account identifiers. */
     private IncidentView view(Row r, String viewer, boolean replay) {
         List<Message> messages = jdbc.query("SELECT id,author_role,kind,decision,reason_code,key_id,text_cipher,created_at FROM incident_message "
-                + "WHERE gate_hash=? AND incident_id=? ORDER BY created_at,id", (rs, n) -> {
+                + "WHERE gate_hash=? AND incident_id=? ORDER BY position,created_at,id", (rs, n) -> {
                     byte[] cipher = rs.getBytes("text_cipher");
                     String text = null;
                     if (cipher != null) {

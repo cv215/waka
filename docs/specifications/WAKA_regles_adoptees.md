@@ -254,6 +254,22 @@ Le fondateur a écrit : « prends les décisions toi-même ». Chaque choix ci-d
 **Données personnelles (A06).**
 - Les demandes sont traitées par une **habilitation dédiée** `PRIVACY`, distincte de l'assistance aux courses.
 - Les **durées de conservation** relèvent du droit applicable et ne peuvent pas être fixées par Claude. Elles restent **à qualifier** avant toute collecte réelle, comme prévu par les règles d'accès et de conservation.
+## R13 — Courses en ville au lancement (décisions de Claude par délégation, 30 octobre 2026)
+
+**Paramètres déjà adoptés et repris tels quels** (parcours partagé et VIP) :
+- devis valable 5 minutes ; recherche de 2 minutes ; réponse du chauffeur en 30 secondes ;
+- position du chauffeur fraîche de 60 secondes au plus ;
+- prise en charge visée en 10 minutes de route au plus ;
+- paiement en 3 minutes distinctes ;
+- 5 minutes de contact et d'attente au point de rendez-vous ;
+- remboursement intégral en cas d'annulation avant l'embarquement (R08).
+
+**Choix de Claude**, chaque fois le plus prudent :
+- **Pas de regroupement de clients différents dans une même voiture au lancement.** Une voiture n'a qu'une seule réservation en ville active à la fois. En partagé, cette réservation porte de 1 à 5 places pour un groupe ; en VIP, elle porte sur la voiture entière. Le regroupement viendra avec le calcul des détours, qui dépend du fournisseur de cartes.
+- **Choix du chauffeur** : par **temps de route** jusqu'au point de départ, fourni par le fournisseur de cartes (`PickupTimeProvider`), jamais par la distance à vol d'oiseau. Les propositions partent une par une, au chauffeur le plus proche en temps, parmi les chauffeurs recevables : approuvés et avec un accès effectif, position fraîche, assez de places, aucune course en cours, à 10 minutes ou moins, jamais le client lui-même. Un chauffeur déjà sollicité pour cette recherche ne l'est pas une seconde fois.
+- **Absence du client** : le chauffeur ne peut la déclarer qu'après 5 minutes d'attente au point convenu. Aucune pénalité automatique : le client est remboursé, et un examen humain reste possible par un incident (R08).
+- **Absence du chauffeur ou véhicule non conforme** : le client annule sans frais (R08).
+- **Embarquement** : par un code à 6 chiffres, comme pour les voyages. **Fin de course** : le règlement prévu par R03 est enregistré (prix, commission, part du chauffeur). Les bonus de parrainage seront établis avec le paiement réel.
 ## Retrouver les passages du dossier
 
 - Décisions de référence §1.1 (reference detaillee conservee hors du depot).

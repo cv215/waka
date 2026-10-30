@@ -145,6 +145,29 @@ public final class PersistentQuoteService {
     private String requestMac(String actor, UUID key) { return crypto.requestMac(actor, "quote-create-v1", key.toString()); }
     // The payload mac reuses the profile primitive's domain-separated encoding with a quote-specific field.
     private String payloadMac(String actor, String fields) { return crypto.requestMac(actor, "quote-payload-v1", fields); }
+    /** What a city ride needs from its quote, read inside the caller's transaction (R13). */
+    public record QuoteForRide(UUID quoteId, String mode, int passengerCount, int distanceMetres, long totalXaf, String fareVersion,
+            Instant expiresAt, GeoPoint origin, GeoPoint destination) {
+        @Override public String toString() { return "QuoteForRide[REDACTED]"; }
+    }
+
+    /** The client's own quote with its decrypted points, or null when unknown or another account's. */
+    public QuoteForRide forRideLocked(UUID client, UUID quoteId) {
+        var rows = jdbc.query("SELECT * FROM quote WHERE gate_hash=? AND id=? AND account_id=? FOR UPDATE", (rs, n) -> {
+            if (!crypto.keyId().equals(rs.getString("key_id"))) throw new QuoteException(QuoteException.Code.SERVICE_UNAVAILABLE);
+            String[] points = new String(crypto.decrypt(rs.getBytes("points_cipher"),
+                    pointsAad(client.toString(), quoteId, rs.getString("key_id"))), StandardCharsets.US_ASCII).split(";");
+            return new QuoteForRide(quoteId, rs.getString("mode"), rs.getInt("passenger_count"), rs.getInt("distance_metres"),
+                    rs.getLong("total_xaf"), rs.getString("fare_version"), instant(rs.getObject("expires_at", LocalDateTime.class)),
+                    point(points[0]), point(points[1]));
+        }, gate, quoteId.toString(), client.toString());
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+    private static GeoPoint point(String canonical) {
+        String[] parts = canonical.split(",");
+        return new GeoPoint(new BigDecimal(parts[0]), new BigDecimal(parts[1]));
+    }
+
     private byte[] pointsAad(String actor, UUID id, String keyId) {
         return ProfileCrypto.aad("waka-quote-points-v1", gate, actor, id.toString(), keyId);
     }

@@ -679,3 +679,29 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 | `POST /api/v1/admin/incidents/{id}/decisions` | ASSISTANCE | Exige `Idempotency-Key`. Corps `{expectedVersion, decision, reasonCode, text?}`. Décisions possibles : `no_action`, `refund_review`, `driver_warning`, `account_review`. Une version différente donne 409 `VERSION_CONFLICT` ; si l'agent est partie, 403 `CONFLICT_OF_INTEREST`. La décision est inscrite au journal. **Elle ne déplace aucun argent** : un remboursement passera par la finance (A40). |
 
 Les textes font de 1 à 1 000 caractères et sont stockés chiffrés. Aucune pièce jointe n'est acceptée pour l'instant.
+
+### K31 — Courses en ville (R13)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503). Elles attendent le fournisseur de cartes (distance du devis, temps de route jusqu'au client) et le paiement.
+
+| Route | Qui | Rôle |
+|---|---|---|
+| `PUT /api/v1/driver/presence` | Chauffeur avec accès effectif | Corps `{online, latitude?, longitude?}`. La position est chiffrée ; son heure est celle du serveur. Hors ligne, la position est effacée. |
+| `POST /api/v1/searches` | Client | Exige `Idempotency-Key`. Corps `{quoteId}`. Recherche de 2 minutes dans la validité du devis ; une seule recherche par devis. |
+| `GET /api/v1/searches/{id}` | Client | État de la recherche et, si elle a abouti, la course avec le code d'embarquement. Lire la recherche envoie la proposition suivante quand aucune n'est en cours. |
+| `POST /api/v1/searches/{id}/cancellations` | Client | Annule une recherche qui n'a pas encore abouti. |
+| `GET /api/v1/driver/proposals` | Chauffeur | Propositions en cours : montée, descente, places, prix, part du chauffeur, temps de route jusqu'au client, échéance. |
+| `POST /api/v1/proposals/{id}/responses` | Chauffeur | Corps `{action: accept\|refuse}`. L'acceptation (201) crée la seule course active de la voiture, en attente de paiement pendant 3 minutes ; le refus répond 204. |
+| `GET /api/v1/rides/{id}` | Ses deux parties | Course vue par le client (avec le code) ou par le chauffeur (sans le code). |
+| `POST /api/v1/rides/{id}/driver-actions` | Chauffeur | Corps `{action: arrive\|board\|finish\|client_absent\|cancel, boardingCode?}`. Arrivée et embarquement seulement après paiement ; absence du client après 5 minutes d'attente, remboursée ; annulation par le chauffeur, remboursée. |
+| `POST /api/v1/rides/{id}/cancellations` | Client | Avant l'embarquement : remboursement intégral, sans pénalité (R08). |
+
+Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
+
+### K32 — Essai et périodes d'abonnement (R06, R12)
+
+- **Essai** : il démarre une seule fois, à la première prestation terminée et payée d'un chauffeur particulier (fin d'une course en ville, ou embarquement d'un voyage), et dure 7 × 24 h.
+- **`POST /api/v1/subscription-purchases`** : corps vide, `Idempotency-Key`. L'achat est réservé au particulier approuvé dont l'essai a commencé ; sinon 409 `TRIAL_NOT_STARTED` ou 403 `NOT_PRIVATE_DRIVER`. La période coûte 3 000 F et reste `awaiting_payment` jusqu'à la confirmation du paiement.
+- **Période payée** : elle commence au plus tard de trois dates (la confirmation du paiement, la fin de l'essai, la fin de la dernière période payée) et dure 30 × 24 h.
+- **`GET /api/v1/driver/subscriptions`** : les périodes du chauffeur.
+- **Accès (K23)**, dans l'ordre : `provisional` avant la première prestation, puis `active` avec `basis: trial`, puis `active` avec `basis: paid_period`, sinon `subscription_required`. Dans ce dernier cas, il n'y a plus de nouvelles courses en ville, mais **les voyages restent possibles** (R11).

@@ -11,12 +11,12 @@ import java.util.UUID;
 /**
  * A32, read only: the driver's effective access, computed from admission and documents (R02, R06, K06).
  * A taxi needs no subscription. An approved private driver has provisional access until a first
- * service; the trial and paid periods (R06) start only with completed paid reservations and confirmed
- * purchases, which do not exist yet, so they are reported as not started rather than guessed.
+ * completed paid service, then the seven-day trial, then paid periods; without one, a subscription is
+ * required (R06, R12).
  * An expired essential document blocks new reservations. Not assembled by default.
  */
 public final class DriverAccessService {
-    public enum Access { NONE, PROVISIONAL, ACTIVE, NEW_RESERVATIONS_BLOCKED }
+    public enum Access { NONE, PROVISIONAL, ACTIVE, NEW_RESERVATIONS_BLOCKED, SUBSCRIPTION_REQUIRED }
     public record AccessView(String access, String basis, UUID applicationId, String category, String admissionState,
             List<String> reasons, List<String> documentsToRenew, String trial, Instant serverTime) { }
 
@@ -51,9 +51,12 @@ public final class DriverAccessService {
             }
         }
         if (!reasons.isEmpty()) return view(Access.NEW_RESERVATIONS_BLOCKED, null, basis, reasons, renew, now);
-        return "taxi".equals(basis.category())
-                ? view(Access.ACTIVE, "taxi_no_subscription", basis, List.of(), List.of(), now)
-                : view(Access.PROVISIONAL, "provisional_before_first_service", basis, List.of(), List.of(), now);
+        if ("taxi".equals(basis.category())) return view(Access.ACTIVE, "taxi_no_subscription", basis, List.of(), List.of(), now);
+        // R06: provisional until the first completed paid service, then the trial, then paid periods.
+        if (basis.trialEndsAt() == null) return view(Access.PROVISIONAL, "provisional_before_first_service", basis, List.of(), List.of(), now);
+        if (now.isBefore(basis.trialEndsAt())) return view(Access.ACTIVE, "trial", basis, List.of(), List.of(), now);
+        if (basis.paidUntil() != null && now.isBefore(basis.paidUntil())) return view(Access.ACTIVE, "paid_period", basis, List.of(), List.of(), now);
+        return view(Access.SUBSCRIPTION_REQUIRED, null, basis, List.of("SUBSCRIPTION_REQUIRED"), List.of(), now);
     }
 
     private static AccessView view(Access access, String basisCode, PersistentDriverApplicationService.AccessBasis basis,
@@ -61,7 +64,8 @@ public final class DriverAccessService {
         boolean privateDriver = basis != null && "private".equals(basis.category());
         return new AccessView(access.name().toLowerCase(), basisCode, basis == null ? null : basis.applicationId(),
                 basis == null ? null : basis.category(), basis == null ? null : basis.state(), List.copyOf(reasons),
-                List.copyOf(renew), privateDriver ? "not_started" : null, now);
+                List.copyOf(renew), !privateDriver ? null : basis.trialEndsAt() == null ? "not_started"
+                        : now.isBefore(basis.trialEndsAt()) ? "running" : "ended", now);
     }
 
     @Override public String toString() { return "DriverAccessService[REDACTED]"; }

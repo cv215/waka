@@ -12,6 +12,7 @@ const _reasonTexts = {
   'DOCUMENT_EXPIRED': 'Une pièce essentielle a expiré : renouvelle-la pour recevoir de nouvelles réservations.',
   'DOCUMENT_NOT_VALID': 'Une pièce essentielle n’est plus valable : remplace-la.',
   'REQUIREMENTS_NOT_QUALIFIED': 'Une exigence de ton dossier est en cours de confirmation par WAKA.',
+  'SUBSCRIPTION_REQUIRED': 'Ton essai est terminé : un abonnement de 3 000 F pour 30 jours est nécessaire pour de nouvelles courses en ville.',
 };
 
 /// « Mon accès chauffeur » : what the server allows now, and why. Nothing is decided on the phone.
@@ -49,7 +50,12 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
   }
 
   (String, String) _summary(DriverAccessView view) => switch (view.access) {
-    'active' => ('Accès actif', 'En taxi, aucun abonnement n’est demandé.'),
+    'active' => ('Accès actif', switch (view.basis) {
+      'trial' => 'Tu es dans ton essai de 7 jours.',
+      'paid_period' => 'Ton abonnement est en cours.',
+      _ => 'En taxi, aucun abonnement n’est demandé.',
+    }),
+    'subscription_required' => ('Abonnement nécessaire', 'Les voyages entre villes restent possibles sans abonnement.'),
     'provisional' => ('Accès provisoire',
         'Tu peux recevoir ta première réservation. L’essai de 7 périodes de 24 h sans abonnement commencera seulement après ta première '
             'course payée et terminée.'),

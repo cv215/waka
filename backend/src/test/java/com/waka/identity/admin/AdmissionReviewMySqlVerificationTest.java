@@ -129,7 +129,7 @@ class AdmissionReviewMySqlVerificationTest {
         try {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("referral_attempt", "referral_link", "referral_code", "voyage_reservation", "voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
+                for (String table : List.of("subscription_period", "driver_trial", "ride_reservation", "ride_proposal", "ride_search", "quote", "driver_presence", "referral_attempt", "referral_link", "referral_code", "voyage_reservation", "voyage_price", "voyage_stop", "voyage", "admission_waiver", "admission_document_review", "admission_photo_review", "admission_decision", "driver_document",
                         "vehicle_photo", "driver_application_command", "driver_application", "admin_session", "admin_totp", "admin_grant",
                         "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
@@ -411,6 +411,158 @@ class AdmissionReviewMySqlVerificationTest {
         assertTrue(voyages.upcoming(rider.token, client).isEmpty());
         assertEquals(1, voyages.mine(driver.token, client).size());
     }
+    @Test void cityRideFromQuoteToEndWithOneProposalAtATimeAndOneActiveRidePerCar() {
+        Login driver = login(candidatePhone);
+        UUID app = readyFile(current, driver, "taxi", "holder", "RS 11-AB", false);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = current.reviews.detail(agent.token, client, adminToken, app);
+        var waivers = new ArrayList<AdmissionReviewService.Waiver>();
+        for (String code : List.of("REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION", "TRANSPORT_LICENCE", "PUBLIC_TRANSPORT_CARD")) {
+            waivers.add(new AdmissionReviewService.Waiver(code, "TO_PROVIDE_AFTER_START"));
+        }
+        current.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), detail.application().version(), "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), allDocuments(detail, "acceptable"), waivers);
+        clock.advance(61);
+        Login rider = login(thirdPhone);
+        SecureRandom random = new SecureRandom();
+        byte[] e1 = new byte[32], m1 = new byte[32], e2 = new byte[32], m2 = new byte[32];
+        for (byte[] k : new byte[][] { e1, m1, e2, m2 }) random.nextBytes(k);
+        var quoteCrypto = new com.waka.identity.profile.ProfileCrypto(e1, m1, "test-key", random);
+        var fares = new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc);
+        var quotes = new com.waka.mobility.quote.PersistentQuoteService(sessions, jdbc, quoteCrypto, fares, "launch-v1",
+                (a, b) -> new java.math.BigDecimal("7480"), com.waka.geo.CircleServiceArea.LAUNCH, clock);
+        java.util.concurrent.atomic.AtomicInteger pickup = new java.util.concurrent.atomic.AtomicInteger(420);
+        var rides = new com.waka.mobility.ride.PersistentRideService(sessions, jdbc, current.applications, quotes, fares,
+                (from, to) -> pickup.get(), new com.waka.identity.profile.ProfileCrypto(e2, m2, "test-key", random), clock);
+        java.util.function.Function<Runnable, com.waka.mobility.ride.RideException.Code> code =
+                action -> assertThrows(com.waka.mobility.ride.RideException.class, action::run).code();
+        var centre = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.848"), new java.math.BigDecimal("11.502"));
+        var there = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.87"), new java.math.BigDecimal("11.52"));
+
+        assertEquals(com.waka.mobility.ride.RideException.Code.DRIVER_NOT_ALLOWED,
+                code.apply(() -> rides.presence(rider.token, client, true, centre)), "a client without approval cannot go online");
+        rides.presence(driver.token, client, true, centre);
+        var quote = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED, 2, centre, there);
+        assertEquals(1200, quote.totalXaf(), "2 seats x 600 F");
+        pickup.set(900);
+        var tooFar = rides.search(rider.token, client, UUID.randomUUID(), quote.quoteId());
+        assertFalse(tooFar.proposalPending(), "15 minutes away: above the 10-minute pickup target");
+        pickup.set(420);
+        var search = rides.readSearch(rider.token, client, tooFar.searchId());
+        assertTrue(search.proposalPending());
+        var proposal = rides.proposals(driver.token, client).getFirst();
+        assertEquals(1200, proposal.priceXaf());
+        assertEquals(1080, proposal.driverXaf(), "R03: commission 120 F on 2 x 600 F");
+        assertEquals(420, proposal.pickupSeconds());
+        var ride = rides.respond(driver.token, client, proposal.proposalId(), true);
+        assertEquals("awaiting_payment", ride.state());
+        assertEquals("matched", rides.readSearch(rider.token, client, search.searchId()).state());
+        String boardingCode = rides.readSearch(rider.token, client, search.searchId()).ride().boardingCode();
+        assertTrue(boardingCode.matches("[0-9]{6}"));
+        assertNull(rides.ride(driver.token, client, ride.reservationId()).boardingCode(), "the driver never sees the code");
+
+        // One active ride per car: a second quote finds no free car.
+        var second = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.VIP, 1, centre, there);
+        assertFalse(rides.search(rider.token, client, UUID.randomUUID(), second.quoteId()).proposalPending());
+        assertEquals(com.waka.mobility.ride.RideException.Code.NOT_PAID,
+                code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "arrive", null)));
+        jdbc.update("UPDATE ride_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, ride.reservationId().toString());
+        rides.driverAction(driver.token, client, ride.reservationId(), "arrive", null);
+        assertEquals(com.waka.mobility.ride.RideException.Code.TOO_EARLY,
+                code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "client_absent", null)), "five minutes of waiting first");
+        String wrong = boardingCode.equals("000000") ? "000001" : "000000";
+        assertEquals(com.waka.mobility.ride.RideException.Code.WRONG_CODE,
+                code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "board", wrong)));
+        assertEquals("boarded", rides.driverAction(driver.token, client, ride.reservationId(), "board", boardingCode).state());
+        assertEquals(com.waka.mobility.ride.RideException.Code.ALREADY_BOARDED,
+                code.apply(() -> rides.cancelByClient(rider.token, client, ride.reservationId())));
+        var finished = rides.driverAction(driver.token, client, ride.reservationId(), "finish", null);
+        assertEquals("finished", finished.state());
+        assertEquals(1080, finished.driverXaf());
+
+        // The car is free again; a client cancellation before boarding is fully refunded (R08).
+        var third = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.VIP, 1, centre, there);
+        var s3 = rides.search(rider.token, client, UUID.randomUUID(), third.quoteId());
+        assertTrue(s3.proposalPending());
+        var p3 = rides.proposals(driver.token, client).getFirst();
+        assertEquals(7500, p3.priceXaf(), "VIP at 600 F a seat");
+        var r3 = rides.respond(driver.token, client, p3.proposalId(), true);
+        jdbc.update("UPDATE ride_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, r3.reservationId().toString());
+        var cancelled = rides.cancelByClient(rider.token, client, r3.reservationId());
+        assertEquals("cancelled_by_client", cancelled.state());
+        assertEquals(7500L, cancelled.refundXaf());
+        assertEquals(com.waka.mobility.ride.RideException.Code.NOT_FOUND,
+                code.apply(() -> rides.ride(agent.token, client, r3.reservationId())), "only its two parties see a ride");
+    }
+
+    @Test void privateDriverTrialStartsWithTheFirstRideThenAPaidPeriodFollowsIt() {
+        Login driver = login(candidatePhone);
+        UUID app = readyFile(current, driver, "private", "holder", "PR 22-CD", false);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = current.reviews.detail(agent.token, client, adminToken, app);
+        current.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), detail.application().version(), "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), allDocuments(detail, "acceptable"),
+                List.of(new AdmissionReviewService.Waiver("REGISTRATION_CERTIFICATE", "LATER"), new AdmissionReviewService.Waiver("INSURANCE", "LATER")));
+        clock.advance(61);
+        Login rider = login(thirdPhone);
+        SecureRandom random = new SecureRandom();
+        byte[][] keys = new byte[6][32];
+        for (byte[] k : keys) random.nextBytes(k);
+        var fares = new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc);
+        var quotes = new com.waka.mobility.quote.PersistentQuoteService(sessions, jdbc, new com.waka.identity.profile.ProfileCrypto(keys[0], keys[1], "test-key", random),
+                fares, "launch-v1", (a, b) -> new java.math.BigDecimal("3000"), com.waka.geo.CircleServiceArea.LAUNCH, clock);
+        var rides = new com.waka.mobility.ride.PersistentRideService(sessions, jdbc, current.applications, quotes, fares, (from, to) -> 300,
+                new com.waka.identity.profile.ProfileCrypto(keys[2], keys[3], "test-key", random), clock);
+        var subscriptions = new com.waka.drivers.SubscriptionService(sessions, jdbc, manager, current.applications,
+                new com.waka.identity.profile.ProfileCrypto(keys[4], keys[5], "test-key", random), clock);
+        var access = new com.waka.drivers.DriverAccessService(sessions, current.applications);
+        var centre = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.848"), new java.math.BigDecimal("11.502"));
+        var there = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.87"), new java.math.BigDecimal("11.52"));
+
+        assertEquals("provisional", access.access(driver.token, client).access());
+        assertEquals(com.waka.drivers.SubscriptionException.Code.TRIAL_NOT_STARTED, assertThrows(com.waka.drivers.SubscriptionException.class,
+                () -> subscriptions.purchase(driver.token, client, UUID.randomUUID())).code(), "R12: no purchase before the first service");
+        rides.presence(driver.token, client, true, centre);
+        var quote = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED, 1, centre, there);
+        rides.search(rider.token, client, UUID.randomUUID(), quote.quoteId());
+        var ride = rides.respond(driver.token, client, rides.proposals(driver.token, client).getFirst().proposalId(), true);
+        jdbc.update("UPDATE ride_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, ride.reservationId().toString());
+        String code = rides.ride(rider.token, client, ride.reservationId()).boardingCode();
+        rides.driverAction(driver.token, client, ride.reservationId(), "board", code);
+        rides.driverAction(driver.token, client, ride.reservationId(), "finish", null);
+        var trial = access.access(driver.token, client);
+        assertEquals("active", trial.access());
+        assertEquals("trial", trial.basis());
+        assertEquals("running", trial.trial());
+
+        UUID key = UUID.randomUUID();
+        var bought = subscriptions.purchase(driver.token, client, key);
+        assertEquals("awaiting_payment", bought.state());
+        assertEquals(3000, bought.priceXaf());
+        assertEquals(bought.periodId(), subscriptions.purchase(driver.token, client, key).periodId(), "same key, same purchase");
+        var paid = subscriptions.markPaid(bought.periodId());
+        var trialEnd = jdbc.queryForObject("SELECT ends_at FROM driver_trial WHERE gate_hash=?", java.time.LocalDateTime.class, gate)
+                .toInstant(java.time.ZoneOffset.UTC);
+        assertEquals(trialEnd, paid.startsAt(), "a period bought during the trial starts when the trial ends");
+        assertEquals(trialEnd.plus(Duration.ofDays(30)), paid.endsAt());
+        assertEquals(paid.startsAt(), subscriptions.markPaid(bought.periodId()).startsAt(), "repeat changes nothing");
+
+        clock.advance(Duration.ofDays(8).toSeconds());
+        Login later = login(candidatePhone);
+        var periodAccess = access.access(later.token, client);
+        assertEquals("paid_period", periodAccess.basis());
+        assertEquals("ended", periodAccess.trial());
+        clock.advance(Duration.ofDays(30).toSeconds());
+        Login muchLater = login(candidatePhone);
+        assertEquals("subscription_required", access.access(muchLater.token, client).access());
+        assertEquals(com.waka.mobility.ride.RideException.Code.DRIVER_NOT_ALLOWED, assertThrows(com.waka.mobility.ride.RideException.class,
+                () -> rides.presence(muchLater.token, client, true, centre)).code(), "no new rides without a subscription");
+    }
+
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
         Login candidate = login(candidatePhone);
         UUID first = readyFile(established, candidate, "taxi", "holder", "AB 12-CD", true);
