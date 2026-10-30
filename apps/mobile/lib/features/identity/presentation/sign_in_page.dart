@@ -14,7 +14,7 @@ import '../../voyages/presentation/voyages_page.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
 import '../data/login_models.dart';
-import '../data/login_store.dart';
+import '../data/platform_login_store.dart';
 import '../data/phone_format_client.dart';
 import '../data/profile_models.dart';
 
@@ -33,7 +33,7 @@ class _SignInPageState extends State<SignInPage> {
       widget.flow ??
       LoginFlow(
         LoginClient(LocalApiConfiguration.fromDefines()),
-        AndroidLoginStore(),
+        platformLoginStore(),
       );
   Timer? _clock;
   @override

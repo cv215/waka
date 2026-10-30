@@ -1,0 +1,12 @@
+{
+    "name": "WAKA",
+    "short_name": "WAKA",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0175C2",
+    "theme_color": "#0175C2",
+    "description": "WAKA - apercu local (donnees de test)",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": []
+}

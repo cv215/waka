@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../../../core/platform/device.dart';
 
 import 'driver_application_models.dart';
 import 'login_models.dart';
@@ -113,7 +114,7 @@ class AndroidLoginStore implements LoginStore {
   @override
   Future<LoginSnapshot?> read() async {
     try {
-      if (!Platform.isAndroid) throw const LoginProblem(LoginFailure.storage);
+      if (!isAndroidDevice) throw const LoginProblem(LoginFailure.storage);
       final raw = await _storage.read(key: _key);
       return raw == null ? null : LoginSnapshot.parse(raw);
     } on Exception {
@@ -124,7 +125,7 @@ class AndroidLoginStore implements LoginStore {
   @override
   Future<void> write(LoginSnapshot snapshot) async {
     try {
-      if (!Platform.isAndroid) throw const LoginProblem(LoginFailure.storage);
+      if (!isAndroidDevice) throw const LoginProblem(LoginFailure.storage);
       await _storage.write(key: _key, value: jsonEncode(snapshot.toJson()));
     } on Exception {
       throw const LoginProblem(LoginFailure.storage);

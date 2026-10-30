@@ -15,6 +15,12 @@ Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1)
 3. Installer l'APK de test sur l'émulateur Android. L'application appelle `http://10.0.2.2:8080`.
 4. Se connecter avec un numéro de test : le code s'affiche dans le fichier des codes ci-dessus.
 
+**Sur un iPhone (aperçu web, même Wi-Fi)** : sans Mac, l'application ne s'installe pas sur iPhone. On l'ouvre donc dans Safari.
+1. Construire la version web dans `apps/mobile` : `flutter build web --debug --dart-define=WAKA_ENV=dev --dart-define=WAKA_API_BASE_URL=origin`.
+2. Le serveur local étant démarré, lancer le relais `tools\serve-web-preview.py`. Il affiche l'adresse à ouvrir sur l'iPhone, par exemple `http://192.168.1.29:8090`. Windows peut demander d'autoriser Python sur le réseau privé.
+
+Le serveur reste fermé au réseau : seul le relais est joignable. La session est gardée dans l'onglet de Safari et disparaît à sa fermeture. Données de test uniquement.
+
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
 
 La clé maîtresse locale est créée une seule fois dans `%LOCALAPPDATA%\WAKA\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.
