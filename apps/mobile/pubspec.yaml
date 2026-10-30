@@ -16,6 +16,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   image_picker: 1.2.4
+  google_maps_flutter: 2.19.0
 
 dev_dependencies:
   integration_test:

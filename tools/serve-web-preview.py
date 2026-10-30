@@ -6,6 +6,9 @@ Build first:  flutter build web --debug --dart-define=WAKA_ENV=dev --dart-define
 """
 import http.client
 import http.server
+import json
+import os
+import re
 import socket
 import sys
 from pathlib import Path
@@ -56,8 +59,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/'):
             self._relay()
+        elif self.path == '/maps-config.js':
+            self._maps_config()
         else:
             super().do_GET()
+
+    def _maps_config(self):
+        """The map key from the environment (tools/start-web-preview.ps1); an empty answer shows no map."""
+        key = os.environ.get('WAKA_GOOGLE_MAP_KEY', '')
+        body = ('window.WAKA_MAPS_KEY = %s;\n' % json.dumps(key if re.fullmatch(r'AIza[0-9A-Za-z_-]{35}', key) else '')).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         self._relay() if self.path.startswith('/api/') else self.send_error(405)

@@ -3,6 +3,7 @@ package com.waka.operations.infrastructure;
 import com.waka.drivers.DriverAccessService;
 import com.waka.drivers.SubscriptionService;
 import com.waka.finance.FapshiProvider;
+import com.waka.geo.GooglePlacesProvider;
 import com.waka.geo.GoogleRoutesProvider;
 import com.waka.finance.FinanceAdminService;
 import com.waka.finance.PaymentProvider;
@@ -192,6 +193,13 @@ public class LocalAppAssembly {
         PickupTimeProvider pickup = google != null ? google
                 : (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
         return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup, profileCrypto("ride"), clock);
+    }
+
+    /** Address search (K35) around the launch city when the Google server key is given; otherwise none (503). */
+    @Bean GooglePlacesProvider places() {
+        String key = System.getenv("WAKA_GOOGLE_SERVER_KEY");
+        return key == null ? null : new GooglePlacesProvider(key,
+                new GeoPoint(new BigDecimal("3.848"), new BigDecimal("11.502")), 20_000);
     }
 
     /**

@@ -133,7 +133,8 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.driverNotAllowed || PhotoFailure.notEnoughSeats || PhotoFailure.ownVoyage || PhotoFailure.departed ||
     PhotoFailure.tooManySeats || PhotoFailure.wrongCode || PhotoFailure.notPaid || PhotoFailure.boardingLocked ||
     PhotoFailure.mutualReferral || PhotoFailure.referralWindowClosed || PhotoFailure.tooManyAttempts || PhotoFailure.tooEarly ||
-    PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount =>
+    PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount ||
+    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute =>
       'Cette action n’est pas possible maintenant.',
     null => null,
   };
@@ -385,7 +386,8 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.driverNotAllowed || PhotoFailure.notEnoughSeats || PhotoFailure.ownVoyage || PhotoFailure.departed ||
     PhotoFailure.tooManySeats || PhotoFailure.wrongCode || PhotoFailure.notPaid || PhotoFailure.boardingLocked ||
     PhotoFailure.mutualReferral || PhotoFailure.referralWindowClosed || PhotoFailure.tooManyAttempts || PhotoFailure.tooEarly ||
-    PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount =>
+    PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount ||
+    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute =>
       'Cette action n’est pas possible maintenant.',
     PhotoFailure.tooLarge => 'L’image dépasse 10 Mo. Choisis une image plus légère.',
     PhotoFailure.unsupported => 'Format non accepté : seules les images JPEG ou PNG sont possibles.',

@@ -10,6 +10,7 @@ import 'payment_models.dart';
 import 'privacy_models.dart';
 import 'profile_models.dart';
 import 'referral_models.dart';
+import 'ride_models.dart';
 import 'vehicle_photo_models.dart';
 import 'voyage_models.dart';
 
@@ -83,6 +84,20 @@ abstract interface class PaymentGateway {
   void dispose();
 }
 
+/// City rides (K31) and the address search behind them (K35). Prices and distances are the server's.
+abstract interface class RideGateway {
+  Future<List<PlaceSuggestion>> placeSuggestions(LoginSession session, String client, String query, String sessionToken);
+  Future<RidePoint> placeLocation(LoginSession session, String client, String placeId, String sessionToken);
+  Future<RideQuoteView> quoteRide(LoginSession session, String client, String key, String mode, int passengerCount,
+      RidePoint origin, RidePoint destination);
+  Future<RideSearchView> startRideSearch(LoginSession session, String client, String key, String quoteId);
+  Future<RideSearchView> rideSearch(LoginSession session, String client, String searchId);
+  Future<RideSearchView> cancelRideSearch(LoginSession session, String client, String searchId);
+  Future<CityRideView> cityRide(LoginSession session, String client, String rideId);
+  Future<CityRideView> cancelCityRide(LoginSession session, String client, String rideId);
+  void dispose();
+}
+
 /// Own referral code and the single referrer attachment (K22).
 abstract interface class ReferralGateway {
   Future<ReferralView> referral(LoginSession session, String client);
@@ -108,8 +123,62 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway, PaymentGateway {
+        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway, PaymentGateway, RideGateway {
   LoginClient(this.configuration);
+
+  List<int> _json(Object? body) => utf8.encode(jsonEncode(body));
+
+  @override
+  Future<List<PlaceSuggestion>> placeSuggestions(LoginSession session, String client, String query, String sessionToken) async =>
+      PlaceSuggestion.parseList(await _photoSend(session, client, 'POST', '/api/v1/places/suggestions', 200,
+          contentType: 'application/json', bytes: _json({'query': query, 'sessionToken': sessionToken}), maxBytes: 16384));
+
+  @override
+  Future<RidePoint> placeLocation(LoginSession session, String client, String placeId, String sessionToken) async =>
+      parsePlaceLocation(await _photoSend(session, client, 'POST', '/api/v1/places/locations', 200,
+          contentType: 'application/json', bytes: _json({'placeId': placeId, 'sessionToken': sessionToken})), placeId);
+
+  @override
+  Future<RideQuoteView> quoteRide(LoginSession session, String client, String key, String mode, int passengerCount,
+      RidePoint origin, RidePoint destination) async {
+    if (!isLoginUuid(key) || !{'shared', 'vip'}.contains(mode) || passengerCount < 1 || passengerCount > 5) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return RideQuoteView.parse(await _photoSend(session, client, 'POST', '/api/v1/quotes', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json', bytes: _json({'mode': mode, 'passengerCount': passengerCount,
+          'origin': origin.toJson(), 'destination': destination.toJson()})));
+  }
+
+  @override
+  Future<RideSearchView> startRideSearch(LoginSession session, String client, String key, String quoteId) async {
+    if (!isLoginUuid(key) || !isLoginUuid(quoteId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return RideSearchView.parse(await _photoSend(session, client, 'POST', '/api/v1/searches', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json', bytes: _json({'quoteId': quoteId})));
+  }
+
+  @override
+  Future<RideSearchView> rideSearch(LoginSession session, String client, String searchId) async {
+    if (!isLoginUuid(searchId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return RideSearchView.parse(await _photoSend(session, client, 'GET', '/api/v1/searches/$searchId', 200));
+  }
+
+  @override
+  Future<RideSearchView> cancelRideSearch(LoginSession session, String client, String searchId) async {
+    if (!isLoginUuid(searchId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return RideSearchView.parse(await _photoSend(session, client, 'POST', '/api/v1/searches/$searchId/cancellations', 200));
+  }
+
+  @override
+  Future<CityRideView> cityRide(LoginSession session, String client, String rideId) async {
+    if (!isLoginUuid(rideId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return CityRideView.parse(await _photoSend(session, client, 'GET', '/api/v1/rides/$rideId', 200));
+  }
+
+  @override
+  Future<CityRideView> cancelCityRide(LoginSession session, String client, String rideId) async {
+    if (!isLoginUuid(rideId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return CityRideView.parse(await _photoSend(session, client, 'POST', '/api/v1/rides/$rideId/cancellations', 200));
+  }
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
   bool _closed = false;
@@ -400,6 +469,10 @@ class LoginClient
           (409, 'CREDIT_LIMIT') => PhotoFailure.creditLimit,
           (422, 'PHONE_NOT_ACCOUNT') => PhotoFailure.phoneNotAccount,
           (409, 'TRIAL_NOT_STARTED') => PhotoFailure.notPayable,
+          (422, 'OUTSIDE_SERVICE_AREA') => PhotoFailure.outsideServiceArea,
+          (422, 'NO_ROUTE' || 'DISTANCE_OUT_OF_RANGE') => PhotoFailure.noRoute,
+          (409, 'QUOTE_EXPIRED' || 'PROPOSAL_EXPIRED') => PhotoFailure.expired,
+          (409, 'CAR_BUSY' || 'NOT_BOARDED' || 'NOT_ARRIVED' || 'ALREADY_BOARDED') => PhotoFailure.notEditable,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

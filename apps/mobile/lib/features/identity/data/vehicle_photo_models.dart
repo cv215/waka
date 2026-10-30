@@ -9,6 +9,9 @@ class PhotoProblem implements Exception {
 
 enum PhotoFailure {
   denied,
+  /// City ride: a point is outside the launch area, or no road joins the two points (K31).
+  outsideServiceArea,
+  noRoute,
   notFound,
   /// The server examined the file and refused it (format, size, dimensions).
   rejectedFile,

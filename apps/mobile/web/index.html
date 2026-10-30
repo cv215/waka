@@ -29,6 +29,13 @@
 
   <title>WAKA</title>
   <link rel="manifest" href="manifest.json">
+  <!-- Map key served by tools/serve-web-preview.py from the private store of this computer; never in Git. -->
+  <script src="maps-config.js"></script>
+  <script>
+    if (/^AIza[0-9A-Za-z_-]{35}$/.test(window.WAKA_MAPS_KEY || '')) {
+      document.write('<script src="https://maps.googleapis.com/maps/api/js?key=' + window.WAKA_MAPS_KEY + '&language=fr&region=CM"></scr' + 'ipt>');
+    }
+  </script>
 </head>
 <body>
   <!--
