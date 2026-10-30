@@ -705,3 +705,16 @@ Une proposition part au chauffeur recevable le plus proche **en temps de route**
 - **Période payée** : elle commence au plus tard de trois dates (la confirmation du paiement, la fin de l'essai, la fin de la dernière période payée) et dure 30 × 24 h.
 - **`GET /api/v1/driver/subscriptions`** : les périodes du chauffeur.
 - **Accès (K23)**, dans l'ordre : `provisional` avant la première prestation, puis `active` avec `basis: trial`, puis `active` avec `basis: paid_period`, sinon `subscription_required`. Dans ce dernier cas, il n'y a plus de nouvelles courses en ville, mais **les voyages restent possibles** (R11).
+
+### K33 — Paiements, crédit WAKA et retraits (R14)
+
+Réalisées côté serveur, non assemblées par défaut (503). Le prestataire Notch Pay n'est branché qu'avec ses clés de test fournies par l'environnement.
+
+| Route | Qui | Rôle |
+|---|---|---|
+| `POST /api/v1/payments` | Client | `Idempotency-Key`. Corps `{purpose: ride\|voyage\|subscription\|topup, targetId?, method: cm.mtn\|cm.orange\|credit, phone?, amountXaf?}`. `targetId` pour une prestation, `amountXaf` pour un dépôt seulement ; le montant d'une prestation est celui du serveur. Avec `credit`, le paiement est immédiat ; avec Mobile Money, il reste `pending` jusqu'au statut du prestataire. 409 `NOT_PAYABLE`, `INSUFFICIENT_CREDIT` ou `CREDIT_LIMIT`. |
+| `GET /api/v1/payments/{id}` | Le payeur | État : `pending`, `succeeded`, `failed` ou `review`. `applied` indique si la prestation a été confirmée. Un paiement `pending` est relu chez le prestataire avant la réponse. |
+| `GET /api/v1/wallet` | Chacun | Solde du crédit WAKA et 50 derniers mouvements : dépôt, paiement de prestation, règlement, retrait, retrait annulé. |
+| `POST /api/v1/withdrawals` | Chacun | `Idempotency-Key`. Corps `{amountXaf, method, phone}`. Seulement vers le numéro vérifié du compte, sinon 422 `PHONE_NOT_ACCOUNT`. Frais de 1 % en plus. |
+| `GET /api/v1/withdrawals/{id}` | Son titulaire | État : `pending`, `succeeded` ou `failed`. Un retrait échoué est rendu entièrement. |
+| `POST /api/v1/payment-notifications/notchpay` | Notch Pay | Sans session. Signature HMAC-SHA256 du corps brut dans `x-notch-signature`, sinon 401. Répond 204 ; la notification déclenche seulement une relecture du statut. |

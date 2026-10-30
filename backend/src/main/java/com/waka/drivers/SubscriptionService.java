@@ -94,23 +94,29 @@ public final class SubscriptionService {
      */
     public PeriodView markPaid(UUID periodId) {
         return transactions.execute(status -> {
-            var rows = jdbc.query("SELECT account_id,state FROM subscription_period WHERE gate_hash=? AND id=? FOR UPDATE",
-                    (rs, n) -> new String[] { rs.getString(1), rs.getString(2) }, gate, periodId.toString());
+            var rows = jdbc.query("SELECT state FROM subscription_period WHERE gate_hash=? AND id=? FOR UPDATE",
+                    (rs, n) -> rs.getString(1), gate, periodId.toString());
             if (rows.isEmpty()) throw new SubscriptionException(SubscriptionException.Code.NOT_FOUND);
-            if ("awaiting_payment".equals(rows.getFirst()[1])) {
-                String account = rows.getFirst()[0];
-                Instant start = clock.instant().truncatedTo(ChronoUnit.MICROS);
-                for (String sql : List.of("SELECT ends_at FROM driver_trial WHERE gate_hash=? AND account_id=?",
-                        "SELECT MAX(ends_at) FROM subscription_period WHERE gate_hash=? AND account_id=? AND state='paid'")) {
-                    for (var end : jdbc.query(sql, (rs, n) -> rs.getObject(1, LocalDateTime.class), gate, account)) {
-                        if (end != null && end.toInstant(ZoneOffset.UTC).isAfter(start)) start = end.toInstant(ZoneOffset.UTC);
-                    }
-                }
-                jdbc.update("UPDATE subscription_period SET state='paid',starts_at=?,ends_at=? WHERE gate_hash=? AND id=?",
-                        sql(start), sql(start.plus(PERIOD)), gate, periodId.toString());
-            }
+            markPaidLocked(jdbc, gate, periodId.toString(), clock.instant().truncatedTo(ChronoUnit.MICROS));
             return period(periodId.toString());
         });
+    }
+
+    /** The same, inside the payment's transaction, with the period row already locked by the caller. */
+    public static void markPaidLocked(JdbcTemplate jdbc, String gate, String periodId, Instant now) {
+        var rows = jdbc.query("SELECT account_id,state FROM subscription_period WHERE gate_hash=? AND id=?",
+                (rs, n) -> new String[] { rs.getString(1), rs.getString(2) }, gate, periodId);
+        if (rows.isEmpty() || !"awaiting_payment".equals(rows.getFirst()[1])) return;
+        String account = rows.getFirst()[0];
+        Instant start = now;
+        for (String sql : List.of("SELECT ends_at FROM driver_trial WHERE gate_hash=? AND account_id=?",
+                "SELECT MAX(ends_at) FROM subscription_period WHERE gate_hash=? AND account_id=? AND state='paid'")) {
+            for (var end : jdbc.query(sql, (rs, n) -> rs.getObject(1, LocalDateTime.class), gate, account)) {
+                if (end != null && end.toInstant(ZoneOffset.UTC).isAfter(start)) start = end.toInstant(ZoneOffset.UTC);
+            }
+        }
+        jdbc.update("UPDATE subscription_period SET state='paid',starts_at=?,ends_at=? WHERE gate_hash=? AND id=?",
+                sql(start), sql(start.plus(PERIOD)), gate, periodId);
     }
 
     private PeriodView period(String id) {

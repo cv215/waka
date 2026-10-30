@@ -299,6 +299,7 @@ public final class PersistentVoyageService {
             var settlement = VoyageRules.boarding(r.total);
             jdbc.update("UPDATE voyage_reservation SET state='boarded',boarded_at=?,ended_at=?,refund_xaf=?,driver_xaf=?,waka_xaf=?,fee_percent=0 WHERE gate_hash=? AND id=?",
                     sql(now), sql(now), settlement.refundXaf(), settlement.driverXaf(), settlement.wakaXaf(), gate, r.id);
+            settle(r.id, session.accountId().toString(), r.client, now, settlement);
             com.waka.drivers.SubscriptionService.startTrialIfFirst(jdbc, gate, session.accountId().toString(), now, "voyage_reservation", r.id);
             return new Out<>(PassengerView.from(reservations("id", r.id).getFirst()), null);
         }));
@@ -361,6 +362,17 @@ public final class PersistentVoyageService {
         jdbc.update("UPDATE voyage_reservation SET state=?,ended_at=?,refund_xaf=?,driver_xaf=?,waka_xaf=?,fee_percent=? WHERE gate_hash=? AND id=?",
                 state, sql(now), settlement == null ? null : settlement.refundXaf(), settlement == null ? null : settlement.driverXaf(),
                 settlement == null ? null : settlement.wakaXaf(), settlement == null ? null : settlement.feePercent(), gate, id);
+        if (settlement != null) {
+            var parties = jdbc.queryForList("SELECT r.client_account_id,v.driver_account_id FROM voyage_reservation r JOIN voyage v "
+                    + "ON v.gate_hash=r.gate_hash AND v.id=r.voyage_id WHERE r.gate_hash=? AND r.id=?", gate, id).getFirst();
+            settle(id, (String) parties.get("driver_account_id"), (String) parties.get("client_account_id"), now, settlement);
+        }
+    }
+    /** R14: the paid seats are split as R11 settled them: refund to the client, share to the driver, rest to WAKA. */
+    private void settle(String id, String driver, String payer, Instant now, VoyageRules.Settlement settlement) {
+        com.waka.finance.Ledger.release(jdbc, gate, com.waka.finance.Ledger.hold("voyage", id), now, com.waka.finance.Ledger.parts(
+                com.waka.finance.Ledger.account(payer), settlement.refundXaf(), com.waka.finance.Ledger.account(driver), settlement.driverXaf(),
+                com.waka.finance.Ledger.REVENUE, settlement.wakaXaf()));
     }
     private ReservationView reservationView(Reservation r, Instant now, boolean replay) {
         String state = "awaiting_payment".equals(r.state) && !now.isBefore(r.holdExpiresAt) ? "expired" : r.state;
