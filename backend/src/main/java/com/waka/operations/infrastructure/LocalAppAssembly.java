@@ -194,10 +194,15 @@ public class LocalAppAssembly {
         return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup, profileCrypto("ride"), clock);
     }
 
-    /** Google Routes when the server key was saved by tools/save-google-maps-keys.ps1; otherwise null (straight lines). */
-    private static GoogleRoutesProvider routes() {
+    /**
+     * Google Routes when the server key was saved by tools/save-google-maps-keys.ps1; otherwise null (straight lines).
+     * One instance for quotes and pickups, so the daily allowance is shared.
+     */
+    private GoogleRoutesProvider routes;
+    private synchronized GoogleRoutesProvider routes() {
         String key = System.getenv("WAKA_GOOGLE_SERVER_KEY");
-        return key == null ? null : new GoogleRoutesProvider(key);
+        if (routes == null && key != null) routes = new GoogleRoutesProvider(key);
+        return routes;
     }
     @Bean PersistentVoyageService voyages(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications, Clock clock) {
         return new PersistentVoyageService(sessions, jdbc, applications, profileCrypto("voyage"), clock);

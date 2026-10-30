@@ -81,6 +81,23 @@ class GoogleRoutesProviderTest {
         assertThrows(RouteDistanceProvider.RouteUnavailableException.class, () -> provider.pickupSeconds(AKWA, BONAPRISO));
     }
 
+    @Test void noCallLeavesOnceTheDailyAllowanceIsSpentAndItComesBackTheNextDay() throws Exception {
+        answer = "{\"routes\":[{\"distanceMeters\":12,\"duration\":\"5s\"}]}";
+        var now = new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.parse("2026-10-30T10:00:00Z"));
+        java.time.Clock clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public java.time.Instant instant() { return now.get(); }
+        };
+        var limited = new GoogleRoutesProvider(URI.create("http://127.0.0.1:" + server.getAddress().getPort()), KEY, clock, 2);
+        limited.roadDistanceMetres(AKWA, BONAPRISO);
+        limited.pickupSeconds(AKWA, BONAPRISO);
+        assertThrows(RouteDistanceProvider.RouteUnavailableException.class, () -> limited.roadDistanceMetres(AKWA, BONAPRISO));
+        assertEquals(2, seen.size(), "the third call never left");
+        now.set(java.time.Instant.parse("2026-10-31T00:00:01Z"));
+        assertEquals(new BigDecimal(12), limited.roadDistanceMetres(AKWA, BONAPRISO));
+    }
+
     @Test void onlyGoogleOrALocalStandInAndAKeyThatIsNeverPrinted() {
         assertThrows(IllegalArgumentException.class, () -> new GoogleRoutesProvider(URI.create("https://evil.example"), KEY));
         assertThrows(IllegalArgumentException.class, () -> new GoogleRoutesProvider("short"));
