@@ -1,0 +1,136 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:waka_mobile/features/identity/application/login_flow.dart';
+import 'package:waka_mobile/features/identity/data/login_client.dart';
+import 'package:waka_mobile/features/identity/data/login_models.dart';
+import 'package:waka_mobile/features/identity/data/login_store.dart';
+import 'package:waka_mobile/features/identity/data/ride_models.dart';
+import 'package:waka_mobile/features/identity/data/vehicle_photo_models.dart';
+import 'package:waka_mobile/features/rides/presentation/driver_ride_page.dart';
+
+import 'city_ride_test.dart' show RideFixture;
+import 'driver_document_test.dart' as fixture;
+import 'voyages_page_test.dart' show iso, departure, settle;
+
+const _proposal = '41111111-2222-4333-8444-555555555555';
+
+/// A stand-in server for the driver side of K31.
+class DriverFixture extends RideFixture implements DriverRideGateway {
+  DriverFixture(super.session);
+  final driverCalls = <String>[];
+  bool offered = true, allowed = true;
+
+  Map<String, Object?> driverRide() => {...rideJson(), 'viewerRole': 'driver', 'boardingCode': null};
+
+  @override
+  Future<DriverPresenceView> setPresence(LoginSession s, String c, bool online, RidePoint? at) async {
+    driverCalls.add('presence:$online:${at?.toJson()}');
+    if (!allowed) throw const PhotoProblem(PhotoFailure.driverNotAllowed);
+    return DriverPresenceView.parse({'online': online, 'positionAt': online ? iso(departure) : null});
+  }
+
+  @override
+  Future<List<DriverProposalView>> driverProposals(LoginSession s, String c) async => DriverProposalView.parseList([
+    if (offered) {'proposalId': _proposal, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333, 'pickupSeconds': 240,
+      'expiresAt': iso(departure), 'pickup': {'latitude': 3.8667, 'longitude': 11.5167}, 'dropoff': {'latitude': 3.8935, 'longitude': 11.509}},
+  ]);
+
+  @override
+  Future<CityRideView?> answerProposal(LoginSession s, String c, String id, bool accept) async {
+    driverCalls.add('answer:$accept');
+    offered = false;
+    return accept ? CityRideView.parse(driverRide()) : null;
+  }
+
+  @override
+  Future<CityRideView> driverRideAction(LoginSession s, String c, String id, String action, String? code) async {
+    driverCalls.add('action:$action:${code ?? '-'}');
+    if (action == 'board' && code != '048213') throw const PhotoProblem(PhotoFailure.wrongCode);
+    rideState = switch (action) { 'arrive' => 'driver_arrived', 'board' => 'boarded', 'finish' => 'finished', _ => 'cancelled_by_driver' };
+    return CityRideView.parse(driverRide());
+  }
+
+  @override
+  Future<CityRideView> cityRide(LoginSession s, String c, String id) async => CityRideView.parse(driverRide());
+}
+
+Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap) => GestureDetector(
+  key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)), child: const ColoredBox(color: Colors.green));
+
+Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202)}) async {
+  tester.view.physicalSize = const Size(900, 2600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final (login, gateway) = (await tester.runAsync(() async {
+    final session = fixture.grant();
+    final store = fixture.MemoryStore();
+    await store.write(LoginSnapshot(randomLoginId(), session: session));
+    final gateway = DriverFixture(session);
+    final login = LoginFlow(gateway, store);
+    await login.initialize();
+    return (login, gateway);
+  }))!;
+  await tester.pumpWidget(MaterialApp(home: DriverRidePage(login: login, mapBuilder: _fakeMap, readPosition: () async => gps,
+      pollEvery: null, presenceEvery: null)));
+  await settle(tester);
+  return gateway;
+}
+
+void main() {
+  test('lecture stricte : une proposition où la part dépasse le prix est refusée', () {
+    expect(() => DriverProposalView.parseList([{'proposalId': _proposal, 'mode': 'shared', 'seats': 1, 'priceXaf': 100,
+      'driverXaf': 101, 'pickupSeconds': 60, 'expiresAt': '2026-10-30T10:00:00Z', 'pickup': {'latitude': 3.8, 'longitude': 11.5},
+      'dropoff': {'latitude': 3.9, 'longitude': 11.5}}]), throwsA(isA<PhotoProblem>()));
+    expect(() => CityRideView.parse({'reservationId': _proposal, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
+      'state': 'confirmed', 'holdExpiresAt': null, 'arrivedAt': null, 'viewerRole': 'driver', 'boardingCode': '123456',
+      'refundXaf': null, 'pickup': {'latitude': 3.8, 'longitude': 11.5}, 'dropoff': {'latitude': 3.9, 'longitude': 11.5}}),
+        throwsA(isA<PhotoProblem>()), reason: 'a driver never receives the client code');
+  });
+
+  testWidgets('en ligne avec le GPS, accepter, arriver, faire monter avec le bon code, terminer', (tester) async {
+    final server = await _open(tester);
+    await tester.tap(find.byType(Switch));
+    await settle(tester);
+    expect(server.driverCalls.first, 'presence:true:{latitude: 3.8601, longitude: 11.5202}');
+    await tester.tap(find.text('Actualiser'));
+    await settle(tester);
+    expect(find.text('Client à 4 min de route'), findsOneWidget);
+    expect(find.text('Prix : 370 F · ta part : 333 F'), findsOneWidget);
+    await tester.tap(find.text('Accepter'));
+    await settle(tester);
+    expect(find.text('Course acceptée : le client a 3 minutes pour payer.'), findsOneWidget);
+    expect(find.text('Je suis arrivé au départ'), findsNothing, reason: 'not before payment');
+
+    server.rideState = 'confirmed';
+    await tester.tap(find.text('Actualiser'));
+    await settle(tester);
+    await tester.tap(find.text('Je suis arrivé au départ'));
+    await settle(tester);
+    await tester.enterText(find.widgetWithText(TextField, 'Code du client (6 chiffres)'), '111111');
+    await tester.tap(find.text('Faire monter le client'));
+    await settle(tester);
+    expect(find.textContaining('Ce code ne correspond pas'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Code du client (6 chiffres)'), '048213');
+    await tester.tap(find.text('Faire monter le client'));
+    await settle(tester);
+    await tester.tap(find.text('Terminer la course'));
+    await settle(tester);
+    expect(find.text('Course terminée : ta part est dans tes gains.'), findsOneWidget);
+    expect(server.driverCalls, containsAllInOrder(['answer:true', 'action:arrive:-', 'action:board:111111', 'action:board:048213',
+      'action:finish:-']));
+  });
+
+  testWidgets('sans GPS, la position vient de la carte ; un compte non chauffeur est refusé clairement', (tester) async {
+    final server = await _open(tester, gps: null);
+    await tester.tap(find.byType(Switch));
+    await settle(tester);
+    expect(find.textContaining('touche la carte'), findsWidgets);
+    expect(server.driverCalls, isEmpty, reason: 'nothing sent without a position');
+    await tester.tap(find.byKey(const Key('carte')));
+    server.allowed = false;
+    await tester.tap(find.byType(Switch));
+    await settle(tester);
+    expect(server.driverCalls.single, 'presence:true:{latitude: 3.87, longitude: 11.51}');
+    expect(find.textContaining('Seul un chauffeur approuvé'), findsOneWidget);
+  });
+}

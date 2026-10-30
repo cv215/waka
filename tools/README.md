@@ -21,6 +21,10 @@ Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1)
 
 Le serveur reste fermé au réseau : seul le relais est joignable. La session est gardée dans l'onglet de Safari et disparaît à sa fermeture. Données de test uniquement.
 
+**Premier agent de la base locale** : pour approuver des chauffeurs avec l'administration web, ajouter `-FounderAccount <identifiant>` au démarrage. L'identifiant est l'`accountId` renvoyé par `/api/v1/me` pour votre compte. Cela ne marche qu'une fois par base : les agents suivants sont nommés depuis l'administration (gouvernance).
+
+**APK de test avec la carte** : `tools\build-android-preview.ps1` construit l'APK pour l'émulateur avec la clé « waka-carte » enregistrée sur ce poste.
+
 **Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.
 
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
