@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-
 import '../../../core/config/local_api_configuration.dart';
+import '../../../core/net/net.dart';
 import 'driver_access_models.dart';
 import 'driver_application_models.dart';
 import 'driver_document_models.dart';
