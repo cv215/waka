@@ -375,3 +375,43 @@ class AdminIncident {
     return List.unmodifiable(value.map(AdminIncident.parse));
   }
 }
+/// FINANCE (K34): ledger totals and the money WAKA should find at the provider. No identity is shown.
+class FinanceOverview {
+  const FinanceOverview(this.creditXaf, this.earningsXaf, this.heldXaf, this.payoutsInFlightXaf, this.revenueXaf,
+      this.expectedAtProviderXaf, this.openCases);
+  final int creditXaf, earningsXaf, heldXaf, payoutsInFlightXaf, revenueXaf, expectedAtProviderXaf, openCases;
+  factory FinanceOverview.parse(Object? value) {
+    final m = exact(value, {'creditXaf', 'earningsXaf', 'heldXaf', 'payoutsInFlightXaf', 'revenueXaf', 'expectedAtProviderXaf',
+      'openCases', 'at'});
+    instant(m['at']);
+    int n(String k) => m[k] is int ? m[k] as int : throw const ResponseShapeError();
+    final o = FinanceOverview(n('creditXaf'), n('earningsXaf'), n('heldXaf'), n('payoutsInFlightXaf'), n('revenueXaf'),
+        n('expectedAtProviderXaf'), n('openCases'));
+    // Every franc at the provider belongs to someone: a mismatch means the answer cannot be trusted.
+    if (o.expectedAtProviderXaf != o.creditXaf + o.earningsXaf + o.heldXaf + o.payoutsInFlightXaf + o.revenueXaf || o.openCases < 0) {
+      throw const ResponseShapeError();
+    }
+    return o;
+  }
+}
+
+/// A payment or a withdrawal that a person must settle after checking the provider's dashboard.
+class FinanceCase {
+  const FinanceCase(this.kind, this.id, this.state, this.method, this.amountXaf, this.createdAt);
+  final String kind, id, state, method;
+  final int amountXaf;
+  final DateTime createdAt;
+  factory FinanceCase.parse(Object? value) {
+    final m = exact(value, {'kind', 'id', 'state', 'method', 'amountXaf', 'createdAt'});
+    final kind = m['kind'], state = m['state'], method = m['method'], amount = m['amountXaf'];
+    if (!{'payment', 'withdrawal'}.contains(kind) || !{'pending', 'sent', 'review', 'succeeded', 'failed'}.contains(state)
+        || !{'cm.mtn', 'cm.orange', 'credit', 'earnings'}.contains(method) || amount is! int || amount <= 0) {
+      throw const ResponseShapeError();
+    }
+    return FinanceCase(kind as String, uuid(m['id']), state as String, method as String, amount, instant(m['createdAt']));
+  }
+  static List<FinanceCase> parseList(Object? value) {
+    if (value is! List || value.length > 200) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(FinanceCase.parse));
+  }
+}

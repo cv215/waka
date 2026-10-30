@@ -568,7 +568,8 @@ class AdmissionReviewMySqlVerificationTest {
         UUID app = readyFile(current, driver, "taxi", "holder", "PY 33-AB", false);
         clock.advance(61);
         Login agent = login(agentPhone);
-        char[] adminToken = adminSession(agent);
+        admin.bootstrapFounder(agent.account, Set.of(AdminFunction.ADMISSION, AdminFunction.FINANCE));
+        char[] adminToken = openSession(agent);
         var detail = current.reviews.detail(agent.token, client, adminToken, app);
         var waivers = new ArrayList<AdmissionReviewService.Waiver>();
         for (String code : List.of("REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION", "TRANSPORT_LICENCE", "PUBLIC_TRANSPORT_CARD")) {
@@ -698,6 +699,30 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(0L, jdbc.queryForObject("SELECT COALESCE(SUM(CASE WHEN credit_account LIKE 'hold:%' THEN amount_xaf "
                 + "WHEN debit_account LIKE 'hold:%' THEN -amount_xaf ELSE 0 END),0) FROM ledger_entry WHERE gate_hash=?", Long.class, gate),
                 "no money left in a hold");
+
+        // FINANCE: the totals match the money at the provider; a mismatched payment is settled by a person, once.
+        var finance = new com.waka.finance.FinanceAdminService(sessions, admin, jdbc);
+        var overview = finance.overview(agent.token, client, adminToken);
+        assertEquals(atProvider, overview.expectedAtProviderXaf());
+        assertEquals(revenue, overview.revenueXaf());
+        assertEquals(5000 + price - 515, overview.creditXaf());
+        assertEquals(driverShare - 510, overview.earningsXaf());
+        assertEquals(0, overview.heldXaf());
+        assertEquals(overview.expectedAtProviderXaf(), overview.creditXaf() + overview.earningsXaf() + overview.heldXaf()
+                + overview.payoutsInFlightXaf() + overview.revenueXaf(), "every franc at the provider belongs to someone");
+        var review = finance.cases(agent.token, client, adminToken).stream().filter(c -> c.id().equals(odd.paymentId())).findFirst().orElseThrow();
+        assertEquals("review", review.state());
+        assertEquals(AdminException.Code.INVALID_REQUEST, assertThrows(AdminException.class, () -> finance.resolvePayment(agent.token, client,
+                adminToken, odd.paymentId(), "received", 1001, "PROVIDER_DASHBOARD_CHECKED")).code(), "never more than asked");
+        assertEquals("succeeded", finance.resolvePayment(agent.token, client, adminToken, odd.paymentId(), "received", 999,
+                "PROVIDER_DASHBOARD_CHECKED").state());
+        assertEquals(5000 + price - 515 + 999, pay.wallet(rider.token, client).creditXaf(), "what really arrived goes to the credit");
+        assertEquals(AdminException.Code.NOT_FOUND, assertThrows(AdminException.class, () -> finance.resolvePayment(agent.token, client,
+                adminToken, odd.paymentId(), "not_received", 0, "PROVIDER_DASHBOARD_CHECKED")).code(), "settled once");
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit_event WHERE event_type='PAYMENT_RESOLVED' AND object_ref=?",
+                Integer.class, odd.paymentId().toString()));
+        var after = finance.overview(agent.token, client, adminToken);
+        assertEquals(atProvider + 999, after.expectedAtProviderXaf());
     }
 
     private static final class FakeProvider implements com.waka.finance.PaymentProvider {

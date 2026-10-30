@@ -137,6 +137,26 @@ class AdminApi {
         session: session, clientRef: clientRef, admin: admin, body: {'reasonCode': reasonCode}));
   }
 
+  Future<FinanceOverview> financeOverview(ClientSession session, String clientRef, AdminSession admin) async =>
+      FinanceOverview.parse(await _json('GET', '/api/v1/admin/finance/overview', 200, session: session, clientRef: clientRef, admin: admin));
+
+  Future<List<FinanceCase>> financeCases(ClientSession session, String clientRef, AdminSession admin) async =>
+      FinanceCase.parseList(await _json('GET', '/api/v1/admin/finance/cases', 200, session: session, clientRef: clientRef, admin: admin,
+          maxBytes: 131072));
+
+  /// Payment: received (with the amount really received) or not_received. Withdrawal: sent or not_sent.
+  Future<FinanceCase> resolveCase(ClientSession session, String clientRef, AdminSession admin, FinanceCase item, String outcome,
+      int receivedXaf, String reasonCode) async {
+    final payment = item.kind == 'payment';
+    if (!reasonPattern.hasMatch(reasonCode) || !(payment ? {'received', 'not_received'} : {'sent', 'not_sent'}).contains(outcome)
+        || (outcome == 'received' ? receivedXaf < 1 || receivedXaf > item.amountXaf : receivedXaf != 0)) {
+      throw const ApiProblem(400, null);
+    }
+    return FinanceCase.parse(await _json('POST', '/api/v1/admin/${payment ? 'payments' : 'withdrawals'}/${uuid(item.id)}/resolutions', 200,
+        session: session, clientRef: clientRef, admin: admin,
+        body: payment ? {'outcome': outcome, 'receivedXaf': '$receivedXaf', 'reasonCode': reasonCode} : {'outcome': outcome, 'reasonCode': reasonCode}));
+  }
+
   Future<List<AdminIncident>> incidents(ClientSession session, String clientRef, AdminSession admin) async =>
       AdminIncident.parseList(await _json('GET', '/api/v1/admin/incidents', 200, session: session, clientRef: clientRef, admin: admin,
           maxBytes: 524288));
