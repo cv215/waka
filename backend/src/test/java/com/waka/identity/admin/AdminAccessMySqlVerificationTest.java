@@ -104,7 +104,7 @@ class AdminAccessMySqlVerificationTest {
         Login founder = login(contact);
         assertFailure(AdminException.Code.ACCOUNT_NOT_FOUND, () -> admin.bootstrapFounder(UUID.randomUUID(), Set.of(AdminFunction.ADMISSION)));
         admin.bootstrapFounder(founder.account, EnumSet.allOf(AdminFunction.class));
-        assertEquals(5, jdbc.queryForObject("SELECT COUNT(*) FROM admin_grant WHERE gate_hash=? AND granted_by='FOUNDER_BOOTSTRAP'", Integer.class, gate));
+        assertEquals(AdminFunction.values().length, jdbc.queryForObject("SELECT COUNT(*) FROM admin_grant WHERE gate_hash=? AND granted_by='FOUNDER_BOOTSTRAP'", Integer.class, gate));
         assertFailure(AdminException.Code.BOOTSTRAP_ALREADY_DONE, () -> admin.bootstrapFounder(founder.account, Set.of(AdminFunction.AUDIT)));
         clock.advance(61);
         Login other = login(otherContact);

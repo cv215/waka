@@ -58,6 +58,8 @@ class AgentSession extends ChangeNotifier {
   bool get canExamine => _admin?.functions.contains('ADMISSION') ?? false;
   bool get canManageGrants => _admin?.functions.contains('HABILITATIONS') ?? false;
   bool get canReadAudit => _admin?.functions.contains('AUDIT') ?? false;
+  bool get canHandlePrivacy => _admin?.functions.contains('PRIVACY') ?? false;
+  bool get canAssist => _admin?.functions.contains('ASSISTANCE') ?? false;
 
   static String? normalizePhone(String input) {
     final compact = input.replaceAll(RegExp(r'[ ()-]'), '');

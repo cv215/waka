@@ -11,6 +11,7 @@ const functionLabels = {
   'FINANCE': 'Finance',
   'AUDIT': 'Lecture du journal',
   'HABILITATIONS': 'Gestion des habilitations',
+  'PRIVACY': 'Demandes sur les données',
 };
 
 String shortDate(DateTime value) => value.toLocal().toString().substring(0, 16);
