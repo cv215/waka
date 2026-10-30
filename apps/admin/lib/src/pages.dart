@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'agent_session.dart';
 import 'assistance_pages.dart';
+import 'finance_page.dart';
 import 'governance_pages.dart';
 import 'models.dart';
 
@@ -42,12 +43,14 @@ class Workspace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tabs = <(String, Widget)>[
-      if (session.canExamine || !session.canManageGrants && !session.canReadAudit && !session.canHandlePrivacy && !session.canAssist)
+      if (session.canExamine || !session.canManageGrants && !session.canReadAudit && !session.canHandlePrivacy && !session.canAssist
+          && !session.canFinance)
         ('Candidatures', QueuePage(session: session)),
       if (session.canManageGrants) ('Habilitations', GrantsPage(session: session)),
       if (session.canReadAudit) ('Journal', AuditPage(session: session)),
       if (session.canHandlePrivacy) ('Données', PrivacyPage(session: session)),
       if (session.canAssist) ('Assistance', AssistancePage(session: session)),
+      if (session.canFinance) ('Finance', FinancePage(session: session)),
     ];
     if (tabs.length == 1) return tabs.single.$2;
     return DefaultTabController(length: tabs.length, child: Column(children: [

@@ -718,3 +718,14 @@ Réalisées côté serveur, non assemblées par défaut (503). Le prestataire Fa
 | `POST /api/v1/withdrawals` | Chacun | `Idempotency-Key`. Corps `{pocket: credit\|earnings, amountXaf, method, phone}`. Seulement vers le numéro vérifié du compte, sinon 422 `PHONE_NOT_ACCOUNT`. Frais en plus : 3 % sur le crédit, 2 % sur les gains. |
 | `GET /api/v1/withdrawals/{id}` | Son titulaire | État : `pending`, `succeeded` ou `failed`. Un retrait échoué est rendu entièrement. |
 | `POST /api/v1/payment-notifications` | Le prestataire | Sans session. Fapshi : secret exact dans `x-wh-secret` (Notch Pay : signature HMAC-SHA256 dans `x-notch-signature`), sinon 401. Répond 204 ; la notification déclenche seulement une relecture du statut. |
+
+### K34 — Finance de l'administration (R14)
+
+Les routes sont réservées à la fonction FINANCE, en session d'administration. Elles ne sont pas assemblées par défaut (503). Aucune identité ni aucun numéro n'est affiché.
+
+| Route | Rôle |
+|---|---|
+| `GET /api/v1/admin/finance/overview` | Totaux du registre (crédits, gains, garde, retraits en route, recettes) et montant attendu chez le prestataire, qui en est la somme exacte ; nombre de cas à régler. |
+| `GET /api/v1/admin/finance/cases` | Paiements dont le montant ne correspond pas, et paiements ou retraits sans statut final depuis une heure. |
+| `POST /api/v1/admin/payments/{id}/resolutions` | Corps `{outcome: received\|not_received, receivedXaf, reasonCode}`. Après vérification dans le tableau de bord du prestataire, le montant réellement reçu (au plus le montant demandé) va au crédit du payeur. Une seule fois, inscrit au journal ; jamais sur son propre argent. |
+| `POST /api/v1/admin/withdrawals/{id}/resolutions` | Corps `{outcome: sent\|not_sent, reasonCode}`. « Envoyé » clôt le retrait ; « pas envoyé » rend tout, frais compris. |
