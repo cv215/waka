@@ -63,6 +63,9 @@ abstract interface class VoyageGateway {
   Future<List<PassengerView>> voyagePassengers(LoginSession session, String client, String voyageId);
   Future<PassengerView> boardPassenger(LoginSession session, String client, String voyageId, String code);
   Future<PassengerView> markNoShow(LoginSession session, String client, String voyageId, String reservationId);
+  Future<IncidentView> reportIncident(LoginSession session, String client, String key, String reservationId, String category, String text);
+  Future<List<IncidentView>> myIncidents(LoginSession session, String client);
+  Future<IncidentView> incidentMessage(LoginSession session, String client, String key, String incidentId, String kind, String text);
   void dispose();
 }
 
@@ -234,6 +237,29 @@ class LoginClient
     if (!isLoginUuid(voyageId) || !isLoginUuid(reservationId)) throw const PhotoProblem(PhotoFailure.invalid);
     return PassengerView.parse(await _photoSend(session, client, 'POST', '/api/v1/voyages/$voyageId/no-shows', 200,
         contentType: 'application/json', bytes: utf8.encode(jsonEncode({'reservationId': reservationId}))));
+  }
+
+  @override
+  Future<IncidentView> reportIncident(LoginSession session, String client, String key, String reservationId, String category,
+      String text) async {
+    if (!isLoginUuid(key) || !isLoginUuid(reservationId) || !incidentCategories.containsKey(category)) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return IncidentView.parse(await _photoSend(session, client, 'POST', '/api/v1/incidents', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json', maxBytes: 131072,
+        bytes: utf8.encode(jsonEncode({'reservationId': reservationId, 'category': category, 'description': text}))));
+  }
+
+  @override
+  Future<List<IncidentView>> myIncidents(LoginSession session, String client) async =>
+      IncidentView.parseList(await _photoSend(session, client, 'GET', '/api/v1/me/incidents', 200, maxBytes: 524288));
+
+  @override
+  Future<IncidentView> incidentMessage(LoginSession session, String client, String key, String incidentId, String kind,
+      String text) async {
+    if (!isLoginUuid(key) || !isLoginUuid(incidentId) || !{'reply', 'contest'}.contains(kind)) throw const PhotoProblem(PhotoFailure.invalid);
+    return IncidentView.parse(await _photoSend(session, client, 'POST', '/api/v1/incidents/$incidentId/messages', 201, alsoExpected: 200,
+        key: key, contentType: 'application/json', maxBytes: 131072, bytes: utf8.encode(jsonEncode({'kind': kind, 'text': text}))));
   }
 
   Future<Object?> _photoSend(LoginSession session, String client, String method, String path, int expected,

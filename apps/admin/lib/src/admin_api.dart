@@ -137,6 +137,20 @@ class AdminApi {
         session: session, clientRef: clientRef, admin: admin, body: {'reasonCode': reasonCode}));
   }
 
+  Future<List<AdminIncident>> incidents(ClientSession session, String clientRef, AdminSession admin) async =>
+      AdminIncident.parseList(await _json('GET', '/api/v1/admin/incidents', 200, session: session, clientRef: clientRef, admin: admin,
+          maxBytes: 524288));
+
+  /// A39: [key] stays the same when the agent retries after a lost answer.
+  Future<AdminIncident> decideIncident(ClientSession session, String clientRef, AdminSession admin, String key, AdminIncident incident,
+      String decision, String reasonCode, String? text) async {
+    if (!incidentDecisionLabels.containsKey(decision) || !reasonPattern.hasMatch(reasonCode)) throw const ApiProblem(400, null);
+    final response = await _send('POST', '/api/v1/admin/incidents/${uuid(incident.incidentId)}/decisions', session: session,
+        clientRef: clientRef, admin: admin, key: key,
+        body: {'expectedVersion': incident.version, 'decision': decision, 'reasonCode': reasonCode, 'text': text});
+    return AdminIncident.parse(_accepted(response, {200, 201}));
+  }
+
   Object? _accepted(http.Response response, Set<int> expected) {
     if (!expected.contains(response.statusCode)) throw _problem(response);
     if (response.headers['cache-control'] != 'no-store' ||

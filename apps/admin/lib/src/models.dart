@@ -335,3 +335,43 @@ class LockedVoyage {
     return List.unmodifiable(value.map(LockedVoyage.parse));
   }
 }
+const incidentDecisionLabels = {
+  'no_action': 'Sans suite',
+  'refund_review': 'Remboursement à étudier (finance)',
+  'driver_warning': 'Avertissement au chauffeur',
+  'account_review': 'Revue du compte',
+};
+
+/// An incident as ASSISTANCE sees it (K30): roles and texts, never the parties' identities.
+class AdminIncident {
+  const AdminIncident(this.incidentId, this.category, this.state, this.version, this.messages);
+  final String incidentId, category, state;
+  final int version;
+  /// (authorRole, kind, decision, text)
+  final List<(String, String, String?, String?)> messages;
+  factory AdminIncident.parse(Object? value) {
+    final m = exact(value, {'incidentId', 'reservationId', 'category', 'state', 'version', 'viewerRole', 'createdAt', 'messages',
+      'idempotentReplay'});
+    final messages = m['messages'];
+    if (!{'no_show_dispute', 'safety', 'behaviour', 'payment', 'vehicle', 'other'}.contains(m['category']) ||
+        !{'open', 'decided', 'contested'}.contains(m['state']) || m['version'] is! int || m['viewerRole'] != 'assistance' ||
+        messages is! List || messages.isEmpty) {
+      throw const ResponseShapeError();
+    }
+    uuid(m['reservationId']);
+    instant(m['createdAt']);
+    return AdminIncident(uuid(m['incidentId']), m['category'] as String, m['state'] as String, m['version'] as int,
+        List.unmodifiable(messages.map((item) {
+          final x = exact(item, {'kind', 'authorRole', 'decision', 'reasonCode', 'text', 'at'});
+          if (!{'client', 'driver', 'assistance'}.contains(x['authorRole']) || x['kind'] is! String ||
+              (x['text'] != null && x['text'] is! String) || (x['decision'] != null && !incidentDecisionLabels.containsKey(x['decision']))) {
+            throw const ResponseShapeError();
+          }
+          return (x['authorRole'] as String, x['kind'] as String, x['decision'] as String?, x['text'] as String?);
+        })));
+  }
+  static List<AdminIncident> parseList(Object? value) {
+    if (value is! List || value.length > 100) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(AdminIncident.parse));
+  }
+}

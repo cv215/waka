@@ -123,6 +123,8 @@ class AssistancePage extends StatefulWidget {
 
 class _AssistancePageState extends State<AssistancePage> {
   List<LockedVoyage>? _voyages;
+  List<AdminIncident>? _incidents;
+  final Map<String, String> _keys = {};
   final _reason = TextEditingController(text: 'PASSENGER_IDENTIFIED');
   String? _message;
   bool _busy = false;
@@ -142,7 +144,8 @@ class _AssistancePageState extends State<AssistancePage> {
 
   Future<void> _load() async {
     final voyages = await s.api.lockedVoyages(s.client!, s.clientRef, s.admin!);
-    if (mounted) setState(() => _voyages = voyages);
+    final incidents = await s.api.incidents(s.client!, s.clientRef, s.admin!);
+    if (mounted) setState(() { _voyages = voyages; _incidents = incidents; });
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -158,10 +161,38 @@ class _AssistancePageState extends State<AssistancePage> {
     }
   }
 
+  Future<void> _decide(AdminIncident incident) async {
+    final result = await showDialog<(String, String, String?)>(context: context, builder: (_) => const _DecisionDialog());
+    if (result == null) return;
+    await _run(() async {
+      final request = '${incident.incidentId}:${incident.version}:${result.$1}:${result.$2}:${result.$3}';
+      final key = _keys.putIfAbsent(request, randomKey);
+      await s.api.decideIncident(s.client!, s.clientRef, s.admin!, key, incident, result.$1, result.$2, result.$3);
+      _keys.remove(request);
+      _message = 'Décision enregistrée.';
+      await _load();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final voyages = _voyages;
+    String who(String role) => switch (role) { 'client' => 'Client', 'driver' => 'Chauffeur', _ => 'Assistance' };
     return ListView(padding: const EdgeInsets.all(24), children: [
+      Text('Incidents', style: Theme.of(context).textTheme.headlineSmall),
+      const Text('Les identités des parties ne sont jamais affichées. Une décision ne déplace aucun argent : un remboursement '
+          'passe par la finance.'),
+      if (_incidents != null && _incidents!.isEmpty) const Text('Aucun incident.'),
+      for (final i in _incidents ?? const <AdminIncident>[])
+        Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${i.category} · ${i.state} · version ${i.version}', style: Theme.of(context).textTheme.titleSmall),
+          for (final m in i.messages)
+            Text(m.$2 == 'decision' ? '${who(m.$1)} — décision : ${incidentDecisionLabels[m.$3]}${m.$4 == null ? '' : ' · ${m.$4}'}'
+                : '${who(m.$1)} : ${m.$4 ?? ''}'),
+          if (i.state != 'decided')
+            Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: _busy ? null : () => _decide(i), child: const Text('Décider'))),
+        ]))),
+      const Divider(height: 32),
       Text('Voyages bloqués', style: Theme.of(context).textTheme.headlineSmall),
       const Text('Après 10 codes d’embarquement faux, un voyage est bloqué. Vérifie la situation avec le chauffeur, '
           'puis débloque avec un motif : l’action est inscrite au journal.'),
@@ -185,4 +216,45 @@ class _AssistancePageState extends State<AssistancePage> {
         )),
     ]);
   }
+}
+
+class _DecisionDialog extends StatefulWidget {
+  const _DecisionDialog();
+  @override
+  State<_DecisionDialog> createState() => _DecisionDialogState();
+}
+
+class _DecisionDialogState extends State<_DecisionDialog> {
+  String _decision = 'no_action';
+  final _reason = TextEditingController(), _text = TextEditingController();
+  @override
+  void dispose() {
+    _reason.dispose();
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Décision motivée'),
+    content: Column(mainAxisSize: MainAxisSize.min, children: [
+      DropdownButtonFormField<String>(
+        initialValue: _decision, isExpanded: true, decoration: const InputDecoration(labelText: 'Décision'),
+        items: [for (final e in incidentDecisionLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+        onChanged: (value) => setState(() => _decision = value!),
+      ),
+      TextField(controller: _reason, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Motif (code)')),
+      TextField(controller: _text, maxLength: 1000, maxLines: 3,
+          decoration: const InputDecoration(labelText: 'Explication lue par les deux parties (facultative)')),
+    ]),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+      FilledButton(
+        onPressed: reasonPattern.hasMatch(_reason.text.trim())
+            ? () => Navigator.pop(context, (_decision, _reason.text.trim(), _text.text.trim().isEmpty ? null : _text.text.trim()))
+            : null,
+        child: const Text('Enregistrer'),
+      ),
+    ],
+  );
 }

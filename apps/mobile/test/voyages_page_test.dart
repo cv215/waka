@@ -41,6 +41,33 @@ class VoyageFixture extends fixture.Gateway implements VoyageGateway {
   final reservations = <Map<String, Object?>>[];
   final boardings = <String>[];
   final absents = <String>[];
+  final incidents = <Map<String, Object?>>[];
+  final sentMessages = <String>[];
+
+  Map<String, Object?> incidentJson(String state, List<Map<String, Object?>> messages) => {
+    'incidentId': '11111111-1111-4111-8111-111111111111', 'reservationId': voyageId, 'category': 'behaviour', 'state': state,
+    'version': messages.length, 'viewerRole': 'client', 'createdAt': iso(departure), 'messages': messages, 'idempotentReplay': false,
+  };
+  Map<String, Object?> msg(String kind, String role, String? text, {String? decision}) => {
+    'kind': kind, 'authorRole': role, 'decision': decision, 'reasonCode': decision == null ? null : 'SPEEDING_REPORTED',
+    'text': text, 'at': iso(departure),
+  };
+
+  @override
+  Future<IncidentView> reportIncident(LoginSession s, String c, String key, String reservation, String category, String text) async {
+    final json = incidentJson('open', [msg('report', 'client', text)]);
+    incidents..clear()..add(json);
+    return IncidentView.parse(json);
+  }
+  @override
+  Future<List<IncidentView>> myIncidents(LoginSession s, String c) async => IncidentView.parseList(incidents);
+  @override
+  Future<IncidentView> incidentMessage(LoginSession s, String c, String key, String incident, String kind, String text) async {
+    sentMessages.add('$kind:$text');
+    final json = incidentJson(kind == 'contest' ? 'contested' : 'decided', [msg('report', 'client', 'Trop vite'), msg(kind, 'client', text)]);
+    incidents..clear()..add(json);
+    return IncidentView.parse(json);
+  }
 
   @override
   Future<PassengerView> markNoShow(LoginSession s, String c, String voyage, String reservation) async {
@@ -230,6 +257,41 @@ void main() {
     await settle(tester);
     expect(gateway.absents, hasLength(1));
     expect(find.text('Passager déclaré absent : 30 % retenus, 1800 F pour toi, le reste lui est remboursé.'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('signaler un problème puis contester la décision de l’assistance', (tester) async {
+    final (login, gateway) = await show(tester);
+    gateway.reservations.add(reservationJson(gateway.voyageId, state: 'confirmed'));
+    await tester.tap(find.byIcon(Icons.refresh));
+    await settle(tester);
+    await tester.tap(find.text('Mes réservations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Signaler'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Ce qui s’est passé'), 'Trop vite');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Envoyer'));
+    await settle(tester);
+    expect(find.text('Signalement envoyé à l’assistance WAKA.'), findsOneWidget);
+    gateway.incidents
+      ..clear()
+      ..add(gateway.incidentJson('decided', [gateway.msg('report', 'client', 'Trop vite'),
+        gateway.msg('decision', 'assistance', 'Rappel envoyé.', decision: 'driver_warning')]));
+    await tester.tap(find.byIcon(Icons.refresh));
+    await settle(tester);
+    await tester.tap(find.text('Incidents'));
+    await tester.pumpAndSettle();
+    expect(find.text('Assistance WAKA — décision : Avertissement au chauffeur · Rappel envoyé.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Contester'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Pas suffisant');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Envoyer'));
+    await settle(tester);
+    expect(gateway.sentMessages, ['contest:Pas suffisant']);
+    expect(find.text('Contestation envoyée : l’examen est rouvert.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

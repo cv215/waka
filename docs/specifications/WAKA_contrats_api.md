@@ -665,3 +665,17 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 | `POST /api/v1/admin/voyages/{id}/boarding-unlocks` | ASSISTANCE | Corps `{reasonCode}`. Remet le compteur à zéro ; l'action est inscrite au journal (`VOYAGE_BOARDING_UNLOCKED`). |
 
 `PRIVACY` est une nouvelle fonction d'habilitation, attribuée comme les autres (K19).
+
+### K30 — Incidents (A23–A25, A39 ; règle R12)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+| Route | Qui | Rôle |
+|---|---|---|
+| `POST /api/v1/incidents` | Client ou chauffeur de la réservation | Exige `Idempotency-Key`. Corps `{reservationId, category, description}`. 201 à la création, 200 si l'incident existe déjà : un seul incident par réservation et par déclarant. |
+| `GET /api/v1/me/incidents` | Les deux parties | Leurs incidents avec tous les messages. Chaque partie ne voit que des rôles (`client`, `driver`, `assistance`), jamais l'identité de l'autre. |
+| `POST /api/v1/incidents/{id}/messages` | Les deux parties | Exige `Idempotency-Key`. Corps `{kind: reply\|contest, text}`. Une contestation n'est possible qu'après une décision (sinon 409 `NOT_DECIDED`) ; elle passe l'incident à `contested` et rouvre l'examen. |
+| `GET /api/v1/admin/incidents` | ASSISTANCE | Incidents ouverts et contestés d'abord. L'agent ne voit jamais ceux où il est partie. |
+| `POST /api/v1/admin/incidents/{id}/decisions` | ASSISTANCE | Exige `Idempotency-Key`. Corps `{expectedVersion, decision, reasonCode, text?}`. Décisions possibles : `no_action`, `refund_review`, `driver_warning`, `account_review`. Une version différente donne 409 `VERSION_CONFLICT` ; si l'agent est partie, 403 `CONFLICT_OF_INTEREST`. La décision est inscrite au journal. **Elle ne déplace aucun argent** : un remboursement passera par la finance (A40). |
+
+Les textes font de 1 à 1 000 caractères et sont stockés chiffrés. Aucune pièce jointe n'est acceptée pour l'instant.
