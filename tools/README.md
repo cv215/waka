@@ -21,6 +21,8 @@ Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1)
 
 Le serveur reste fermé au réseau : seul le relais est joignable. La session est gardée dans l'onglet de Safari et disparaît à sa fermeture. Données de test uniquement.
 
+**Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.
+
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
 
 La clé maîtresse locale est créée une seule fois dans `%LOCALAPPDATA%\WAKA\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.

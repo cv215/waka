@@ -3,6 +3,7 @@ package com.waka.operations.infrastructure;
 import com.waka.drivers.DriverAccessService;
 import com.waka.drivers.SubscriptionService;
 import com.waka.finance.FapshiProvider;
+import com.waka.geo.GoogleRoutesProvider;
 import com.waka.finance.FinanceAdminService;
 import com.waka.finance.PaymentProvider;
 import com.waka.finance.PaymentService;
@@ -180,14 +181,23 @@ public class LocalAppAssembly {
 
     @Bean JdbcFareScheduleRepository fares(JdbcTemplate jdbc) { return new JdbcFareScheduleRepository(jdbc); }
     @Bean PersistentQuoteService quotes(PersistentSessionService sessions, JdbcTemplate jdbc, JdbcFareScheduleRepository fares, Clock clock) {
-        return new PersistentQuoteService(sessions, jdbc, profileCrypto("quote"), fares, "launch-v1", LocalAppAssembly::straightLineMetres,
-                CircleServiceArea.LAUNCH, clock);
+        GoogleRoutesProvider google = routes();
+        return new PersistentQuoteService(sessions, jdbc, profileCrypto("quote"), fares, "launch-v1",
+                google != null ? google : LocalAppAssembly::straightLineMetres, CircleServiceArea.LAUNCH, clock);
     }
     @Bean PersistentRideService rides(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
             PersistentQuoteService quotes, JdbcFareScheduleRepository fares, Clock clock) {
-        // About 25 km/h in town, from the straight-line estimate.
-        PickupTimeProvider pickup = (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
+        // Google road time when its key is given; otherwise about 25 km/h in town, from the straight-line estimate.
+        GoogleRoutesProvider google = routes();
+        PickupTimeProvider pickup = google != null ? google
+                : (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
         return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup, profileCrypto("ride"), clock);
+    }
+
+    /** Google Routes when the server key was saved by tools/save-google-maps-keys.ps1; otherwise null (straight lines). */
+    private static GoogleRoutesProvider routes() {
+        String key = System.getenv("WAKA_GOOGLE_SERVER_KEY");
+        return key == null ? null : new GoogleRoutesProvider(key);
     }
     @Bean PersistentVoyageService voyages(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications, Clock clock) {
         return new PersistentVoyageService(sessions, jdbc, applications, profileCrypto("voyage"), clock);
