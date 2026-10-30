@@ -1,3 +1,4 @@
+import '../../payments/presentation/wallet_page.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -195,7 +196,17 @@ class _SignInPageState extends State<SignInPage> {
                         ),
                   icon: const Icon(Icons.route_outlined),
                   label: const Text('Voyage entre villes'),
-                ),              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PrivacyGateway)
+                ),              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PaymentGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => WalletPage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  label: const Text('Mon argent'),
+                ),
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PrivacyGateway)
                 TextButton.icon(
                   onPressed: _flow.busy
                       ? null

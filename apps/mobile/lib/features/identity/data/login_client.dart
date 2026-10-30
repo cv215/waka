@@ -7,6 +7,7 @@ import 'driver_access_models.dart';
 import 'driver_application_models.dart';
 import 'driver_document_models.dart';
 import 'login_models.dart';
+import 'payment_models.dart';
 import 'privacy_models.dart';
 import 'profile_models.dart';
 import 'referral_models.dart';
@@ -69,6 +70,20 @@ abstract interface class VoyageGateway {
   void dispose();
 }
 
+/// Money (K33): pay a service or top up, the two pockets, withdrawals; a private driver's subscription (K32).
+abstract interface class PaymentGateway {
+  Future<PaymentView> pay(LoginSession session, String client, String key, String purpose, String? targetId, String method,
+      String? phone, int? amountXaf);
+  Future<PaymentView> payment(LoginSession session, String client, String paymentId);
+  Future<WalletView> wallet(LoginSession session, String client);
+  Future<WithdrawalView> withdraw(LoginSession session, String client, String key, String pocket, int amountXaf, String method,
+      String phone);
+  Future<WithdrawalView> withdrawal(LoginSession session, String client, String withdrawalId);
+  Future<SubscriptionPeriodView> buySubscription(LoginSession session, String client, String key);
+  Future<List<SubscriptionPeriodView>> subscriptions(LoginSession session, String client);
+  void dispose();
+}
+
 /// Own referral code and the single referrer attachment (K22).
 abstract interface class ReferralGateway {
   Future<ReferralView> referral(LoginSession session, String client);
@@ -94,7 +109,7 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway {
+        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway, PaymentGateway {
   LoginClient(this.configuration);
   final LocalApiConfiguration configuration;
   final Set<HttpClient> _active = {};
@@ -170,6 +185,60 @@ class LoginClient
     return LinkageView.parse(await _photoSend(session, client, 'POST', '/api/v1/me/referral-linkages', 201,
         alsoExpected: 200, contentType: 'application/json', bytes: utf8.encode(jsonEncode({'referralCode': code}))));
   }
+
+  @override
+  Future<PaymentView> pay(LoginSession session, String client, String key, String purpose, String? targetId, String method,
+      String? phone, int? amountXaf) async {
+    if (!isLoginUuid(key) || !paymentPurposes.contains(purpose) || !paymentMethods.contains(method)
+        || (targetId != null && !isLoginUuid(targetId))) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return PaymentView.parse(await _photoSend(session, client, 'POST', '/api/v1/payments', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json', bytes: utf8.encode(jsonEncode({
+          'purpose': purpose, 'method': method,
+          'targetId': ?targetId,
+          'phone': ?phone,
+          'amountXaf': ?amountXaf,
+        }))));
+  }
+
+  @override
+  Future<PaymentView> payment(LoginSession session, String client, String paymentId) async {
+    if (!isLoginUuid(paymentId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return PaymentView.parse(await _photoSend(session, client, 'GET', '/api/v1/payments/$paymentId', 200));
+  }
+
+  @override
+  Future<WalletView> wallet(LoginSession session, String client) async =>
+      WalletView.parse(await _photoSend(session, client, 'GET', '/api/v1/wallet', 200, maxBytes: 65536));
+
+  @override
+  Future<WithdrawalView> withdraw(LoginSession session, String client, String key, String pocket, int amountXaf, String method,
+      String phone) async {
+    if (!isLoginUuid(key) || !pockets.contains(pocket) || !{'cm.mtn', 'cm.orange'}.contains(method)) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return WithdrawalView.parse(await _photoSend(session, client, 'POST', '/api/v1/withdrawals', 201, alsoExpected: 200, key: key,
+        contentType: 'application/json',
+        bytes: utf8.encode(jsonEncode({'pocket': pocket, 'amountXaf': amountXaf, 'method': method, 'phone': phone}))));
+  }
+
+  @override
+  Future<WithdrawalView> withdrawal(LoginSession session, String client, String withdrawalId) async {
+    if (!isLoginUuid(withdrawalId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return WithdrawalView.parse(await _photoSend(session, client, 'GET', '/api/v1/withdrawals/$withdrawalId', 200));
+  }
+
+  @override
+  Future<SubscriptionPeriodView> buySubscription(LoginSession session, String client, String key) async {
+    if (!isLoginUuid(key)) throw const PhotoProblem(PhotoFailure.invalid);
+    return SubscriptionPeriodView.parse(await _photoSend(session, client, 'POST', '/api/v1/subscription-purchases', 201,
+        alsoExpected: 200, key: key, bytes: const [], contentType: 'application/json'));
+  }
+
+  @override
+  Future<List<SubscriptionPeriodView>> subscriptions(LoginSession session, String client) async =>
+      SubscriptionPeriodView.parseList(await _photoSend(session, client, 'GET', '/api/v1/driver/subscriptions', 200, maxBytes: 32768));
 
   @override
   Future<DriverAccessView> driverAccess(LoginSession session, String client) async =>
@@ -304,6 +373,7 @@ class LoginClient
         final code = problem is Map && problem['code'] is String ? problem['code'] as String : null;
         throw PhotoProblem(switch ((status, code)) {
           (403, 'DRIVER_NOT_ALLOWED') => PhotoFailure.driverNotAllowed,
+          (403, 'NOT_PRIVATE_DRIVER') => PhotoFailure.driverNotAllowed,
           (401 || 403, _) => PhotoFailure.denied,
           (404, _) => PhotoFailure.notFound,
           (400, 'FILE_REJECTED') => PhotoFailure.rejectedFile,
@@ -326,6 +396,11 @@ class LoginClient
           (422, 'WINDOW_CLOSED') => PhotoFailure.referralWindowClosed,
           (429, 'TOO_MANY_ATTEMPTS') => PhotoFailure.tooManyAttempts,
           (422, 'TOO_EARLY') => PhotoFailure.tooEarly,
+          (409, 'NOT_PAYABLE') => PhotoFailure.notPayable,
+          (409, 'INSUFFICIENT_CREDIT') => PhotoFailure.insufficientCredit,
+          (409, 'CREDIT_LIMIT') => PhotoFailure.creditLimit,
+          (422, 'PHONE_NOT_ACCOUNT') => PhotoFailure.phoneNotAccount,
+          (409, 'TRIAL_NOT_STARTED') => PhotoFailure.notPayable,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,
           (>= 500, _) => PhotoFailure.unavailable,

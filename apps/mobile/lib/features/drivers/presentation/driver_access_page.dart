@@ -4,6 +4,9 @@ import '../../../core/presentation/waka_page.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/driver_access_models.dart';
 import '../../identity/data/login_client.dart';
+import '../../identity/data/login_models.dart';
+import '../../identity/data/payment_models.dart';
+import '../../payments/presentation/pay_dialog.dart';
 import '../../identity/data/vehicle_photo_models.dart';
 
 const _reasonTexts = {
@@ -17,8 +20,9 @@ const _reasonTexts = {
 
 /// « Mon accès chauffeur » : what the server allows now, and why. Nothing is decided on the phone.
 class DriverAccessPage extends StatefulWidget {
-  const DriverAccessPage({super.key, required this.login});
+  const DriverAccessPage({super.key, required this.login, this.pollEvery = const Duration(seconds: 4)});
   final LoginFlow login;
+  final Duration? pollEvery;
   @override
   State<DriverAccessPage> createState() => _DriverAccessPageState();
 }
@@ -26,7 +30,10 @@ class DriverAccessPage extends StatefulWidget {
 class _DriverAccessPageState extends State<DriverAccessPage> {
   DriverAccessView? _view;
   PhotoFailure? _failure;
+  String? _message;
   bool _busy = false;
+  /// One purchase key until the server answers: a lost answer never creates a second period.
+  String? _purchaseKey;
 
   @override
   void initState() {
@@ -47,6 +54,30 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// K32: a private driver whose trial has started buys 30 days at 3 000 F, then pays it (R14).
+  Future<void> _subscribe() async {
+    final session = widget.login.session, client = widget.login.clientInstance;
+    if (_busy || !widget.login.confirmedNow || session == null || client == null) return;
+    SubscriptionPeriodView? period;
+    setState(() { _busy = true; _message = null; });
+    try {
+      period = await (widget.login.gateway as PaymentGateway).buySubscription(session, client, _purchaseKey ??= randomLoginId());
+      _purchaseKey = null;
+    } on PhotoProblem catch (problem) {
+      if (mounted) setState(() => _message = paymentMessage(problem.failure));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (period == null || !mounted) return;
+    final payment = await showDialog<PaymentView>(context: context, barrierDismissible: false, builder: (_) => PayDialog(
+        login: widget.login, purpose: 'subscription', targetId: period!.periodId, amountXaf: period.priceXaf,
+        title: 'Abonnement 30 jours', pollEvery: widget.pollEvery));
+    if (payment != null && payment.state == 'succeeded' && payment.applied && mounted) {
+      setState(() => _message = 'Abonnement payé : 30 jours, qui commencent après ton essai ou ta période en cours.');
+    }
+    await _load();
   }
 
   (String, String) _summary(DriverAccessView view) => switch (view.access) {
@@ -88,7 +119,12 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
           if (view.documentsToRenew.isNotEmpty)
             Padding(padding: const EdgeInsets.only(top: 8),
                 child: Text('À renouveler dans ma candidature : ${view.documentsToRenew.length} pièce(s).')),
+          if (view.category == 'private' && view.trial != null && view.trial != 'not_started' && widget.login.gateway is PaymentGateway)
+            Padding(padding: const EdgeInsets.only(top: 16), child: FilledButton(onPressed: _busy ? null : _subscribe,
+                child: const Text('Prendre 30 jours d’abonnement (3 000 F)'))),
         ],
+        if (_message != null) Padding(padding: const EdgeInsets.only(top: 12),
+            child: Semantics(liveRegion: true, child: Text(_message!))),
       ]),
     );
   }
