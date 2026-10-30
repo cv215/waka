@@ -90,7 +90,7 @@ class Enrollment {
   String toString() => 'Enrollment[REDACTED]';
 }
 
-const adminFunctions = {'ADMISSION', 'ASSISTANCE', 'FINANCE', 'AUDIT', 'HABILITATIONS'};
+const adminFunctions = {'ADMISSION', 'ASSISTANCE', 'FINANCE', 'AUDIT', 'HABILITATIONS', 'PRIVACY'};
 
 class AdminSession {
   const AdminSession(this.token, this.functions);
@@ -291,5 +291,47 @@ class AuditEntry {
   static List<AuditEntry> parseList(Object? value) {
     if (value is! List || value.length > 100) throw const ResponseShapeError();
     return List.unmodifiable(value.map(AuditEntry.parse));
+  }
+}
+
+/// R12: a request about personal data, as the PRIVACY agent sees it (the text is shown and its reading audited).
+class PrivacyItem {
+  const PrivacyItem(this.requestId, this.kind, this.state, this.receivedAt, this.details, this.outcome, this.outcomeReason);
+  final String requestId, kind, state;
+  final DateTime receivedAt;
+  final String? details, outcome, outcomeReason;
+  bool get open => state == 'received';
+  factory PrivacyItem.parse(Object? value) {
+    final m = exact(value, {'requestId', 'kind', 'state', 'receivedAt', 'details', 'outcome', 'outcomeReason'});
+    final details = m['details'];
+    if (!{'access', 'deletion'}.contains(m['kind']) || !{'received', 'closed'}.contains(m['state']) ||
+        (details != null && (details is! String || details.length > 2000)) ||
+        !(m['outcome'] == null || {'completed', 'refused'}.contains(m['outcome'])) ||
+        ((m['state'] == 'closed') != (m['outcome'] != null))) {
+      throw const ResponseShapeError();
+    }
+    return PrivacyItem(uuid(m['requestId']), m['kind'] as String, m['state'] as String, instant(m['receivedAt']),
+        details as String?, m['outcome'] as String?, optionalReason(m['outcomeReason']));
+  }
+  static List<PrivacyItem> parseList(Object? value) {
+    if (value is! List || value.length > 100) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(PrivacyItem.parse));
+  }
+}
+
+/// A voyage whose boarding is locked after too many wrong codes.
+class LockedVoyage {
+  const LockedVoyage(this.voyageId, this.departureAt, this.failures);
+  final String voyageId;
+  final DateTime departureAt;
+  final int failures;
+  factory LockedVoyage.parse(Object? value) {
+    final m = exact(value, {'voyageId', 'departureAt', 'failures'});
+    if (m['failures'] is! int || (m['failures'] as int) < 0) throw const ResponseShapeError();
+    return LockedVoyage(uuid(m['voyageId']), instant(m['departureAt']), m['failures'] as int);
+  }
+  static List<LockedVoyage> parseList(Object? value) {
+    if (value is! List || value.length > 100) throw const ResponseShapeError();
+    return List.unmodifiable(value.map(LockedVoyage.parse));
   }
 }

@@ -117,6 +117,26 @@ class AdminApi {
         session: session, clientRef: clientRef, admin: admin, maxBytes: 131072));
   }
 
+  Future<List<PrivacyItem>> privacyRequests(ClientSession session, String clientRef, AdminSession admin) async =>
+      PrivacyItem.parseList(await _json('GET', '/api/v1/admin/privacy-requests', 200,
+          session: session, clientRef: clientRef, admin: admin, maxBytes: 262144));
+
+  Future<PrivacyItem> closePrivacyRequest(ClientSession session, String clientRef, AdminSession admin, String requestId,
+      String outcome, String reasonCode) async {
+    if (!{'completed', 'refused'}.contains(outcome) || !reasonPattern.hasMatch(reasonCode)) throw const ApiProblem(400, null);
+    return PrivacyItem.parse(await _json('POST', '/api/v1/admin/privacy-requests/${uuid(requestId)}/closures', 200,
+        session: session, clientRef: clientRef, admin: admin, body: {'outcome': outcome, 'reasonCode': reasonCode}));
+  }
+
+  Future<List<LockedVoyage>> lockedVoyages(ClientSession session, String clientRef, AdminSession admin) async =>
+      LockedVoyage.parseList(await _json('GET', '/api/v1/admin/locked-voyages', 200, session: session, clientRef: clientRef, admin: admin));
+
+  Future<LockedVoyage> unlockVoyage(ClientSession session, String clientRef, AdminSession admin, String voyageId, String reasonCode) async {
+    if (!reasonPattern.hasMatch(reasonCode)) throw const ApiProblem(400, null);
+    return LockedVoyage.parse(await _json('POST', '/api/v1/admin/voyages/${uuid(voyageId)}/boarding-unlocks', 200,
+        session: session, clientRef: clientRef, admin: admin, body: {'reasonCode': reasonCode}));
+  }
+
   Object? _accepted(http.Response response, Set<int> expected) {
     if (!expected.contains(response.statusCode)) throw _problem(response);
     if (response.headers['cache-control'] != 'no-store' ||

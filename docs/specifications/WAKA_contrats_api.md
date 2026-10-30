@@ -652,3 +652,16 @@ Règles :
 - répéter l'opération rend le même résultat.
 
 **Correction de capacité.** Un passager embarqué garde sa place sur son tronçon : elle n'est pas revendue pendant le trajet.
+
+### K29 — Fonction PRIVACY et assistance aux voyages (R12)
+
+Ces routes sont réalisées côté serveur et ne sont pas assemblées par défaut (503).
+
+| Route | Fonction | Rôle |
+|---|---|---|
+| `GET /api/v1/admin/privacy-requests` | PRIVACY | Demandes sur les données, les ouvertes d'abord. Le texte du demandeur est déchiffré pour l'agent, et chaque lecture est inscrite au journal (`PRIVACY_REQUEST_READ`). L'agent ne voit jamais ses propres demandes. |
+| `POST /api/v1/admin/privacy-requests/{id}/closures` | PRIVACY | Corps `{outcome: completed\|refused, reasonCode}`. La clôture est inscrite au journal ; la répéter ne change rien. **Clôturer ne supprime rien** : la suppression suit la procédure A05. Une demande clôturée permet d'en faire une nouvelle. |
+| `GET /api/v1/admin/locked-voyages` | ASSISTANCE | Voyages bloqués après 10 codes d'embarquement faux, sauf ceux que l'agent conduit lui-même. |
+| `POST /api/v1/admin/voyages/{id}/boarding-unlocks` | ASSISTANCE | Corps `{reasonCode}`. Remet le compteur à zéro ; l'action est inscrite au journal (`VOYAGE_BOARDING_UNLOCKED`). |
+
+`PRIVACY` est une nouvelle fonction d'habilitation, attribuée comme les autres (K19).
