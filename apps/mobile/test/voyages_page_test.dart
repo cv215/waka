@@ -155,7 +155,7 @@ void main() {
     expect(() => VoyageView.parse({...voyageJson(id), 'driverAccountId': 'x'}), throwsA(isA<PhotoProblem>()));
   });
 
-  testWidgets('réserver le trajet complet : prix du chauffeur, attente de paiement annoncée honnêtement', (tester) async {
+  testWidgets('réserver le trajet complet : prix du chauffeur, paiement demandé dans les 3 minutes', (tester) async {
     final (login, gateway) = await show(tester);
     expect(find.text('Yaoundé → Edéa → Douala'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Réserver'));
@@ -164,7 +164,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Réserver'));
     await settle(tester);
     expect(gateway.reserved.single, endsWith(':0-2:1'));
-    expect(find.textContaining('paiement Mobile Money n’est pas encore ouvert'), findsOneWidget);
+    expect(find.textContaining('Tes places sont gardées 3 minutes : paie maintenant.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

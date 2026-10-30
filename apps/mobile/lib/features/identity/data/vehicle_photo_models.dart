@@ -45,6 +45,11 @@ enum PhotoFailure {
   referralWindowClosed,
   tooManyAttempts,
   tooEarly,
+  /// Money (K33): nothing to pay any more, not enough in the pocket, credit cap reached, not the account's number.
+  notPayable,
+  insufficientCredit,
+  creditLimit,
+  phoneNotAccount,
 }
 
 const vehiclePhotoViews = ['PH01', 'PH02', 'PH03', 'PH04', 'PH05', 'PH06'];

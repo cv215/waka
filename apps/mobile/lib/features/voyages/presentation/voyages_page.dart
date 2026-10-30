@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/login_models.dart';
+import '../../identity/data/payment_models.dart';
 import '../../identity/data/vehicle_photo_models.dart';
 import '../../identity/data/voyage_models.dart';
+import '../../payments/presentation/pay_dialog.dart';
 
 typedef PickDateTime = Future<DateTime?> Function(BuildContext context);
 
@@ -38,11 +40,12 @@ String voyageMessage(PhotoFailure failure) => switch (failure) {
   _ => 'Demande refusée : vérifie les informations saisies.',
 };
 
-/// « Voyage » : intercity trips. Payment is not available yet: a reservation waits for it three minutes.
+/// « Voyage » : intercity trips. A reservation is paid within three minutes (R14), by Mobile Money or from the WAKA credit.
 class VoyagesPage extends StatefulWidget {
-  const VoyagesPage({super.key, required this.login, this.pickDateTime = pickWithDialogs});
+  const VoyagesPage({super.key, required this.login, this.pickDateTime = pickWithDialogs, this.pollEvery = const Duration(seconds: 4)});
   final LoginFlow login;
   final PickDateTime pickDateTime;
+  final Duration? pollEvery;
   @override
   State<VoyagesPage> createState() => _VoyagesPageState();
 }
@@ -100,10 +103,24 @@ class _VoyagesPageState extends State<VoyagesPage> {
     final request = 'reserve:${voyage.voyageId}:$from:$to:$seats';
     final reservation = await _gateway.reserveVoyage(session, client, _key(request), voyage.voyageId, from, to, seats);
     _keys.remove(request);
-    _message = 'Réservation enregistrée : ${reservation.totalXaf} F. Le paiement Mobile Money n’est pas encore ouvert ; '
-        'tes places sont gardées 3 minutes.';
+    _message = 'Réservation enregistrée : ${reservation.totalXaf} F. Tes places sont gardées 3 minutes : paie maintenant.';
     await _load();
+    if (mounted && widget.login.gateway is PaymentGateway) await _pay(reservation.reservationId, reservation.totalXaf, reload: false);
   });
+
+  Future<void> _pay(String reservationId, int amount, {bool reload = true}) async {
+    final payment = await showDialog<PaymentView>(context: context, barrierDismissible: false, builder: (_) => PayDialog(
+        login: widget.login, purpose: 'voyage', targetId: reservationId, amountXaf: amount, title: 'Payer mes places',
+        pollEvery: widget.pollEvery));
+    if (payment != null && payment.state == 'succeeded' && payment.applied) {
+      _message = 'Places payées : ton code d’embarquement est actif.';
+    }
+    if (reload) {
+      await _run(_load);
+    } else {
+      await _load();
+    }
+  }
 
   Future<void> _cancelReservation(ReservationView reservation) => _run(() async {
     final (session, client) = _context();
@@ -185,6 +202,8 @@ class _VoyagesPageState extends State<VoyagesPage> {
               '${r.refundXaf == null || r.state == 'boarded' ? '' : ' · remboursé ${r.refundXaf} F (frais ${r.feePercent} %)'}'
               '${r.boardingCode == null ? '' : '\nCode d’embarquement : ${r.boardingCode} — à donner au chauffeur au départ, à personne d’autre.'}'),
           trailing: Wrap(spacing: 4, children: [
+            if (r.state == 'awaiting_payment' && widget.login.gateway is PaymentGateway)
+              FilledButton(onPressed: _busy ? null : () => _pay(r.reservationId, r.totalXaf), child: const Text('Payer')),
             TextButton(onPressed: _busy ? null : () => _report(r.reservationId), child: const Text('Signaler')),
             if ({'awaiting_payment', 'confirmed'}.contains(r.state))
               TextButton(onPressed: _busy ? null : () => _confirmCancel(r), child: const Text('Annuler')),
