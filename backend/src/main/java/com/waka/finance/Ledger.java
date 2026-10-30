@@ -14,7 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * grouped in a journal whose name makes a repeat impossible (unique journal and line). Called inside the
  * caller's transaction, under the caller's locks.
  *
- * Accounts: {@code acct:<account>} the WAKA credit of a person (client refunds, driver earnings, top-ups);
+ * Accounts: {@code acct:<account>} the WAKA credit of a person (top-ups, refunds, late payments);
+ * {@code earn:<account>} the earnings of a driver or sponsor (withdrawn at a lower fee);
  * {@code hold:<kind>:<id>} money paid for a service not yet delivered; {@code payout:<id>} a withdrawal
  * on its way; {@code provider:<name>} money held at the payment provider; {@code waka:revenue}.
  */
@@ -25,6 +26,7 @@ public final class Ledger {
     private Ledger() { }
 
     public static String account(String accountId) { return "acct:" + accountId; }
+    public static String earnings(String accountId) { return "earn:" + accountId; }
     public static String hold(String kind, String id) { return "hold:" + kind + ":" + id; }
 
     /** Posts the lines once; zero amounts are skipped. A journal already posted is left as it is. */

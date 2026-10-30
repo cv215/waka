@@ -286,38 +286,50 @@ Pour la revue, lire d’abord R01, les exemples R03, R05, R06 et R09. La défini
 
 ## R14 — Argent : paiements, crédit WAKA et retraits (30 octobre 2026)
 
-Décisions du fondateur : prestataire **Notch Pay**, Mobile Money **MTN et Orange** (Orange Money sort de l'attente ; seuls les SMS restent en attente), argent conservé dans l'application sans passer par une banque. Le reste est décidé par Claude, en retenant le choix le plus prudent.
+Décisions du fondateur :
+- **Prestataire Fapshi**, ouvert avec un compte de particulier en attendant l'entreprise. Notch Pay reste branché comme solution de remplacement.
+- **Mobile Money MTN et Orange.** Orange Money sort de l'attente ; seuls les SMS y restent.
+- **Argent conservé dans l'application**, sans passer par une banque.
+- **Frais** : WAKA supporte les frais d'encaissement, et les frais apparaissent au retrait (voir plus bas).
+
+Le reste est décidé par Claude, en retenant le choix le plus prudent.
 
 **Où est l'argent.**
-- L'argent encaissé reste sur le compte marchand de WAKA chez Notch Pay ; WAKA ne le garde pas sur ses propres comptes.
-- WAKA tient un **registre** (« grand livre ») : chaque mouvement est inscrit une fois, au débit d'un compte et au crédit d'un autre, pour le même montant. Aucun franc n'apparaît ni ne disparaît.
-- **Rapprochement** : ce que le registre dit être chez le prestataire doit égaler son solde réel.
-- **Crédit WAKA** : chaque personne a un crédit, dans lequel arrivent ses dépôts, ses remboursements et ses gains de chauffeur.
-- **Crédit fermé** : il n'y a **aucun transfert entre utilisateurs** au lancement. Cela remplace « transferts internes gratuits » (R11) tant qu'aucun avis juridique ne l'autorise ; le crédit ressemble ainsi le moins possible à de la monnaie électronique.
+- L'argent encaissé reste chez Fapshi, sur le service d'encaissement de WAKA. Les retraits partent d'un service de versement séparé : Fapshi interdit d'encaisser sur un service dont les versements sont activés. Le fondateur approvisionne ce service depuis le tableau de bord Fapshi, car l'interface de Fapshi ne permet pas de le faire automatiquement.
+- **Registre** : WAKA tient un registre (« grand livre »). Chaque mouvement est inscrit une fois, au débit d'un compte et au crédit d'un autre, pour le même montant. Aucun franc n'apparaît ni ne disparaît.
+- **Rapprochement** : le total que le registre attribue au prestataire doit égaler la somme des soldes réels de ses deux services.
+- **Deux poches par personne** :
+  - le **crédit**, qui reçoit les dépôts, les remboursements et les paiements arrivés en retard ;
+  - les **gains**, qui reçoivent la part du chauffeur et, plus tard, les bonus de parrainage.
+
+  Les deux poches peuvent payer une prestation.
+- **Aucun transfert entre utilisateurs** au lancement. Cela remplace « transferts internes gratuits » (R11) tant qu'aucun avis juridique ne l'autorise.
 
 **Payer une prestation.**
-- **Moyens** : une course, des places de voyage ou une période d'abonnement se paient par MTN, par Orange ou avec le crédit WAKA.
-- **Montant** : c'est toujours celui du serveur. Un paiement direct par Mobile Money ne coûte **aucun frais** au client ; WAKA supporte les frais du prestataire.
-- **Garde de l'argent** : l'argent d'une prestation payée attend dans sa **garde** jusqu'au règlement :
-  - **course** : à la fin, part du chauffeur et commission (R03) ;
+- **Moyens** : une course, des places de voyage ou une période d'abonnement se paient par MTN, Orange, le crédit ou les gains.
+- **Montant** : c'est toujours celui du serveur.
+- **Frais** : le client ne paie **aucun frais**, ni au paiement ni au dépôt. WAKA supporte les 3 % d'encaissement de Fapshi, et le crédit du client reçoit exactement ce qu'il a payé.
+- **Garde** : l'argent d'une prestation payée attend dans sa garde jusqu'au règlement :
+  - **course** : à la fin, la part du chauffeur (dans ses gains) et la commission (R03) ;
   - **voyage** : à l'embarquement, 90 % au chauffeur et 10 % à WAKA (R11) ;
-  - **annulation ou absence** : le règlement prévu par R08, R11 et R12.
-- **Remboursements** : ils arrivent **immédiatement dans le crédit WAKA** du client.
-- **Confirmation (R07)** : un paiement n'est confirmé que par le statut relu chez le prestataire. Ni l'écran du téléphone ni le contenu d'une notification ne suffisent : une notification signée sert seulement à déclencher cette relecture. Le montant et la devise (XAF) doivent correspondre exactement ; sinon, rien n'est crédité et le paiement passe en examen.
-- **Paiement tardif** : un paiement arrivé après le délai de 3 minutes ne confirme pas la prestation. L'argent reste dans le crédit du client, qui peut l'utiliser ou le retirer.
+  - **annulation ou absence** : le règlement de R08, R11 et R12. Le remboursement arrive **immédiatement dans le crédit** du client.
+- **Confirmation (R07)** : un paiement n'est confirmé que par le statut relu chez le prestataire.
+  - Ni l'écran du téléphone ni le contenu d'une notification ne suffisent. Une notification authentifiée sert seulement à déclencher cette relecture.
+  - Fapshi ne renvoie jamais une notification perdue. Les paiements et retraits encore ouverts après une minute sont donc relus régulièrement.
+  - Le montant doit correspondre exactement. Sinon, rien n'est crédité et le paiement passe en examen.
+- **Paiement tardif** : un paiement arrivé après le délai de 3 minutes ne confirme pas la prestation ; il reste dans le crédit du client.
 
-**Déposer et retirer (frais = coût du prestataire, comme l'a voulu le fondateur).**
-- **Dépôt** :
-  - montant de 500 à 200 000 F ;
-  - frais de **2 %** arrondis au franc supérieur, ajoutés au montant prélevé ;
-  - un crédit ne peut pas dépasser 300 000 F après un dépôt.
-- **Retrait** :
-  - montant de 500 à 200 000 F ;
-  - frais de **1 %** arrondis au franc supérieur, prélevés en plus sur le crédit ;
-  - **seulement vers le numéro vérifié du compte**, pour qu'une session volée ne puisse pas vider un crédit.
-- **Échec d'un retrait** : tout revient dans le crédit, frais compris. Si l'issue d'un retrait est inconnue, rien n'est rendu avant le statut final du prestataire, pour éviter un double paiement.
+**Déposer et retirer.**
+- **Dépôt** : de 500 à 200 000 F, sans frais. Le crédit ne peut pas dépasser 300 000 F, dépôts en attente compris.
+- **Retrait** : de 500 à 200 000 F, et **seulement vers le numéro vérifié du compte**. Les frais sont prélevés en plus sur la même poche :
+  - **2 % sur les gains**, pour les chauffeurs et les parrains ;
+  - **3 % sur le crédit**, pour le client qui regrette un dépôt ou veut sortir un remboursement.
+- Les frais sont arrondis au franc supérieur.
+- **Échec d'un retrait** : tout revient dans la poche, frais compris.
+- **Issue inconnue** : Fapshi ne protège pas contre une demande envoyée deux fois. Si l'issue d'une demande est inconnue, elle n'est **jamais renvoyée** : on la retrouve par l'identifiant WAKA, et rien n'est rendu avant le statut final.
 
 **Prudence.**
 - Un enregistrement introuvable chez le prestataire n'est jamais traité comme un échec : la finance le rapproche à la main.
-- **Avis juridique à obtenir avant d'ouvrir les dépôts au public** : un crédit rechargeable et retirable peut relever de la réglementation de la monnaie électronique (règlements CEMAC/COBAC). Le paiement direct des prestations n'en dépend pas.
-- **Mode test d'abord** : formes de réponse et mots de statut de Notch Pay sont à confirmer en mode test, avant toute clé réelle. Les clés ne vont jamais dans Git.
+- **Agrégateurs** : Fapshi indique ne pas accepter les « agrégateurs de paiement », et active le paiement direct en production selon l'usage. WAKA doit être présentée honnêtement comme un service de transport qui encaisse le prix de ses propres courses. Fapshi peut refuser ; Notch Pay reste alors prêt.
+- **Avis juridique** à obtenir avant d'ouvrir les dépôts au public : un crédit rechargeable et retirable peut relever de la monnaie électronique (CEMAC/COBAC).
+- **Bac à sable d'abord** : la forme réelle des réponses de Fapshi est à confirmer en bac à sable avant toute clé réelle. Les clés ne vont jamais dans Git.

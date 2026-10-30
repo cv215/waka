@@ -107,7 +107,10 @@ public final class NotchPayProvider implements PaymentProvider {
         return status(call("GET", "/transfers/" + path(reference), null, true), "transfer");
     }
 
-    @Override public boolean authentic(byte[] body, String signature) {
+    @Override public boolean authentic(byte[] body, java.util.function.UnaryOperator<String> header) {
+        return signed(body, header.apply("x-notch-signature"));
+    }
+    boolean signed(byte[] body, String signature) {
         if (body == null || signature == null || !signature.matches("[0-9a-fA-F]{64}")) return false;
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -118,8 +121,7 @@ public final class NotchPayProvider implements PaymentProvider {
         }
     }
 
-    /** The references a notification mentions; each one is only a hint to look the status up again. */
-    public static Set<String> mentionedReferences(byte[] body) {
+    @Override public Set<String> references(byte[] body) {
         Set<String> found = new java.util.LinkedHashSet<>();
         try {
             JsonNode data = JSON.readTree(body).path("data");

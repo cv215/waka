@@ -98,15 +98,15 @@ class NotchPayProviderTest {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(HASH.getBytes(StandardCharsets.US_ASCII), "HmacSHA256"));
         String good = HexFormat.of().formatHex(mac.doFinal(body));
-        assertTrue(provider.authentic(body, good));
-        assertTrue(provider.authentic(body, good.toUpperCase()));
-        assertFalse(provider.authentic(body, null));
-        assertFalse(provider.authentic(body, "0".repeat(64)));
+        assertTrue(provider.signed(body, good));
+        assertTrue(provider.signed(body, good.toUpperCase()));
+        assertFalse(provider.signed(body, null));
+        assertFalse(provider.signed(body, "0".repeat(64)));
         body[body.length - 2] = ' ';
-        assertFalse(provider.authentic(body, good), "a changed body is refused");
-        assertEquals(List.of("x", "trx.abc123"), List.copyOf(NotchPayProvider.mentionedReferences(
+        assertFalse(provider.signed(body, good), "a changed body is refused");
+        assertEquals(List.of("x", "trx.abc123"), List.copyOf(provider.references(
                 "{\"data\":{\"reference\":\"trx.abc123\",\"id\":\"x\"}}".getBytes(StandardCharsets.UTF_8))));
-        assertTrue(NotchPayProvider.mentionedReferences("not json".getBytes(StandardCharsets.UTF_8)).isEmpty());
+        assertTrue(provider.references("not json".getBytes(StandardCharsets.UTF_8)).isEmpty());
     }
 
     @Test void onlyTheRealAddressOrALocalTestServer() {
