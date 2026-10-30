@@ -328,6 +328,10 @@ public final class PersistentRideService {
                     if ("finished".equals(state)) break;
                     if (!"boarded".equals(state)) return new Out<RideView>(null, RideException.Code.NOT_BOARDED);
                     jdbc.update("UPDATE ride_reservation SET state='finished',ended_at=?,active_marker=NULL WHERE gate_hash=? AND id=?", sql(now), gate, id);
+                    // R14: the paid price goes to the driver and to WAKA as R03 settled it.
+                    var split = jdbc.queryForList("SELECT driver_xaf,commission_xaf FROM ride_reservation WHERE gate_hash=? AND id=?", gate, id).getFirst();
+                    com.waka.finance.Ledger.release(jdbc, gate, com.waka.finance.Ledger.hold("ride", id), now, com.waka.finance.Ledger.parts(
+                            com.waka.finance.Ledger.account(actor), (Number) split.get("driver_xaf"), com.waka.finance.Ledger.REVENUE, (Number) split.get("commission_xaf")));
                     com.waka.drivers.SubscriptionService.startTrialIfFirst(jdbc, gate, actor, now, "ride_reservation", id);
                 }
                 case "client_absent" -> {
@@ -378,6 +382,12 @@ public final class PersistentRideService {
     private void end(String id, String state, Instant now, Long refund) {
         jdbc.update("UPDATE ride_reservation SET state=?,ended_at=?,active_marker=NULL,refund_xaf=? WHERE gate_hash=? AND id=?",
                 state, sql(now), refund, gate, id);
+        if (refund != null) {
+            // R08/R14: the refund lands in the client's WAKA credit at once.
+            String payer = jdbc.queryForObject("SELECT client_account_id FROM ride_reservation WHERE gate_hash=? AND id=?", String.class, gate, id);
+            com.waka.finance.Ledger.release(jdbc, gate, com.waka.finance.Ledger.hold("ride", id), now,
+                    com.waka.finance.Ledger.parts(com.waka.finance.Ledger.account(payer), refund));
+        }
     }
     private List<Candidate> online(Instant now) {
         return jdbc.query("SELECT account_id,key_id,position_cipher FROM driver_presence WHERE gate_hash=? AND online=1 AND position_at>=?",

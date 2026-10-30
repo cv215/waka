@@ -283,3 +283,41 @@ Le fondateur a écrit : « prends les décisions toi-même ». Chaque choix ci-d
 - Versements et incidents §7.4 (reference detaillee conservee hors du depot).
 
 Pour la revue, lire d’abord R01, les exemples R03, R05, R06 et R09. La définition des écrans, données, états, API et fonctions reste dans les prochaines étapes ; le contrôle présent porte sur la fidélité du document et les calculs, sans transaction réelle.
+
+## R14 — Argent : paiements, crédit WAKA et retraits (30 octobre 2026)
+
+Décisions du fondateur : prestataire **Notch Pay**, Mobile Money **MTN et Orange** (Orange Money sort de l'attente ; seuls les SMS restent en attente), argent conservé dans l'application sans passer par une banque. Le reste est décidé par Claude, en retenant le choix le plus prudent.
+
+**Où est l'argent.**
+- L'argent encaissé reste sur le compte marchand de WAKA chez Notch Pay ; WAKA ne le garde pas sur ses propres comptes.
+- WAKA tient un **registre** (« grand livre ») : chaque mouvement est inscrit une fois, au débit d'un compte et au crédit d'un autre, pour le même montant. Aucun franc n'apparaît ni ne disparaît.
+- **Rapprochement** : ce que le registre dit être chez le prestataire doit égaler son solde réel.
+- **Crédit WAKA** : chaque personne a un crédit, dans lequel arrivent ses dépôts, ses remboursements et ses gains de chauffeur.
+- **Crédit fermé** : il n'y a **aucun transfert entre utilisateurs** au lancement. Cela remplace « transferts internes gratuits » (R11) tant qu'aucun avis juridique ne l'autorise ; le crédit ressemble ainsi le moins possible à de la monnaie électronique.
+
+**Payer une prestation.**
+- **Moyens** : une course, des places de voyage ou une période d'abonnement se paient par MTN, par Orange ou avec le crédit WAKA.
+- **Montant** : c'est toujours celui du serveur. Un paiement direct par Mobile Money ne coûte **aucun frais** au client ; WAKA supporte les frais du prestataire.
+- **Garde de l'argent** : l'argent d'une prestation payée attend dans sa **garde** jusqu'au règlement :
+  - **course** : à la fin, part du chauffeur et commission (R03) ;
+  - **voyage** : à l'embarquement, 90 % au chauffeur et 10 % à WAKA (R11) ;
+  - **annulation ou absence** : le règlement prévu par R08, R11 et R12.
+- **Remboursements** : ils arrivent **immédiatement dans le crédit WAKA** du client.
+- **Confirmation (R07)** : un paiement n'est confirmé que par le statut relu chez le prestataire. Ni l'écran du téléphone ni le contenu d'une notification ne suffisent : une notification signée sert seulement à déclencher cette relecture. Le montant et la devise (XAF) doivent correspondre exactement ; sinon, rien n'est crédité et le paiement passe en examen.
+- **Paiement tardif** : un paiement arrivé après le délai de 3 minutes ne confirme pas la prestation. L'argent reste dans le crédit du client, qui peut l'utiliser ou le retirer.
+
+**Déposer et retirer (frais = coût du prestataire, comme l'a voulu le fondateur).**
+- **Dépôt** :
+  - montant de 500 à 200 000 F ;
+  - frais de **2 %** arrondis au franc supérieur, ajoutés au montant prélevé ;
+  - un crédit ne peut pas dépasser 300 000 F après un dépôt.
+- **Retrait** :
+  - montant de 500 à 200 000 F ;
+  - frais de **1 %** arrondis au franc supérieur, prélevés en plus sur le crédit ;
+  - **seulement vers le numéro vérifié du compte**, pour qu'une session volée ne puisse pas vider un crédit.
+- **Échec d'un retrait** : tout revient dans le crédit, frais compris. Si l'issue d'un retrait est inconnue, rien n'est rendu avant le statut final du prestataire, pour éviter un double paiement.
+
+**Prudence.**
+- Un enregistrement introuvable chez le prestataire n'est jamais traité comme un échec : la finance le rapproche à la main.
+- **Avis juridique à obtenir avant d'ouvrir les dépôts au public** : un crédit rechargeable et retirable peut relever de la réglementation de la monnaie électronique (règlements CEMAC/COBAC). Le paiement direct des prestations n'en dépend pas.
+- **Mode test d'abord** : formes de réponse et mots de statut de Notch Pay sont à confirmer en mode test, avant toute clé réelle. Les clés ne vont jamais dans Git.

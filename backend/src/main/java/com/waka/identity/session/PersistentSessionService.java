@@ -214,6 +214,13 @@ public final class PersistentSessionService {
     public boolean usesDataSource(DataSource source) { return source != null && jdbc.getDataSource() == source; }
     public boolean usesClock(Clock candidate) { return clock == candidate; }
     public String identityGateHash() { return gate; }
+    /** R14: whether a normalized number is the verified number of the account (withdrawals go only there). */
+    public boolean isAccountPhone(UUID accountId, String normalizedPhone) {
+        var macs = jdbc.query("SELECT phone_lookup_mac FROM identity_account WHERE gate_hash=? AND id=?",
+                (rs, n) -> rs.getString(1), gate, accountId.toString());
+        return !macs.isEmpty() && java.security.MessageDigest.isEqual(macs.getFirst().getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                crypto.phoneHash(normalizedPhone).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    }
     public boolean reusesIdentityKey(byte[] key) { return crypto.matchesKey(key); }
     public boolean reusesSessionKey(byte[] key) {
         return crypto.matchesKey(key) || (recoveryCrypto != null && recoveryCrypto.matchesKey(key));
