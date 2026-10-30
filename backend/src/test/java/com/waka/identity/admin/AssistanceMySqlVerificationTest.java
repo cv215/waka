@@ -55,6 +55,7 @@ class AssistanceMySqlVerificationTest {
     private final String client = UUID.randomUUID().toString();
     private final String contact = "+2376" + "0".repeat(8);
     private final String otherContact = "+2376" + "0".repeat(7) + "1";
+    private final String thirdContact = "+2376" + "0".repeat(7) + "2";
 
     @BeforeEach void prepare() {
         String url = required("WAKA_DB_URL");
@@ -85,7 +86,7 @@ class AssistanceMySqlVerificationTest {
             if (jdbc != null && gate != null) {
                 jdbc.update("DELETE FROM audit_event WHERE object_type='admin_grant' AND object_ref IN (SELECT id FROM admin_grant WHERE gate_hash=?)", gate);
                 jdbc.update("DELETE FROM audit_event WHERE correlation_ref IN (SELECT id FROM admin_session WHERE gate_hash=?)", gate);
-                for (String table : List.of("voyage", "driver_application", "privacy_request_command", "privacy_request", "admin_session", "admin_totp",
+                for (String table : List.of("incident_message", "incident", "voyage_reservation", "voyage", "driver_application", "privacy_request_command", "privacy_request", "admin_session", "admin_totp",
                         "admin_grant", "identity_session", "identity_account", "identity_session_gate")) {
                     jdbc.update("DELETE FROM " + table + " WHERE gate_hash=?", gate);
                 }
@@ -149,6 +150,58 @@ class AssistanceMySqlVerificationTest {
                 Integer.class, voyage.toString()));
         assertEquals(AdminException.Code.NOT_FOUND, assertThrows(AdminException.class,
                 () -> assistance.unlock(founder.token, client, adminToken, ownVoyage, "SELF")).code());
+    }
+
+    @Test void incidentPartiesTalkAssistanceDecidesAndAContestReopens() {
+        Login founder = login(contact);
+        clock.advance(61);
+        Login driver = login(otherContact);
+        clock.advance(61);
+        Login rider = login(thirdContact);
+        // The administrative session is opened last: its idle limit in this test is one minute.
+        char[] adminToken = openAll(founder);
+        UUID voyage = lockedVoyage(driver.account);
+        UUID reservation = UUID.randomUUID();
+        var now = java.time.LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+        jdbc.update("INSERT INTO voyage_reservation (gate_hash,id,voyage_id,client_account_id,from_index,to_index,seats,seat_price_xaf,total_xaf,state,request_mac,payload_mac,created_at,hold_expires_at) "
+                + "VALUES (?,?,?,?,0,1,1,5000,5000,'confirmed',?,?,?,?)", gate, reservation.toString(), voyage.toString(), rider.account.toString(),
+                reservation.toString().replace("-", "").repeat(2), "c".repeat(64), now, now.plusMinutes(3));
+        byte[] enc = new byte[32], mac = new byte[32];
+        new SecureRandom().nextBytes(enc); new SecureRandom().nextBytes(mac);
+        var incidents = new com.waka.mobility.incident.PersistentIncidentService(sessions, admin, jdbc,
+                new com.waka.identity.profile.ProfileCrypto(enc, mac, "test-key", new SecureRandom()), clock);
+        java.util.function.Function<Runnable, com.waka.mobility.incident.IncidentException.Code> code =
+                action -> assertThrows(com.waka.mobility.incident.IncidentException.class, action::run).code();
+        UUID key = UUID.randomUUID();
+        var reported = incidents.report(rider.token, client, key, reservation, "behaviour", "Le chauffeur roulait trop vite.");
+        assertEquals("open", reported.state());
+        assertEquals("client", reported.viewerRole());
+        assertEquals(reported.incidentId(), incidents.report(rider.token, client, UUID.randomUUID(), reservation, "safety", "Encore").incidentId(),
+                "one incident per reservation and reporter");
+        assertEquals(com.waka.mobility.incident.IncidentException.Code.IDEMPOTENCY_KEY_REUSED,
+                code.apply(() -> incidents.report(rider.token, client, key, reservation, "behaviour", "Autre texte")));
+        assertEquals(com.waka.mobility.incident.IncidentException.Code.NOT_FOUND,
+                code.apply(() -> incidents.report(founder.token, client, UUID.randomUUID(), reservation, "other", "Je ne suis pas partie")));
+        var seenByDriver = incidents.mine(driver.token, client).getFirst();
+        assertEquals("driver", seenByDriver.viewerRole());
+        assertEquals("Le chauffeur roulait trop vite.", seenByDriver.messages().getFirst().text());
+        var replied = incidents.message(driver.token, client, UUID.randomUUID(), reported.incidentId(), "reply", "Je respectais les limites.");
+        assertEquals(2, replied.version());
+        assertEquals(com.waka.mobility.incident.IncidentException.Code.NOT_DECIDED,
+                code.apply(() -> incidents.message(rider.token, client, UUID.randomUUID(), reported.incidentId(), "contest", "Non")));
+        assertEquals(List.of(reported.incidentId()), incidents.queue(founder.token, client, adminToken).stream()
+                .map(com.waka.mobility.incident.PersistentIncidentService.IncidentView::incidentId).toList());
+        assertEquals(com.waka.mobility.incident.IncidentException.Code.VERSION_CONFLICT, code.apply(() -> incidents.decide(founder.token, client,
+                adminToken, UUID.randomUUID(), reported.incidentId(), 1, "driver_warning", "SPEEDING_REPORTED", null)));
+        var decided = incidents.decide(founder.token, client, adminToken, UUID.randomUUID(), reported.incidentId(), 2, "driver_warning",
+                "SPEEDING_REPORTED", "Rappel des règles envoyé au chauffeur.");
+        assertEquals("decided", decided.state());
+        assertEquals("driver_warning", decided.messages().getLast().decision());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit_event WHERE event_type='INCIDENT_DECIDED' AND object_ref=?",
+                Integer.class, reported.incidentId().toString()));
+        var contested = incidents.message(rider.token, client, UUID.randomUUID(), reported.incidentId(), "contest", "Un simple rappel ne suffit pas.");
+        assertEquals("contested", contested.state(), "a contest reopens the examination");
+        assertTrue(contested.messages().stream().noneMatch(m -> m.text() != null && m.text().contains(driver.account.toString())));
     }
 
     /** A locked voyage in synthetic test data; its file row is never decrypted by the services under test. */

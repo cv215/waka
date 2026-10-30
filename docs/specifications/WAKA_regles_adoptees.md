@@ -239,6 +239,18 @@ Le fondateur a écrit : « prends les décisions toi-même ». Chaque choix ci-d
 - **Première prestation interrompue** : elle ne déclenche **ni l'essai** ni la **fenêtre de douze mois** du parrainage. Seule une prestation menée à son terme et payée les déclenche.
 - **Remboursement d'une période** : une période payée **pas encore commencée** est remboursable en entier. Une période commencée n'est pas remboursée, sauf décision motivée de l'assistance (K06).
 
+**Incidents (A23–A25, A39), décidés par Claude sur délégation.**
+- **Qui signale** : un incident se rattache aujourd'hui à une **réservation de voyage**. Seules ses deux parties, le client et le chauffeur du voyage, peuvent le déclarer, le lire et y répondre.
+- **Catégories** : absence contestée, sécurité, comportement, paiement, véhicule, autre.
+- **Texte** : de 1 à 1 000 caractères, chiffré. Pas de pièce jointe pour l'instant. Une partie ne voit jamais l'identité de l'autre.
+- **États** :
+  - `open` à la déclaration ;
+  - `decided` après la décision motivée de l'assistance ;
+  - `contested` si une partie conteste, ce qui rouvre l'examen ;
+  - une nouvelle décision le ramène à `decided`.
+- **Décisions de l'assistance** : sans suite, remboursement à étudier par la finance, avertissement au chauffeur, revue du compte. Chacune porte un motif codé et un texte facultatif lu par les deux parties.
+- **Une décision ne déplace aucun argent**. Un remboursement passera par la fonction finance et le prestataire de paiement (A40).
+- **Une seule réclamation par réservation et par déclarant** : un nouveau signalement retrouve la première, et une contestation la rouvre.
 **Données personnelles (A06).**
 - Les demandes sont traitées par une **habilitation dédiée** `PRIVACY`, distincte de l'assistance aux courses.
 - Les **durées de conservation** relèvent du droit applicable et ne peuvent pas être fixées par Claude. Elles restent **à qualifier** avant toute collecte réelle, comme prévu par les règles d'accès et de conservation.

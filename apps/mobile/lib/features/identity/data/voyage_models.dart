@@ -154,3 +154,64 @@ class PassengerView {
     return List.unmodifiable(value.map(parse));
   }
 }
+const incidentCategories = {
+  'no_show_dispute': 'Absence contestée',
+  'safety': 'Sécurité',
+  'behaviour': 'Comportement',
+  'payment': 'Paiement',
+  'vehicle': 'Véhicule',
+  'other': 'Autre',
+};
+const incidentDecisions = {
+  'no_action': 'Sans suite',
+  'refund_review': 'Remboursement à étudier',
+  'driver_warning': 'Avertissement au chauffeur',
+  'account_review': 'Revue du compte',
+};
+
+class IncidentMessage {
+  const IncidentMessage(this.kind, this.authorRole, this.decision, this.reasonCode, this.text, this.at);
+  final String kind, authorRole;
+  final String? decision, reasonCode, text;
+  final DateTime at;
+}
+
+/// R12 incident (K30), seen by one of its parties: roles only, never the other party's identity.
+class IncidentView {
+  const IncidentView(this.incidentId, this.reservationId, this.category, this.state, this.version, this.viewerRole, this.messages);
+  final String incidentId, reservationId, category, state, viewerRole;
+  final int version;
+  final List<IncidentMessage> messages;
+
+  static IncidentView parse(Object? value) {
+    try {
+      final m = _exact(value, {'incidentId', 'reservationId', 'category', 'state', 'version', 'viewerRole', 'createdAt', 'messages',
+        'idempotentReplay'});
+      final messages = m['messages'];
+      if (!incidentCategories.containsKey(m['category']) || !{'open', 'decided', 'contested'}.contains(m['state']) ||
+          m['version'] is! int || !{'client', 'driver'}.contains(m['viewerRole']) || messages is! List || messages.isEmpty ||
+          messages.length > 200 || m['idempotentReplay'] is! bool) {
+        throw const FormatException();
+      }
+      _instant(m['createdAt']);
+      return IncidentView(_id(m['incidentId']), _id(m['reservationId']), m['category'] as String, m['state'] as String,
+          m['version'] as int, m['viewerRole'] as String, List.unmodifiable(messages.map((item) {
+            final x = _exact(item, {'kind', 'authorRole', 'decision', 'reasonCode', 'text', 'at'});
+            if (!{'report', 'reply', 'contest', 'decision'}.contains(x['kind']) || !{'client', 'driver', 'assistance'}.contains(x['authorRole']) ||
+                (x['decision'] != null && !incidentDecisions.containsKey(x['decision'])) || (x['text'] != null && x['text'] is! String) ||
+                (x['reasonCode'] != null && x['reasonCode'] is! String)) {
+              throw const FormatException();
+            }
+            return IncidentMessage(x['kind'] as String, x['authorRole'] as String, x['decision'] as String?, x['reasonCode'] as String?,
+                x['text'] as String?, _instant(x['at']));
+          })));
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    }
+  }
+
+  static List<IncidentView> parseList(Object? value) {
+    if (value is! List || value.length > 50) throw const PhotoProblem(PhotoFailure.invalidResponse);
+    return List.unmodifiable(value.map(parse));
+  }
+}

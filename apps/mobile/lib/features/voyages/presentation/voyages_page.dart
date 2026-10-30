@@ -51,6 +51,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
   VoyageGateway get _gateway => widget.login.gateway as VoyageGateway;
   List<VoyageView>? _upcoming, _mine;
   List<ReservationView>? _reservations;
+  List<IncidentView>? _incidents;
   String? _message;
   bool _busy = false;
   /// Same request after a lost answer: same key, so the server never records it twice.
@@ -88,7 +89,8 @@ class _VoyagesPageState extends State<VoyagesPage> {
     final upcoming = await _gateway.upcomingVoyages(session, client);
     final reservations = await _gateway.myVoyageReservations(session, client);
     final mine = await _gateway.myVoyages(session, client);
-    if (mounted) setState(() { _upcoming = upcoming; _reservations = reservations; _mine = mine; });
+    final incidents = await _gateway.myIncidents(session, client);
+    if (mounted) setState(() { _upcoming = upcoming; _reservations = reservations; _mine = mine; _incidents = incidents; });
   }
 
   String _key(String request) => _keys.putIfAbsent(request, randomLoginId);
@@ -135,17 +137,18 @@ class _VoyagesPageState extends State<VoyagesPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: 3,
+    length: 4,
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Voyage'),
         actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : _refresh, icon: const Icon(Icons.refresh))],
-        bottom: const TabBar(tabs: [Tab(text: 'Trouver'), Tab(text: 'Mes réservations'), Tab(text: 'Mes voyages')]),
+        bottom: const TabBar(isScrollable: true,
+            tabs: [Tab(text: 'Trouver'), Tab(text: 'Mes réservations'), Tab(text: 'Mes voyages'), Tab(text: 'Incidents')]),
       ),
       body: Column(children: [
         if (_message != null)
           Padding(padding: const EdgeInsets.all(12), child: Semantics(liveRegion: true, child: Text(_message!))),
-        Expanded(child: TabBarView(children: [_find(), _myReservations(), _myVoyages()])),
+        Expanded(child: TabBarView(children: [_find(), _myReservations(), _myVoyages(), _myIncidents()])),
       ]),
     ),
   );
@@ -181,10 +184,62 @@ class _VoyagesPageState extends State<VoyagesPage> {
           subtitle: Text('Embarquement prévu ${_when(r.boardingAt)}'
               '${r.refundXaf == null || r.state == 'boarded' ? '' : ' · remboursé ${r.refundXaf} F (frais ${r.feePercent} %)'}'
               '${r.boardingCode == null ? '' : '\nCode d’embarquement : ${r.boardingCode} — à donner au chauffeur au départ, à personne d’autre.'}'),
-          trailing: {'awaiting_payment', 'confirmed'}.contains(r.state)
-              ? TextButton(onPressed: _busy ? null : () => _confirmCancel(r), child: const Text('Annuler'))
-              : null,
+          trailing: Wrap(spacing: 4, children: [
+            TextButton(onPressed: _busy ? null : () => _report(r.reservationId), child: const Text('Signaler')),
+            if ({'awaiting_payment', 'confirmed'}.contains(r.state))
+              TextButton(onPressed: _busy ? null : () => _confirmCancel(r), child: const Text('Annuler')),
+          ]),
         )),
+    ]);
+  }
+
+  Future<void> _report(String reservationId) async {
+    final result = await showDialog<(String, String)>(context: context, builder: (_) => const _IncidentDialog());
+    if (result == null) return;
+    await _run(() async {
+      final (session, client) = _context();
+      final request = 'incident:$reservationId:${result.$1}:${result.$2}';
+      await _gateway.reportIncident(session, client, _key(request), reservationId, result.$1, result.$2);
+      _keys.remove(request);
+      _message = 'Signalement envoyé à l’assistance WAKA.';
+      await _load();
+    });
+  }
+
+  Future<void> _answer(IncidentView incident, String kind) async {
+    final text = await showDialog<String>(context: context, builder: (_) => _TextDialog(
+        title: kind == 'contest' ? 'Contester la décision' : 'Répondre'));
+    if (text == null) return;
+    await _run(() async {
+      final (session, client) = _context();
+      final request = 'message:${incident.incidentId}:$kind:$text';
+      await _gateway.incidentMessage(session, client, _key(request), incident.incidentId, kind, text);
+      _keys.remove(request);
+      _message = kind == 'contest' ? 'Contestation envoyée : l’examen est rouvert.' : 'Réponse envoyée.';
+      await _load();
+    });
+  }
+
+  Widget _myIncidents() {
+    final incidents = _incidents;
+    if (incidents == null) return const Center(child: Text('Chargement…'));
+    if (incidents.isEmpty) return const Center(child: Text('Aucun incident.'));
+    String who(String role) => switch (role) { 'client' => 'Client', 'driver' => 'Chauffeur', _ => 'Assistance WAKA' };
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      for (final i in incidents)
+        Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${incidentCategories[i.category]} · ${switch (i.state) { 'open' => 'en examen', 'decided' => 'décidé', _ => 'contesté' }}',
+              style: Theme.of(context).textTheme.titleSmall),
+          for (final m in i.messages)
+            Padding(padding: const EdgeInsets.only(top: 6), child: Text(m.kind == 'decision'
+                ? '${who(m.authorRole)} — décision : ${incidentDecisions[m.decision]}${m.text == null ? '' : ' · ${m.text}'}'
+                : '${who(m.authorRole)} : ${m.text ?? ''}')),
+          Wrap(spacing: 4, children: [
+            TextButton(onPressed: _busy ? null : () => _answer(i, 'reply'), child: const Text('Répondre')),
+            if (i.state == 'decided')
+              TextButton(onPressed: _busy ? null : () => _answer(i, 'contest'), child: const Text('Contester')),
+          ]),
+        ]))),
     ]);
   }
 
@@ -489,4 +544,64 @@ class _PassengersPageState extends State<PassengersPage> {
       ]),
     );
   }
+}
+class _IncidentDialog extends StatefulWidget {
+  const _IncidentDialog();
+  @override
+  State<_IncidentDialog> createState() => _IncidentDialogState();
+}
+
+class _IncidentDialogState extends State<_IncidentDialog> {
+  String _category = 'other';
+  final _text = TextEditingController();
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Signaler un problème'),
+    content: Column(mainAxisSize: MainAxisSize.min, children: [
+      DropdownButtonFormField<String>(
+        initialValue: _category, isExpanded: true, decoration: const InputDecoration(labelText: 'Type de problème'),
+        items: [for (final e in incidentCategories.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+        onChanged: (value) => setState(() => _category = value!),
+      ),
+      TextField(controller: _text, maxLength: 1000, maxLines: 4, onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(labelText: 'Ce qui s’est passé')),
+    ]),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
+      FilledButton(onPressed: _text.text.trim().isEmpty ? null : () => Navigator.pop(context, (_category, _text.text.trim())),
+          child: const Text('Envoyer')),
+    ],
+  );
+}
+
+class _TextDialog extends StatefulWidget {
+  const _TextDialog({required this.title});
+  final String title;
+  @override
+  State<_TextDialog> createState() => _TextDialogState();
+}
+
+class _TextDialogState extends State<_TextDialog> {
+  final _text = TextEditingController();
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    content: TextField(controller: _text, maxLength: 1000, maxLines: 4, onChanged: (_) => setState(() {})),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
+      FilledButton(onPressed: _text.text.trim().isEmpty ? null : () => Navigator.pop(context, _text.text.trim()), child: const Text('Envoyer')),
+    ],
+  );
 }
