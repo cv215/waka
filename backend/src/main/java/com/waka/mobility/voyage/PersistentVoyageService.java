@@ -115,7 +115,8 @@ public final class PersistentVoyageService {
             }
             var basis = applications.accessBasisLocked(session.accountId(), now);
             var access = DriverAccessService.evaluate(basis, now);
-            if (!Set.of("active", "provisional").contains(access.access())) return new Out<VoyageView>(null, VoyageException.Code.DRIVER_NOT_ALLOWED);
+            // R11: voyages need no subscription, so an ended trial does not block them (documents still do).
+            if (!Set.of("active", "provisional", "subscription_required").contains(access.access())) return new Out<VoyageView>(null, VoyageException.Code.DRIVER_NOT_ALLOWED);
             if (basis.offeredSeats() == null || seats > basis.offeredSeats()) return new Out<VoyageView>(null, VoyageException.Code.TOO_MANY_SEATS);
             UUID id = UUID.randomUUID();
             jdbc.update("INSERT INTO voyage (gate_hash,id,driver_account_id,application_id,category,seats,state,departure_at,request_mac,payload_mac,created_at) VALUES (?,?,?,?,?,?,'published',?,?,?,?)",
@@ -298,6 +299,7 @@ public final class PersistentVoyageService {
             var settlement = VoyageRules.boarding(r.total);
             jdbc.update("UPDATE voyage_reservation SET state='boarded',boarded_at=?,ended_at=?,refund_xaf=?,driver_xaf=?,waka_xaf=?,fee_percent=0 WHERE gate_hash=? AND id=?",
                     sql(now), sql(now), settlement.refundXaf(), settlement.driverXaf(), settlement.wakaXaf(), gate, r.id);
+            com.waka.drivers.SubscriptionService.startTrialIfFirst(jdbc, gate, session.accountId().toString(), now, "voyage_reservation", r.id);
             return new Out<>(PassengerView.from(reservations("id", r.id).getFirst()), null);
         }));
     }

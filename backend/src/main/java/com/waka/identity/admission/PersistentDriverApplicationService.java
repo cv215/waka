@@ -257,11 +257,12 @@ public final class PersistentDriverApplicationService {
 
     /** What A32 needs about the caller's open file; null when the account has none. */
     /** {@code waivedCodes}: vehicle documents waived by the approving decision (catalogue v2), with their traced reason. */
+    /** {@code trialEndsAt}: end of the private driver's trial once started; {@code paidUntil}: end of the paid period covering now. */
     public record AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements,
-            Set<String> waivedCodes, Integer offeredSeats) {
+            Set<String> waivedCodes, Integer offeredSeats, Instant trialEndsAt, Instant paidUntil) {
         public AccessBasis(UUID applicationId, String category, String state, List<RequirementStatus> requirements,
                 Set<String> waivedCodes) {
-            this(applicationId, category, state, requirements, waivedCodes, null);
+            this(applicationId, category, state, requirements, waivedCodes, null, null, null);
         }
         @Override public String toString() { return "AccessBasis[REDACTED]"; }
     }
@@ -278,8 +279,13 @@ public final class PersistentDriverApplicationService {
                         + "ORDER BY decided_at DESC,id DESC LIMIT 1)",
                 (rs, n) -> rs.getString(1), gate, gate, row.id.toString())) : Set.of();
         VehicleFields fields = current(candidate, row, now).vehicleFields();
+        var trial = jdbc.query("SELECT ends_at FROM driver_trial WHERE gate_hash=? AND account_id=?",
+                (rs, n) -> rs.getObject(1, LocalDateTime.class).toInstant(ZoneOffset.UTC), gate, candidate.toString());
+        var paid = jdbc.query("SELECT MAX(ends_at) FROM subscription_period WHERE gate_hash=? AND account_id=? AND state='paid' AND starts_at<=? AND ends_at>?",
+                (rs, n) -> { var v = rs.getObject(1, LocalDateTime.class); return v == null ? null : v.toInstant(ZoneOffset.UTC); },
+                gate, candidate.toString(), LocalDateTime.ofInstant(now, ZoneOffset.UTC), LocalDateTime.ofInstant(now, ZoneOffset.UTC));
         return new AccessBasis(row.id, row.category, row.state, statuses(candidate, row.category, fields, now), waived,
-                fields.offeredPassengerSeats());
+                fields.offeredPassengerSeats(), trial.isEmpty() ? null : trial.getFirst(), paid.isEmpty() ? null : paid.getFirst());
     }
 
     /** Recorded with each decision: the catalogue version used ("v1", "v2"), or "test" for any other list. */

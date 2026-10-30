@@ -1,8 +1,9 @@
 import 'vehicle_photo_models.dart';
 
-const driverAccessStates = {'none', 'provisional', 'active', 'new_reservations_blocked'};
-const _bases = {'taxi_no_subscription', 'provisional_before_first_service'};
-const _reasons = {'NO_APPLICATION', 'NOT_APPROVED', 'DOCUMENT_EXPIRED', 'DOCUMENT_NOT_VALID', 'REQUIREMENTS_NOT_QUALIFIED'};
+const driverAccessStates = {'none', 'provisional', 'active', 'new_reservations_blocked', 'subscription_required'};
+const _bases = {'taxi_no_subscription', 'provisional_before_first_service', 'trial', 'paid_period'};
+const _reasons = {'NO_APPLICATION', 'NOT_APPROVED', 'DOCUMENT_EXPIRED', 'DOCUMENT_NOT_VALID', 'REQUIREMENTS_NOT_QUALIFIED',
+  'SUBSCRIPTION_REQUIRED'};
 final _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 final _code = RegExp(r'^[A-Z][A-Z0-9_]{2,47}$');
 
@@ -23,7 +24,7 @@ class DriverAccessView {
       final access = value['access'], basis = value['basis'], category = value['category'], trial = value['trial'];
       final reasons = value['reasons'], renew = value['documentsToRenew'], id = value['applicationId'];
       if (!driverAccessStates.contains(access) || !(basis == null || _bases.contains(basis)) ||
-          !(category == null || category == 'taxi' || category == 'private') || !(trial == null || trial == 'not_started') ||
+          !(category == null || category == 'taxi' || category == 'private') || !(trial == null || {'not_started', 'running', 'ended'}.contains(trial)) ||
           !(id == null || id is String && _uuid.hasMatch(id)) || reasons is! List || !reasons.every(_reasons.contains) ||
           renew is! List || !renew.every((c) => c is String && _code.hasMatch(c)) ||
           (access == 'active' || access == 'provisional') != (basis != null)) {
