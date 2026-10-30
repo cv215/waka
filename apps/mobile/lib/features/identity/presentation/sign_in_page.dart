@@ -11,6 +11,7 @@ import '../../drivers/presentation/driver_application_page.dart';
 import '../../privacy/presentation/my_data_page.dart';
 import '../../referrals/presentation/referral_page.dart';
 import '../../rides/presentation/city_ride_page.dart';
+import '../../rides/presentation/driver_ride_page.dart';
 import '../../voyages/presentation/voyages_page.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
@@ -207,6 +208,16 @@ class _SignInPageState extends State<SignInPage> {
                         ),
                   icon: const Icon(Icons.local_taxi_outlined),
                   label: const Text('Course en ville'),
+                ),
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is DriverRideGateway)
+                TextButton.icon(
+                  onPressed: _flow.busy
+                      ? null
+                      : () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(builder: (_) => DriverRidePage(login: _flow)),
+                        ),
+                  icon: const Icon(Icons.drive_eta_outlined),
+                  label: const Text('Mode chauffeur'),
                 ),              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending && _flow.gateway is PaymentGateway)
                 TextButton.icon(
                   onPressed: _flow.busy

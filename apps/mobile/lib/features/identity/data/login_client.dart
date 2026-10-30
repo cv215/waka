@@ -98,6 +98,17 @@ abstract interface class RideGateway {
   void dispose();
 }
 
+/// Driver side of city rides (K31): presence with position, proposals, and the ride's steps.
+abstract interface class DriverRideGateway {
+  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position);
+  Future<List<DriverProposalView>> driverProposals(LoginSession session, String client);
+  /// The ride on acceptance; null on refusal.
+  Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept);
+  Future<CityRideView> driverRideAction(LoginSession session, String client, String rideId, String action, String? boardingCode);
+  Future<CityRideView> cityRide(LoginSession session, String client, String rideId);
+  void dispose();
+}
+
 /// Own referral code and the single referrer attachment (K22).
 abstract interface class ReferralGateway {
   Future<ReferralView> referral(LoginSession session, String client);
@@ -123,8 +134,35 @@ abstract interface class DriverDocumentGateway {
 
 class LoginClient
     implements LoginGateway, ProfileGateway, DriverApplicationGateway, VehiclePhotoGateway, DriverDocumentGateway,
-        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway, PaymentGateway, RideGateway {
+        PrivacyGateway, ReferralGateway, DriverAccessGateway, VoyageGateway, PaymentGateway, RideGateway, DriverRideGateway {
   LoginClient(this.configuration);
+
+  @override
+  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position) async =>
+      DriverPresenceView.parse(await _photoSend(session, client, 'PUT', '/api/v1/driver/presence', 200,
+          contentType: 'application/json', bytes: _json({'online': online, ...?position?.toJson()})));
+
+  @override
+  Future<List<DriverProposalView>> driverProposals(LoginSession session, String client) async =>
+      DriverProposalView.parseList(await _photoSend(session, client, 'GET', '/api/v1/driver/proposals', 200, maxBytes: 16384));
+
+  @override
+  Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept) async {
+    if (!isLoginUuid(proposalId)) throw const PhotoProblem(PhotoFailure.invalid);
+    final body = await _photoSend(session, client, 'POST', '/api/v1/proposals/$proposalId/responses', accept ? 201 : 204,
+        contentType: 'application/json', bytes: _json({'action': accept ? 'accept' : 'refuse'}));
+    return accept ? CityRideView.parse(body) : null;
+  }
+
+  @override
+  Future<CityRideView> driverRideAction(LoginSession session, String client, String rideId, String action, String? boardingCode) async {
+    if (!isLoginUuid(rideId) || !{'arrive', 'board', 'finish', 'client_absent', 'cancel'}.contains(action) ||
+        (boardingCode != null && !RegExp(r'^[0-9]{6}$').hasMatch(boardingCode))) {
+      throw const PhotoProblem(PhotoFailure.invalid);
+    }
+    return CityRideView.parse(await _photoSend(session, client, 'POST', '/api/v1/rides/$rideId/driver-actions', 200,
+        contentType: 'application/json', bytes: _json({'action': action, 'boardingCode': ?boardingCode})));
+  }
 
   List<int> _json(Object? body) => utf8.encode(jsonEncode(body));
 
@@ -431,6 +469,7 @@ class LoginClient
         }
         final status = response.statusCode;
         if (status == expected || status == alsoExpected) {
+          if (status == 204) return null; // no content: the caller asked for it (a refused proposal)
           if (response.headers.contentType?.mimeType != 'application/json') throw const PhotoProblem(PhotoFailure.invalidResponse);
           return jsonDecode(utf8.decode(received));
         }

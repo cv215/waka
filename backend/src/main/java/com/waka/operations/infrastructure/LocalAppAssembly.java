@@ -13,6 +13,8 @@ import com.waka.geo.GeoPoint;
 import com.waka.geo.PickupTimeProvider;
 import com.waka.geo.RouteDistanceProvider;
 import com.waka.identity.admin.AdminCrypto;
+import com.waka.identity.admin.AdminException;
+import com.waka.identity.admin.AdminFunction;
 import com.waka.identity.admin.AdminPolicy;
 import com.waka.identity.admin.PersistentAdminService;
 import com.waka.identity.admission.AdmissionCrypto;
@@ -57,8 +59,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -129,8 +133,25 @@ public class LocalAppAssembly {
     @Bean LoginService loginService(PersistentOtpService otp, PersistentSessionService sessions) { return new LoginService(otp, sessions); }
     @Bean MeService meService(PersistentSessionService sessions) { return new MeService(sessions); }
     @Bean PersistentAdminService adminService(PersistentSessionService sessions, JdbcTemplate jdbc, DataSourceTransactionManager tx, Clock clock) {
-        return new PersistentAdminService(sessions, jdbc, tx, new AdminCrypto(key("admin:enc"), key("admin:mac"), "local-1", random),
+        var admin = new PersistentAdminService(sessions, jdbc, tx, new AdminCrypto(key("admin:enc"), key("admin:mac"), "local-1", random),
                 new AdminPolicy(Duration.ofMinutes(15), Duration.ofHours(1), 5, Duration.ofMinutes(2), Duration.ofMinutes(5)), clock);
+        bootstrapLocalFounder(admin);
+        return admin;
+    }
+
+    /**
+     * Local maintenance (dev profile only): the first agent of this computer's database, named by its account id in
+     * WAKA_LOCAL_FOUNDER_ACCOUNT, receives every function once. Later grants go through governance (K19); a second
+     * bootstrap, or an unknown account, changes nothing.
+     */
+    private static void bootstrapLocalFounder(PersistentAdminService admin) {
+        String account = System.getenv("WAKA_LOCAL_FOUNDER_ACCOUNT");
+        if (account == null || account.isBlank()) return;
+        try {
+            admin.bootstrapFounder(UUID.fromString(account.strip()), EnumSet.allOf(AdminFunction.class));
+        } catch (AdminException | IllegalArgumentException alreadyDoneOrUnknown) {
+            // Nothing to do: the first agent exists already, or the id is not an account of this database.
+        }
     }
     @Bean PersistentProfileService profileService(PersistentSessionService sessions, JdbcTemplate jdbc, DataSourceTransactionManager tx, Clock clock) {
         return new PersistentProfileService(sessions, jdbc, tx, profileCrypto("profile"), Duration.ofMinutes(10), clock);

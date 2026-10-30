@@ -5,7 +5,9 @@
     [ValidateRange(0, 65535)][int]$Port = 8080,
     # Application complete pour essai sur ce poste : codes de connexion dans un fichier prive, distances estimees,
     # paiements simules (ou bac a sable Fapshi si ses cles privees existent). Jamais pour de vrais utilisateurs.
-    [switch]$LocalApp
+    [switch]$LocalApp,
+    # Avec -LocalApp : compte qui devient le premier agent de la base locale (toutes les fonctions, une seule fois).
+    [string]$FounderAccount
 )
 $ErrorActionPreference = 'Stop'
 $wakaRepository = Split-Path -Parent $PSScriptRoot
@@ -42,7 +44,8 @@ $wakaDatabase = if ($Profile -eq 'test') { 'waka_test' } else { 'waka_local' }
 $wakaAccount = if ($Profile -eq 'test') { 'waka_test_runner' } else { 'waka_dev' }
 $wakaJdbcUrl = 'jdbc:mysql://127.0.0.1:3306/' + $wakaDatabase + '?sslMode=VERIFY_CA&allowPublicKeyRetrieval=false&connectTimeout=5000&socketTimeout=5000&trustCertificateKeyStoreUrl=' + [Uri]::EscapeDataString($wakaStoreUrl) + '&trustCertificateKeyStorePassword=changeit&trustCertificateKeyStoreType=PKCS12'
 $wakaFapshiNames = @('WAKA_FAPSHI_COLLECT_USER', 'WAKA_FAPSHI_COLLECT_KEY', 'WAKA_FAPSHI_PAYOUT_USER', 'WAKA_FAPSHI_PAYOUT_KEY', 'WAKA_FAPSHI_WEBHOOK_SECRET', 'WAKA_GOOGLE_SERVER_KEY')
-$wakaEnvironmentNames = @('WAKA_DB_URL', 'WAKA_DB_USER', 'WAKA_DB_PASSWORD', 'WAKA_LOCAL_APP', 'WAKA_LOCAL_MASTER_KEY', 'WAKA_LOCAL_DIR') + $wakaFapshiNames
+$wakaEnvironmentNames = @('WAKA_DB_URL', 'WAKA_DB_USER', 'WAKA_DB_PASSWORD', 'WAKA_LOCAL_APP', 'WAKA_LOCAL_MASTER_KEY', 'WAKA_LOCAL_DIR',
+    'WAKA_LOCAL_FOUNDER_ACCOUNT') + $wakaFapshiNames
 if ($LocalApp -and $Profile -ne 'dev') { throw 'L application complete locale ne demarre qu avec le profil dev.' }
 $wakaPrevious = @{}
 foreach ($wakaName in $wakaEnvironmentNames) { $wakaPrevious[$wakaName] = [Environment]::GetEnvironmentVariable($wakaName, 'Process') }
@@ -69,6 +72,11 @@ try {
         $null = New-Item -ItemType Directory -Path $wakaAppDir -Force
         [Environment]::SetEnvironmentVariable('WAKA_LOCAL_DIR', $wakaAppDir, 'Process')
         [Environment]::SetEnvironmentVariable('WAKA_LOCAL_APP', 'on', 'Process')
+        # Premier agent de la base locale (une seule fois) : identifiant de compte lu dans /api/v1/me.
+        if ($FounderAccount) {
+            if ($FounderAccount -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Identifiant de compte invalide.' }
+            [Environment]::SetEnvironmentVariable('WAKA_LOCAL_FOUNDER_ACCOUNT', $FounderAccount, 'Process')
+        }
         # Bac a sable Fapshi et cle Google si enregistrees (tools/save-fapshi-keys.ps1, tools/save-google-maps-keys.ps1).
         foreach ($wakaName in $wakaFapshiNames) {
             $wakaFile = Join-Path $wakaSecrets ($wakaName + '.dpapi')
