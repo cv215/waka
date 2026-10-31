@@ -23,6 +23,8 @@ Le serveur reste fermé au réseau : seul le relais est joignable. La session es
 
 **Premier agent de la base locale** : pour approuver des chauffeurs avec l'administration web, ajouter `-FounderAccount <identifiant>` au démarrage. L'identifiant est l'`accountId` renvoyé par `/api/v1/me` pour votre compte. Cela ne marche qu'une fois par base : les agents suivants sont nommés depuis l'administration (gouvernance).
 
+**Administration web sur ce poste** : construire `apps/admin` avec `flutter build web --release --dart-define=WAKA_API_BASE_URL=http://127.0.0.1:8091`, puis lancer `tools\serve-web-preview.py --admin`. Elle s'ouvre sur http://127.0.0.1:8091, sur ce poste seulement, jamais sur le Wi-Fi. Après le code SMS, la page affiche l'identifiant de compte à transmettre à un agent « Habilitations ».
+
 **APK de test avec la carte** : `tools\build-android-preview.ps1` construit l'APK pour l'émulateur avec la clé « waka-carte » enregistrée sur ce poste.
 
 **Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.

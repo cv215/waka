@@ -122,6 +122,11 @@ class _LoginPanelState extends State<LoginPanel> {
       const SizedBox(height: 12),
       FilledButton(onPressed: s.busy ? null : submit, child: Text(action)),
       if (s.error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Semantics(liveRegion: true, child: Text(s.error!))),
+      if (s.client != null) ...[
+        const SizedBox(height: 16),
+        const Text('Ton identifiant de compte (à donner à un agent « Habilitations » pour recevoir des fonctions) :'),
+        SelectableText(s.client!.accountId, style: const TextStyle(fontFamily: 'monospace')),
+      ],
       const SizedBox(height: 24),
       const Text('Rien n’est conservé dans ce navigateur : recharger la page impose de se reconnecter.'),
     ]);
