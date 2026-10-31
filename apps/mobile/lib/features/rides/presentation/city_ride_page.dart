@@ -28,6 +28,8 @@ String rideMessage(PhotoFailure failure) => switch (failure) {
   PhotoFailure.keyReused => 'Cette demande ne correspond plus au serveur. Recommence.',
   PhotoFailure.unavailable => 'Le service est momentanément indisponible. Réessaie plus tard.',
   PhotoFailure.uncertain => 'La réponse n’est pas arrivée. Réessaie : la même demande sera renvoyée, sans doublon.',
+  // Usually an app older than the server (a page left open across an update): reloading fixes it.
+  PhotoFailure.invalidResponse => 'L’application n’est plus à jour : recharge la page (ou mets l’application à jour), puis réessaie.',
   _ => 'Demande refusée : vérifie le départ, l’arrivée et le nombre de personnes.',
 };
 
