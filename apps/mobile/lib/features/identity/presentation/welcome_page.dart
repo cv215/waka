@@ -29,6 +29,9 @@ class _WelcomePageState extends State<WelcomePage> {
   final _phone = TextEditingController(), _code = TextEditingController(), _name = TextEditingController();
   String? _phoneError, _nameError;
   bool _hadSession = false;
+  /// Once the main screens are shown they stay, while the session is confirmed: a name being saved or the account being
+  /// read again never sends the client back to the first tab.
+  bool _homeShown = false;
 
   @override
   void initState() {
@@ -56,6 +59,7 @@ class _WelcomePageState extends State<WelcomePage> {
     if (_hadSession && !has && mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
       _code.clear();
+      _homeShown = false;
     }
     _hadSession = has;
   }
@@ -128,10 +132,12 @@ class _WelcomePageState extends State<WelcomePage> {
     }
     if (f.session != null) {
       final profile = f.profile;
-      if (f.confirmedNow && profile != null && f.pendingProfile == null) {
-        if (profile.displayName == null) return _nameStep(f);
+      final named = profile != null && profile.displayName != null && f.pendingProfile == null;
+      if ((f.confirmedNow && (named || _homeShown)) || (_homeShown && f.busy)) {
+        _homeShown = true;
         return widget.home?.call(context, f) ?? HomeShell(login: f);
       }
+      if (f.confirmedNow && profile != null && f.pendingProfile == null) return _nameStep(f);
       if (f.busy) return const _Splash();
       return SignInPage(flow: f);
     }
