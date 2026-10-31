@@ -498,6 +498,7 @@ class AdmissionReviewMySqlVerificationTest {
         assertNotNull(card.plate());
         assertNull(card.firstName(), "no profile service assembled in this test: no name rather than a guess");
         assertNull(rides.ride(driver.token, client, ride.reservationId()).driver());
+        assertNull(rides.ride(rider.token, client, ride.reservationId()).clientFirstName(), "the client never gets his own name back");
         rides.driverAction(driver.token, client, ride.reservationId(), "arrive", null);
         assertEquals(com.waka.mobility.ride.RideException.Code.TOO_EARLY,
                 code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "client_absent", null)), "five minutes of waiting first");

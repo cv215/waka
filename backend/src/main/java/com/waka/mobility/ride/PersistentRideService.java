@@ -59,10 +59,12 @@ public final class PersistentRideService {
      * boarding), and only when the driver's position is less than a minute old; otherwise null. {@code route}: the
      * trip's road shape kept from the quote (encoded polyline, display only), or null; it never costs a maps call.
      * {@code driver}: for the client only, once the ride is paid and until the drop-off, who to look for; otherwise null.
+     * {@code clientFirstName}: for the driver only, at the same moments, the client's first name (nothing else); or null.
      */
     public record RideView(UUID reservationId, String mode, int seats, long priceXaf, long driverXaf, String state,
             Instant holdExpiresAt, Instant arrivedAt, String viewerRole, String boardingCode, Long refundXaf,
-            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt, String route, DriverCard driver) {
+            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt, String route, DriverCard driver,
+            String clientFirstName) {
         @Override public String toString() { return "RideView[REDACTED]"; }
     }
     /**
@@ -767,18 +769,23 @@ public final class PersistentRideService {
             LocalDateTime arrived = rs.getObject("arrived_at", LocalDateTime.class);
             Seen driver = isClient && COMING.contains(state) ? driverPosition(rs.getString("driver_account_id")) : null;
             DriverCard card = isClient && PAID.contains(state) ? card(UUID.fromString(rs.getString("driver_account_id"))) : null;
+            String clientName = !isClient && PAID.contains(state) ? firstName(UUID.fromString(clientId)) : null;
             return new RideView(UUID.fromString(id), rs.getString("mode"), rs.getInt("seats"), rs.getLong("price_xaf"), rs.getLong("driver_xaf"),
                     state, instant(rs.getObject("hold_expires_at", LocalDateTime.class)), arrived == null ? null : instant(arrived),
                     isClient ? "client" : "driver", code, (Long) rs.getObject("refund_xaf", Long.class), quote.origin(), quote.destination(),
-                    driver == null ? null : driver.position(), driver == null ? null : driver.at(), quotes.route(quote.quoteId()), card);
+                    driver == null ? null : driver.position(), driver == null ? null : driver.at(), quotes.route(quote.quoteId()), card, clientName);
         }, gate, id).getFirst();
     }
     /** Paid and not yet dropped off: the client looks for his car. */
     private static final Set<String> PAID = Set.of("confirmed", "driver_arrived", "boarded");
+    /** The first word of the account's name, or null (no name, or no profile service assembled). */
+    private String firstName(UUID account) {
+        String name = profiles == null ? null : profiles.displayNameLocked(account);
+        return name == null ? null : name.trim().split("\\s+")[0];
+    }
     private DriverCard card(UUID driver) {
         var vehicle = applications.vehicleLocked(driver, micros(clock.instant()));
-        String name = profiles == null ? null : profiles.displayNameLocked(driver);
-        String first = name == null ? null : name.trim().split("\\s+")[0];
+        String first = firstName(driver);
         String model = vehicle == null ? null : String.join(" ", java.util.stream.Stream.of(vehicle.brand(), vehicle.model())
                 .filter(v -> v != null && !v.isBlank()).toList());
         return new DriverCard(first, model == null || model.isEmpty() ? null : model, vehicle == null ? null : vehicle.color(),
