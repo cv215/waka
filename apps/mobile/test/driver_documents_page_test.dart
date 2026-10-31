@@ -5,7 +5,7 @@ import 'package:waka_mobile/features/identity/application/login_flow.dart';
 
 import 'driver_document_test.dart' as fixture;
 
-Future<LoginFlow> _show(WidgetTester tester, String category, String? usageRight) async {
+Future<LoginFlow> _show(WidgetTester tester, String category, String? usageRight, {int step = 2}) async {
   final (login, _, documents) =
       await tester.runAsync(() => fixture.ready(category, usageRight)) as (LoginFlow, fixture.Gateway, dynamic);
   documents.dispose();
@@ -13,6 +13,7 @@ Future<LoginFlow> _show(WidgetTester tester, String category, String? usageRight
     flow: login,
     pickPhoto: ({required bool camera}) async => fixture.jpeg,
     pickDate: (_) async => null,
+    initialStep: step,
   )));
   await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
   await tester.pumpAndSettle();
@@ -29,8 +30,13 @@ void main() {
     expect(find.text('Explication simple pour INSURANCE.'), findsOneWidget);
     expect(find.text('En cours de confirmation par WAKA : facultatif pour l’instant'), findsNWidgets(3));
     expect(find.text('À fournir'), findsNWidgets(4));
-    final send = find.widgetWithText(FilledButton, 'Envoyer mon dossier à l’examen');
-    await tester.scrollUntilVisible(send, 300, scrollable: find.byType(Scrollable).first);
+    final next = find.widgetWithText(FilledButton, 'Continuer');
+    await tester.scrollUntilVisible(next, 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(next);
+    await tester.pumpAndSettle();
+    expect(find.text('Étape 4 sur 4'), findsOneWidget);
+    expect(find.textContaining('Il manque encore'), findsOneWidget);
+    final send = find.widgetWithText(FilledButton, 'Envoyer mon dossier');
     expect(tester.widget<FilledButton>(send).onPressed, isNull, reason: 'dossier incomplet : envoi impossible');
     await tester.pumpWidget(const SizedBox());
     login.dispose();

@@ -698,6 +698,12 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 
 Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
 
+### K38 — Changement de situation du chauffeur (R16)
+
+- **`POST /api/v1/driver-applications`** avec l'autre catégorie, pour un compte dont le dossier ouvert est **approuvé** : crée le brouillon du changement au lieu de répondre 409 `APPLICATION_ALREADY_OPEN`. Le dossier approuvé reste en service (accès, places, carte du chauffeur) jusqu'à la décision. Même catégorie, dossier non approuvé ou changement déjà en cours : 409 `APPLICATION_ALREADY_OPEN`, comme avant.
+- **Dossier courant** (`GET /api/v1/me/driver-application`) : le nouveau dossier pendant le changement.
+- **Décision** : approuvé, le nouveau dossier remplace l'ancien, qui passe à l'état `replaced` ; refusé, l'ancien redevient le dossier courant. Un seul dossier approuvé par compte.
+
 ### K37 — Partagé par direction (R15)
 
 - **`PUT /api/v1/driver/presence`** accepte aussi `destinationLatitude` et `destinationLongitude`, c'est-à-dire la direction du chauffeur. Elle exige la position et doit être redonnée à chaque mise à jour : l'omettre retire la direction. La réponse ajoute `destination`, qui vaut `null` sans direction, et `route`, le trajet routier du chauffeur jusqu'à sa direction (polyligne encodé, tracé en vert). Ce trajet est recalculé au plus toutes les 5 minutes, ou quand la direction change.

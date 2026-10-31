@@ -37,12 +37,15 @@ Future<List<int>?> pickWithDevice({required bool camera}) async {
   return file?.readAsBytes();
 }
 
-/// The owner's draft candidature. It shows no admission, no driver role and no access:
-/// documents, submission and decisions come with their own points.
+/// The owner's candidature (step 4 of the redesign): while it can be edited, a guided path of four steps — vehicle,
+/// six photos, documents, sending — with a progress bar; once sent, where it stands and the last decision. It shows no
+/// admission, no driver role and no access by itself.
 class DriverApplicationPage extends StatefulWidget {
   const DriverApplicationPage({super.key, required this.flow, this.pickPhoto = pickWithDevice,
-      this.pickDate = pickValidity});
+      this.pickDate = pickValidity, this.initialStep = 0});
   final LoginFlow flow;
+  /// The step shown first (0 vehicle, 1 photos, 2 documents, 3 sending).
+  final int initialStep;
   final PhotoPicker pickPhoto;
   final ValidityPicker pickDate;
 
@@ -57,6 +60,9 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
   final _total = TextEditingController(), _seats = TextEditingController();
   String? _usageRight;
   int? _shownVersion;
+  /// The step shown while the file can be edited: 0 vehicle, 1 photos, 2 documents, 3 sending.
+  late int _step = widget.initialStep.clamp(0, 3);
+  static const _steps = ['Ton véhicule', 'Photos du véhicule', 'Tes pièces', 'Envoi'];
   late final VehiclePhotoFlow? _photos =
       _flow.gateway is VehiclePhotoGateway ? VehiclePhotoFlow(_flow, _flow.gateway as VehiclePhotoGateway) : null;
   late final DriverDocumentFlow? _documents =
@@ -143,9 +149,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     final photos = _photos;
     if (photos == null) return const [];
     return [
-      const Divider(height: 32),
-      Text('Photos du véhicule', style: Theme.of(context).textTheme.titleMedium),
-      const Text('Six vues du même véhicule. Une photo reçue n’est pas encore vérifiée par un agent.'),
+      const Text('Six vues du même véhicule : avant, arrière avec la plaque, les deux côtés, l’intérieur.'),
       const SizedBox(height: 8),
       AnimatedBuilder(
         animation: photos,
@@ -256,15 +260,11 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       final current = _flow.application;
       final busy = _flow.busy;
       return WakaPage(
-        title: 'Candidature chauffeur',
+        title: current == null ? 'Candidature chauffeur'
+            : 'Chauffeur ${current.requestedCategory == 'taxi' ? 'taxi' : 'particulier'}',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Un dossier en brouillon ne donne ni admission ni accès : '
-              'les pièces, les six photos et l’examen par un agent viendront ensuite.',
-            ),
-            const SizedBox(height: 16),
             if (!_flow.confirmedNow)
               const Text('Ta connexion doit d’abord être confirmée sur la page de connexion.')
             else ...[
@@ -289,7 +289,8 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
                   child: const Text('Commencer un dossier particulier'),
                 ),
               ],
-              if (current != null) ..._form(current, busy),
+              if (current != null && current.editable) ..._wizard(current, busy),
+              if (current != null && !current.editable) ..._status(current),
             ],
             if (_error != null)
               Padding(
@@ -302,20 +303,125 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     },
   );
 
-  List<Widget> _form(DriverApplicationSnapshot current, bool busy) {
+  /// The step header: « Étape n sur 4 », a four-part bar, the step title.
+  List<Widget> _header() {
+    final theme = Theme.of(context);
+    return [
+      Text('Étape ${_step + 1} sur 4', style: theme.textTheme.bodySmall),
+      const SizedBox(height: 6),
+      Row(children: [
+        for (var i = 0; i < 4; i++) ...[
+          if (i > 0) const SizedBox(width: 4),
+          Expanded(child: Container(height: 5, decoration: BoxDecoration(borderRadius: BorderRadius.circular(3),
+              color: i <= _step ? theme.colorScheme.primary : theme.colorScheme.outlineVariant))),
+        ],
+      ]),
+      const SizedBox(height: 14),
+      Semantics(header: true, child: Text(_steps[_step],
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700))),
+      const SizedBox(height: 12),
+    ];
+  }
+
+  Widget _nav({required VoidCallback? next, String label = 'Continuer'}) => Padding(
+    padding: const EdgeInsets.only(top: 20),
+    child: Row(children: [
+      if (_step > 0) ...[
+        Expanded(child: OutlinedButton(onPressed: () => setState(() => _step--), child: const Text('Retour'))),
+        const SizedBox(width: 10),
+      ],
+      Expanded(flex: 2, child: FilledButton(onPressed: next, child: Text(label))),
+    ]),
+  );
+
+  List<Widget> _wizard(DriverApplicationSnapshot current, bool busy) {
+    final photos = _photos?.views;
+    final photosMissing = photos == null ? 6 : photos.where((v) => !v.received).length;
+    return [
+      ..._header(),
+      if (current.state == 'correction_requested') ...[
+        Text('Un agent demande une correction : ${_lastDecision() ?? 'voir les pièces'}',
+            style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        const SizedBox(height: 12),
+      ],
+      ...switch (_step) {
+        0 => [..._vehicle(current, busy), _nav(next: busy || !_flow.canEditVehicle ? null : () async {
+            await _save();
+            if (mounted && _flow.applicationFailure == null && (_flow.application?.missing.isEmpty ?? false)) setState(() => _step = 1);
+          })],
+        1 => [..._photoSection(), _nav(next: photosMissing == 0 ? () => setState(() => _step = 2) : null,
+            label: photosMissing == 0 ? 'Continuer' : 'Encore $photosMissing photo(s)')],
+        2 => [..._documentSection(current), _nav(next: () => setState(() => _step = 3))],
+        _ => [..._sending(current), _sendNav(current)],
+      },
+    ];
+  }
+
+  String? _lastDecision() {
+    final decisions = _documents?.decisions ?? const <DecisionView>[];
+    if (decisions.isEmpty) return null;
+    final last = decisions.last;
+    return last.details ?? last.reasonCode;
+  }
+
+  /// Sending: what is still missing, or the button that sends the file to an agent.
+  List<Widget> _sending(DriverApplicationSnapshot current) {
+    final missing = _documents?.missingForSubmission ?? const [];
+    final photosMissing = (_photos?.views ?? const []).where((v) => !v.received).length;
+    final ready = current.missing.isEmpty && photosMissing == 0 && missing.isEmpty && _photos?.views != null;
+    return [Text(ready
+        ? 'Tout est prêt. Un agent examine ton dossier ; tu verras sa décision ici.'
+        : 'Il manque encore : ${[
+            if (current.missing.isNotEmpty) '${current.missing.length} information(s) du véhicule',
+            if (photosMissing > 0) '$photosMissing photo(s)',
+            if (missing.isNotEmpty) '${missing.length} pièce(s)',
+          ].join(', ')}.')];
+  }
+
+  Widget _sendNav(DriverApplicationSnapshot current) {
+    final missing = _documents?.missingForSubmission ?? const [];
+    final photosMissing = (_photos?.views ?? const []).where((v) => !v.received).length;
+    final ready = current.missing.isEmpty && photosMissing == 0 && missing.isEmpty && _photos?.views != null;
+    return _nav(next: ready && !_flow.busy && _flow.canEditVehicle ? _submit : null, label: 'Envoyer mon dossier');
+  }
+
+  /// Once sent: where the file stands and the last decision.
+  List<Widget> _status(DriverApplicationSnapshot current) {
+    final theme = Theme.of(context);
+    final decisions = _documents?.decisions ?? const <DecisionView>[];
+    return [
+      Text(switch (current.state) {
+        'submitted' => 'Dossier envoyé',
+        'approved' => 'Dossier approuvé',
+        'refused' => 'Dossier refusé',
+        'replaced' => 'Dossier remplacé',
+        _ => _stateLabel(current.state),
+      }, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      Text(switch (current.state) {
+        'submitted' => 'Un agent examine ton dossier. Tu verras sa décision ici.',
+        'approved' => 'Tu peux passer en mode chauffeur. L’accès dépend aussi de la validité de tes pièces et, pour un particulier, de l’abonnement.',
+        _ => '',
+      }),
+      if (decisions.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        Text('Dernière décision', style: theme.textTheme.titleSmall),
+        Text('${switch (decisions.last.action) {
+          'approve' => 'Approuvé',
+          'refuse' => 'Refusé',
+          _ => 'Correction demandée',
+        }} — motif : ${decisions.last.reasonCode}'),
+        if (decisions.last.details != null) Text(decisions.last.details!),
+      ],
+    ];
+  }
+
+  List<Widget> _vehicle(DriverApplicationSnapshot current, bool busy) {
     final editable = !busy && _flow.canEditVehicle;
     InputDecoration label(String text) => InputDecoration(labelText: text, border: const OutlineInputBorder());
     Widget gap() => const SizedBox(height: 12);
     final digits = [FilteringTextInputFormatter.digitsOnly];
     return [
-      Text(
-        'Dossier ${current.requestedCategory == 'taxi' ? 'taxi' : 'voiture personnelle'} — ${_stateLabel(current.state)}',
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      Text(current.missing.isEmpty
-          ? 'Les huit informations du véhicule sont renseignées. Elles seront vérifiées avec les pièces.'
-          : 'Informations encore manquantes : ${current.missing.length} sur 8.'),
-      gap(),
       TextField(controller: _brand, readOnly: !editable, maxLength: 40, decoration: label('Marque')),
       TextField(controller: _model, readOnly: !editable, maxLength: 40, decoration: label('Modèle')),
       TextField(controller: _year, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 4, decoration: label('Année')),
@@ -335,11 +441,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
         onChanged: editable ? (value) => setState(() => _usageRight = value) : null,
       ),
       gap(),
-      const Text('Ces informations sont une déclaration : la capacité et le droit réels seront vérifiés avec les pièces.'),
-      gap(),
-      FilledButton(onPressed: editable ? _save : null, child: const Text('Enregistrer le véhicule')),
-      ..._photoSection(),
-      ..._documentSection(current),
+      const Text('Une déclaration : la capacité et le droit réels sont vérifiés avec les pièces.'),
     ];
   }
 
@@ -400,8 +502,6 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     final documents = _documents;
     if (documents == null) return const [];
     return [
-      const Divider(height: 32),
-      Text('Pièces justificatives', style: Theme.of(context).textTheme.titleMedium),
       const Text('Seules les pièces de ta situation sont demandées. Une pièce déjà acceptée et encore valide est réutilisée.'),
       const SizedBox(height: 8),
       AnimatedBuilder(
@@ -412,10 +512,6 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
             return OutlinedButton(onPressed: documents.busy ? null : documents.refresh, child: const Text('Relire mes pièces'));
           }
           final editable = current.editable && !_flow.busy;
-          final missing = documents.missingForSubmission;
-          final photosMissing = (_photos?.views ?? const []).where((v) => !v.received).length;
-          final ready = current.missing.isEmpty && photosMissing == 0 && missing.isEmpty && _photos?.views != null;
-          final decisions = documents.decisions ?? const <DecisionView>[];
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -451,37 +547,6 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
                   ),
                 ),
               if (_documentError != null) Semantics(liveRegion: true, child: Text(_documentError!)),
-              if (current.editable) ...[
-                const SizedBox(height: 16),
-                Text(ready
-                    ? 'Tout ce qui est demandé est prêt. Tu peux envoyer le dossier à l’examen.'
-                    : 'Avant l’envoi : ${[
-                        if (current.missing.isNotEmpty) '${current.missing.length} information(s) du véhicule',
-                        if (photosMissing > 0) '$photosMissing photo(s)',
-                        if (missing.isNotEmpty) '${missing.length} pièce(s) à fournir ou corriger',
-                      ].join(', ')}. Tu peux enregistrer et terminer plus tard.'),
-                FilledButton(
-                  onPressed: editable && ready && _flow.canEditVehicle ? _submit : null,
-                  child: const Text('Envoyer mon dossier à l’examen'),
-                ),
-              ],
-              if (current.state == 'submitted')
-                const Text('Ton dossier est en cours d’examen. Tu seras informé de la décision ici.'),
-              if (current.state == 'approved')
-                const Text('Ton dossier est approuvé. L’accès au service dépend encore des autres conditions (abonnement, validités).'),
-              if (decisions.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text('Dernière décision', style: Theme.of(context).textTheme.titleSmall),
-                Text('${switch (decisions.last.action) {
-                  'approve' => 'Dossier approuvé',
-                  'refuse' => 'Dossier refusé',
-                  _ => 'Correction demandée',
-                }} — motif : ${decisions.last.reasonCode}'),
-                if (decisions.last.details != null) Text(decisions.last.details!),
-                for (final item in decisions.last.reviews.where((i) => i.toCorrect))
-                  Text('• À corriger : ${requirements.where((r) => r.code == item.label).firstOrNull?.document ?? item.label}'
-                      ' (${item.reasonCode})'),
-              ],
             ],
           );
         },

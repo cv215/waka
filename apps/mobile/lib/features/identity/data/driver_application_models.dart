@@ -136,7 +136,7 @@ bool _sameMap(Map<String, Object?> a, Map<String, Object?> b) =>
     a.length == b.length && a.keys.every((k) => b.containsKey(k) && a[k] == b[k]);
 
 /// States of a candidature; only an explicit agent decision can lead to `approved`.
-const applicationStates = {'draft', 'submitted', 'correction_requested', 'refused', 'approved'};
+const applicationStates = {'draft', 'submitted', 'correction_requested', 'refused', 'approved', 'replaced'};
 /// States in which the candidate may still change the vehicle, photos and documents.
 const editableApplicationStates = {'draft', 'correction_requested'};
 

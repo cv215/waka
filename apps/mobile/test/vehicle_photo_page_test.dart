@@ -118,6 +118,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DriverApplicationPage(
       flow: login,
       pickPhoto: ({required bool camera}) async => camera ? jpeg : png,
+      initialStep: 1,
     )));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pumpAndSettle();
