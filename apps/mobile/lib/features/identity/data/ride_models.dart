@@ -278,6 +278,34 @@ class DriverPresenceView {
   }
 }
 
+/// One of the client's ended city rides (history): when, how much, the outcome, any refund, and the drop-off point
+/// (named on the phone from its recent places, never sent anywhere else).
+class PastRideView {
+  const PastRideView(this.reservationId, this.mode, this.seats, this.priceXaf, this.refundXaf, this.state, this.createdAt, this.dropoff);
+  final String reservationId, mode, state;
+  final int seats, priceXaf;
+  final int? refundXaf;
+  final DateTime createdAt;
+  final RidePoint? dropoff;
+  static List<PastRideView> parseList(Object? value) {
+    try {
+      if (value is! List || value.length > 20) throw const FormatException();
+      return List.unmodifiable(value.map((v) {
+        final m = _exact(v, {'reservationId', 'mode', 'seats', 'priceXaf', 'refundXaf', 'state', 'createdAt', 'dropoff'});
+        if (!{'shared', 'vip'}.contains(m['mode']) || !rideStates.contains(m['state']) || activeRideStates.contains(m['state'])) {
+          throw const FormatException();
+        }
+        final refund = m['refundXaf'];
+        return PastRideView(_id(m['reservationId']), m['mode'] as String, _amount(m['seats'], min: 1, max: 5),
+            _amount(m['priceXaf'], min: 1), refund == null ? null : _amount(refund), m['state'] as String, _instant(m['createdAt']),
+            m['dropoff'] == null ? null : RidePoint.parse(m['dropoff']));
+      }));
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    }
+  }
+}
+
 class RideSearchView {
   const RideSearchView(this.searchId, this.state, this.expiresAt, this.proposalPending, this.ride);
   final String searchId, state;

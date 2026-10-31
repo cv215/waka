@@ -538,6 +538,36 @@ public final class PersistentRideService {
         }));
     }
 
+    /**
+     * One of the client's past city rides, for his history: the drop-off point (his own data, to name it on his phone),
+     * the price, the outcome and any refund.
+     */
+    public record PastRide(UUID reservationId, String mode, int seats, long priceXaf, Long refundXaf, String state, Instant createdAt,
+            GeoPoint dropoff) {
+        @Override public String toString() { return "PastRide[REDACTED]"; }
+    }
+
+    /** The account's 20 latest ended city rides as client, newest first (rides in progress are in active-ride). */
+    public List<PastRide> pastRides(char[] token, String client) {
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            expireHolds(micros(session.serverTime()));
+            UUID actor = session.accountId();
+            var rows = jdbc.query("SELECT r.id,r.mode,r.seats,r.price_xaf,r.refund_xaf,r.state,r.created_at,s.quote_id FROM ride_reservation r "
+                    + "JOIN ride_search s ON s.gate_hash=r.gate_hash AND s.id=r.search_id WHERE r.gate_hash=? AND r.client_account_id=? "
+                    + "AND r.state NOT IN ('awaiting_payment','confirmed','driver_arrived','boarded') ORDER BY r.created_at DESC LIMIT 20",
+                    (rs, n) -> new Object[] { rs.getString(1), rs.getString(2), rs.getInt(3), rs.getLong(4), rs.getObject(5, Long.class),
+                            rs.getString(6), instant(rs.getObject(7, LocalDateTime.class)), rs.getString(8) },
+                    gate, actor.toString());
+            List<PastRide> past = new ArrayList<>();
+            for (Object[] r : rows) {
+                var quote = quotes.forRideLocked(actor, UUID.fromString((String) r[7]));
+                past.add(new PastRide(UUID.fromString((String) r[0]), (String) r[1], (Integer) r[2], (Long) r[3], (Long) r[4],
+                        (String) r[5], (Instant) r[6], quote == null ? null : quote.destination()));
+            }
+            return new Out<>(List.copyOf(past), null);
+        }));
+    }
+
     /** R15: every ride the driver carries now (several shared clients with a direction), oldest first. */
     public List<RideView> driverRides(char[] token, String client) {
         return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
