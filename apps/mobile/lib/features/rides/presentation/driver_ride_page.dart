@@ -81,6 +81,20 @@ class _DriverRidePageState extends State<DriverRidePage> {
   Timer? _poll, _presence;
 
   @override
+  void initState() {
+    super.initState();
+    // A ride still in progress (the screen or the phone was closed) is found again.
+    _run(() async {
+      final (session, client) = _context();
+      final ride = await _gateway.activeRide(session, client);
+      if (mounted && ride != null && ride.viewerRole == 'driver') {
+        setState(() => _ride = ride);
+        _startTimers();
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _poll?.cancel();
     _presence?.cancel();

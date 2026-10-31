@@ -45,14 +45,15 @@ String rideStateLabel(String state) => switch (state) {
 
 /// Builds the map; tests replace it because platform maps need a device.
 typedef RideMapBuilder = Widget Function(BuildContext context, RidePoint? origin, RidePoint? destination,
-    void Function(RidePoint point) onTap);
+    void Function(RidePoint point) onTap, {RidePoint? driver});
 
-Widget googleRideMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint point) onTap) =>
-    _GoogleRideMap(origin: origin, destination: destination, onTap: onTap);
+Widget googleRideMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint point) onTap,
+        {RidePoint? driver}) =>
+    _GoogleRideMap(origin: origin, destination: destination, driver: driver, onTap: onTap);
 
 class _GoogleRideMap extends StatefulWidget {
-  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap});
-  final RidePoint? origin, destination;
+  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver});
+  final RidePoint? origin, destination, driver;
   final void Function(RidePoint point) onTap;
   @override
   State<_GoogleRideMap> createState() => _GoogleRideMapState();
@@ -94,6 +95,9 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
       if (widget.destination != null)
         Marker(markerId: const MarkerId('arrivee'), position: _at(widget.destination!), infoWindow: const InfoWindow(title: 'Arrivée')),
+      if (widget.driver != null)
+        Marker(markerId: const MarkerId('chauffeur'), position: _at(widget.driver!), infoWindow: const InfoWindow(title: 'Ton chauffeur'),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure)),
     },
   );
 }
@@ -131,6 +135,20 @@ class _CityRidePageState extends State<CityRidePage> {
   bool _busy = false;
   /// Same request after a lost answer: same key, so the server never records it twice.
   final Map<String, String> _keys = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // A ride still in progress (the screen or the phone was closed) is found again.
+    _run(() async {
+      final (session, client) = _context();
+      final ride = await _gateway.activeRide(session, client);
+      if (mounted && ride != null && ride.viewerRole == 'client') {
+        setState(() => _ride = ride);
+        _follow();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -306,7 +324,8 @@ class _CityRidePageState extends State<CityRidePage> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: SizedBox(height: 260, child: widget.mapBuilder(context, _origin, _destination, _tapped)),
+            child: SizedBox(height: 260, child: widget.mapBuilder(context, _ride?.pickup ?? _origin, _ride?.dropoff ?? _destination, _tapped,
+                driver: _ride?.driverPosition)),
           ),
           const SizedBox(height: 16),
           _placeField(_Field.origin, _originText, 'Départ', Icons.trip_origin),
@@ -315,7 +334,7 @@ class _CityRidePageState extends State<CityRidePage> {
           _placeField(_Field.destination, _destinationText, 'Arrivée', Icons.place_outlined),
           if (_active == _Field.destination) ..._suggestionTiles(),
           const SizedBox(height: 16),
-          if (search == null) ...[
+          if (search == null && ride == null) ...[
             SegmentedButton<String>(
               segments: const [
                 ButtonSegment(value: 'shared', label: Text('Partagé'), icon: Icon(Icons.groups_outlined)),
@@ -350,7 +369,7 @@ class _CityRidePageState extends State<CityRidePage> {
               const SizedBox(height: 8),
               FilledButton.icon(onPressed: _busy ? null : _order, icon: const Icon(Icons.local_taxi), label: const Text('Commander')),
             ],
-          ] else if (ride == null) ...[
+          ] else if (ride == null && search != null) ...[
             Card(child: ListTile(
               leading: search.state == 'searching' ? const CircularProgressIndicator() : const Icon(Icons.search_off),
               title: Text(switch (search.state) {
@@ -365,11 +384,12 @@ class _CityRidePageState extends State<CityRidePage> {
               TextButton(onPressed: _busy ? null : _cancel, child: const Text('Annuler la recherche')),
             ] else
               FilledButton(onPressed: _restart, child: const Text('Nouvelle course')),
-          ] else ...[
+          ] else if (ride != null) ...[
             Card(child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(rideStateLabel(ride.state), style: theme.textTheme.titleMedium),
+                if (ride.driverPosition != null) const Text('Le repère bleu montre ton chauffeur, mis à jour toutes les quelques secondes.'),
                 const SizedBox(height: 8),
                 Text('Prix : ${ride.priceXaf} F'),
                 if (ride.boardingCode != null && {'confirmed', 'driver_arrived'}.contains(ride.state)) ...[
