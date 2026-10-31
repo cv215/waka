@@ -367,9 +367,11 @@ Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R
 - **Logo** : le W dessiné comme une route, avec les pointillés du milieu de la chaussée, un point plein au départ et un rond à l'arrivée. Fichiers : `docs/marque/`, générés par `tools/generate_brand_assets.py`.
 - **Trois thèmes** : **clair noir et blanc (par défaut)**, sombre, et Cameroun (vert, rouge, jaune). Le choix se fait dans le compte, rubrique Apparence, et reste enregistré sur l'appareil.
 - **Inscription** (étape 1, épurée) : numéro, puis code (vérifié dès le 6e chiffre, sans bouton), puis **nom complet obligatoire** (prénom et nom), puis directement la carte. Un client déjà inscrit arrive tout de suite sur la carte.
-- **Chauffeur taxi et particulier** : une même personne peut avoir **deux dossiers approuvés au plus, un taxi et un particulier**, et basculer de l'un à l'autre selon le véhicule utilisé (à réaliser à l'étape 4 ; aujourd'hui un compte n'a qu'un dossier).
+- ~~Chauffeur taxi et particulier : deux dossiers approuvés au plus~~ — remplacé le 31 octobre 2026 : **un seul profil chauffeur à la fois** (taxi ou particulier). Le chauffeur peut **changer de situation** dans l'application, sans nouveau compte (voir étape 4).
 
-**Précision de Claude** : « deux au plus » est compris comme un taxi et un particulier, jamais deux du même type ; à confirmer par le fondateur avant l'étape 4.
+**Étape 4, décisions du fondateur (31 octobre 2026)** : un seul profil chauffeur à la fois ; on peut changer de situation (taxi ↔ particulier) sans créer de nouveau compte.
+
+**Précisions de Claude pour le changement de situation (proposées, à valider)** : « Changer de type » ouvre une nouvelle candidature pour l'autre type ; le profil actuel reste actif pendant l'examen ; à l'approbation, le nouveau dossier remplace l'ancien, qui est fermé ; en cas de refus, rien ne change ; les courses en cours se terminent normalement. Passage de particulier à taxi : l'abonnement cesse pour la suite, sans remboursement automatique des jours déjà payés (point d'argent à trancher par le fondateur).
 
 **Étape 2, validée par le fondateur (31 octobre 2026)** : carte plein écran et un seul panneau en bas. Le départ est la position du téléphone (modifiable) ; une destination donne **Partagé et VIP côte à côte** avec leurs prix et un seul bouton « Commander » ; la recherche, le paiement et l'arrivée du chauffeur suivent dans le même panneau. Les trois dernières destinations sont gardées sur l'appareil seulement. Une fois la course payée, le client voit **le prénom du chauffeur, la voiture, sa couleur et sa plaque**, rien d'autre.
 
