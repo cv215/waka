@@ -209,14 +209,14 @@ public class LocalAppAssembly {
                 google != null ? google : LocalAppAssembly::straightLineMetres, CircleServiceArea.LAUNCH, clock);
     }
     @Bean PersistentRideService rides(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
-            PersistentQuoteService quotes, JdbcFareScheduleRepository fares, Clock clock) {
+            PersistentQuoteService quotes, JdbcFareScheduleRepository fares, PersistentProfileService profiles, Clock clock) {
         // Google road time when its key is given; otherwise about 25 km/h in town, from the straight-line estimate.
         GoogleRoutesProvider google = routes();
         // Kept a few minutes: the screens poll, the matching weighs the same points again (no new maps call).
         PickupTimeProvider pickup = google != null ? new com.waka.geo.CachedPickupTimes(google, clock)
                 : (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
         return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup,
-                google != null ? google : RoutePathProvider.STRAIGHT, profileCrypto("ride"), clock);
+                google != null ? google : RoutePathProvider.STRAIGHT, profiles, profileCrypto("ride"), clock);
     }
 
     /** Address search (K35) around the launch city when the Google server key is given; otherwise none (503). */

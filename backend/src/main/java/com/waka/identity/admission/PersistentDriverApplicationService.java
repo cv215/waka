@@ -332,6 +332,13 @@ public final class PersistentDriverApplicationService {
         return fields.registration() == null ? null
                 : crypto.mac("admission-vehicle-key-v1", candidate.toString(), fields.registration());
     }
+    /** The declared vehicle of the driver's open file, inside the caller's transaction, or null without one. */
+    public VehicleFields vehicleLocked(UUID candidate, Instant now) {
+        requireTransaction();
+        Row row = openApplication(candidate);
+        return row == null ? null : current(candidate, row, now).vehicleFields();
+    }
+
     private static void requireTransaction() {
         if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new AdmissionException(AdmissionException.Code.SERVICE_UNAVAILABLE);

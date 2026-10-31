@@ -27,7 +27,8 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
   final states = <String, String>{};
 
   Map<String, Object?> driverRide(String id) => {...rideJson(), 'reservationId': id, 'state': states[id] ?? rideState,
-    'viewerRole': 'driver', 'boardingCode': null, 'refundXaf': null, 'driverPosition': null, 'driverPositionAt': null};
+    'viewerRole': 'driver', 'boardingCode': null, 'refundXaf': null, 'driverPosition': null, 'driverPositionAt': null,
+    'driver': null};
 
   @override
   Future<CityRideView?> activeRide(LoginSession s, String c) async => null;
@@ -135,7 +136,7 @@ void main() {
     expect(() => CityRideView.parse({'reservationId': _rideIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'state': 'confirmed', 'holdExpiresAt': null, 'arrivedAt': null, 'viewerRole': 'driver', 'boardingCode': '123456',
       'refundXaf': null, 'pickup': {'latitude': 3.8, 'longitude': 11.5}, 'dropoff': {'latitude': 3.9, 'longitude': 11.5},
-      'driverPosition': null, 'driverPositionAt': null, 'route': null}),
+      'driverPosition': null, 'driverPositionAt': null, 'route': null, 'driver': null}),
         throwsA(isA<PhotoProblem>()), reason: 'a driver never receives the client code');
   });
 
