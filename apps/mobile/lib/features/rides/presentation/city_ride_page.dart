@@ -72,6 +72,8 @@ class RidePath {
   static RidePath normal(List<RidePoint> p) => RidePath('normal', p, const Color(0xFF2E7D32), 9);
   static RidePath combined(List<RidePoint> p) => RidePath('combine', p, const Color(0xFFF9A825), 6);
   static RidePath client(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 3);
+  /// The passenger's own trip: the same blue, wider since it is alone on his map.
+  static RidePath trip(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 6);
 }
 
 /// Builds the map; tests replace it because platform maps need a device.
@@ -401,6 +403,8 @@ class _CityRidePageState extends State<CityRidePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final ride = _ride, search = _search, quote = _quote;
+    // Blue: the trip by road, from the price onwards and during the ride.
+    final trip = ride != null ? ride.route : quote?.route;
     return WakaPage(
       title: 'Course en ville',
       child: Column(
@@ -409,7 +413,7 @@ class _CityRidePageState extends State<CityRidePage> {
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(height: 260, child: widget.mapBuilder(context, _ride?.pickup ?? _origin, _ride?.dropoff ?? _destination, _tapped,
-                driver: _ride?.driverPosition)),
+                driver: _ride?.driverPosition, paths: trip == null ? null : [RidePath.trip(trip)])),
           ),
           const SizedBox(height: 16),
           _placeField(_Field.origin, _originText, 'Départ', Icons.trip_origin),

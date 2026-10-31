@@ -50,11 +50,12 @@ public final class PersistentRideService {
 
     /**
      * {@code driverPosition}/{@code driverPositionAt}: for the client only, while the driver comes (from acceptance until
-     * boarding), and only when the driver's position is less than a minute old; otherwise null.
+     * boarding), and only when the driver's position is less than a minute old; otherwise null. {@code route}: the
+     * trip's road shape kept from the quote (encoded polyline, display only), or null; it never costs a maps call.
      */
     public record RideView(UUID reservationId, String mode, int seats, long priceXaf, long driverXaf, String state,
             Instant holdExpiresAt, Instant arrivedAt, String viewerRole, String boardingCode, Long refundXaf,
-            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt) {
+            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt, String route) {
         @Override public String toString() { return "RideView[REDACTED]"; }
     }
     public record SearchView(UUID searchId, String state, Instant expiresAt, boolean proposalPending, RideView ride,
@@ -333,7 +334,7 @@ public final class PersistentRideService {
      */
     public ProposalPaths proposalPaths(char[] token, String client, UUID proposalId) {
         if (proposalId == null) throw invalid();
-        record Stops(GeoPoint position, GeoPoint destination, GeoPoint pickup, GeoPoint dropoff) { }
+        record Stops(GeoPoint position, GeoPoint destination, GeoPoint pickup, GeoPoint dropoff, UUID quote) { }
         Stops stops = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             String actor = session.accountId().toString();
             var rows = jdbc.query("SELECT s.quote_id,s.client_account_id FROM ride_proposal p JOIN ride_search s ON s.gate_hash=p.gate_hash AND s.id=p.search_id "
@@ -345,12 +346,13 @@ public final class PersistentRideService {
                     (rs, n) -> candidate(rs.getString(1), rs.getString(2), rs.getBytes(3), rs.getBytes(4)), gate, actor)
                     .stream().filter(Objects::nonNull).findFirst().orElse(null);
             if (car == null || car.position() == null) return new Out<Stops>(null, RideException.Code.NOT_FOUND);
-            return new Out<>(new Stops(car.position(), car.destination(), quote.origin(), quote.destination()), null);
+            return new Out<>(new Stops(car.position(), car.destination(), quote.origin(), quote.destination(), quote.quoteId()), null);
         }));
         ProposalPaths cached = pathCache.get(proposalId.toString());
         if (cached != null) return cached;
         try {
-            String trip = paths.encodedPath(List.of(stops.pickup(), stops.dropoff()));
+            String known = quotes.route(stops.quote());
+            String trip = known != null ? known : paths.encodedPath(List.of(stops.pickup(), stops.dropoff()));
             String normal = stops.destination() == null ? null : paths.encodedPath(List.of(stops.position(), stops.destination()));
             String combined = paths.encodedPath(stops.destination() == null
                     ? List.of(stops.position(), stops.pickup(), stops.dropoff())
@@ -647,7 +649,7 @@ public final class PersistentRideService {
             return new RideView(UUID.fromString(id), rs.getString("mode"), rs.getInt("seats"), rs.getLong("price_xaf"), rs.getLong("driver_xaf"),
                     state, instant(rs.getObject("hold_expires_at", LocalDateTime.class)), arrived == null ? null : instant(arrived),
                     isClient ? "client" : "driver", code, (Long) rs.getObject("refund_xaf", Long.class), quote.origin(), quote.destination(),
-                    driver == null ? null : driver.position(), driver == null ? null : driver.at());
+                    driver == null ? null : driver.position(), driver == null ? null : driver.at(), quotes.route(quote.quoteId()));
         }, gate, id).getFirst();
     }
     private String codeMac(String rideId, String code) { return crypto.requestMac(rideId, "ride-boarding-code-v1", code); }

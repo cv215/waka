@@ -56,6 +56,22 @@ class GoogleRoutesProviderTest {
                 && call.contains("\"latitude\":4.0511") && call.contains("\"longitude\":9.693"));
     }
 
+    @Test void aQuoteGetsTheShapeInTheSameCallAndABadShapeNeverBlocksThePrice() throws Exception {
+        answer = "{\"routes\":[{\"distanceMeters\":3412,\"duration\":\"611s\",\"polyline\":{\"encodedPolyline\":\"_p~iF~ps|U_ulLnnqC\"}}]}";
+        var road = provider.roadRoute(AKWA, BONAPRISO);
+        assertEquals(new BigDecimal(3412), road.metres());
+        assertEquals("_p~iF~ps|U_ulLnnqC", road.path());
+        assertEquals(1, seen.size(), "one call for both");
+        assertTrue(seen.getFirst().contains("mask=routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline ")
+                && seen.getFirst().contains("\"polylineQuality\":\"OVERVIEW\""));
+        answer = "{\"routes\":[{\"distanceMeters\":3412,\"duration\":\"611s\",\"polyline\":{\"encodedPolyline\":\"bad shape\"}}]}";
+        road = provider.roadRoute(AKWA, BONAPRISO);
+        assertEquals(new BigDecimal(3412), road.metres());
+        assertNull(road.path());
+        answer = "{}";
+        assertNull(provider.roadRoute(AKWA, BONAPRISO));
+    }
+
     @Test void noRoadIsNullAndSamePointIsZero() throws Exception {
         answer = "{}";
         assertNull(provider.roadDistanceMetres(AKWA, BONAPRISO));

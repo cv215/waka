@@ -431,8 +431,14 @@ class AdmissionReviewMySqlVerificationTest {
         for (byte[] k : new byte[][] { e1, m1, e2, m2 }) random.nextBytes(k);
         var quoteCrypto = new com.waka.identity.profile.ProfileCrypto(e1, m1, "test-key", random);
         var fares = new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc);
+        var road = new com.waka.geo.RouteDistanceProvider() {
+            @Override public java.math.BigDecimal roadDistanceMetres(com.waka.geo.GeoPoint a, com.waka.geo.GeoPoint b) { return new java.math.BigDecimal("7480"); }
+            @Override public RoadRoute roadRoute(com.waka.geo.GeoPoint a, com.waka.geo.GeoPoint b) {
+                return new RoadRoute(roadDistanceMetres(a, b), com.waka.geo.Polylines.encode(java.util.List.of(a, b)));
+            }
+        };
         var quotes = new com.waka.mobility.quote.PersistentQuoteService(sessions, jdbc, quoteCrypto, fares, "launch-v1",
-                (a, b) -> new java.math.BigDecimal("7480"), com.waka.geo.CircleServiceArea.LAUNCH, clock);
+                road, com.waka.geo.CircleServiceArea.LAUNCH, clock);
         java.util.concurrent.atomic.AtomicInteger pickup = new java.util.concurrent.atomic.AtomicInteger(420);
         var rides = new com.waka.mobility.ride.PersistentRideService(sessions, jdbc, current.applications, quotes, fares,
                 (from, to) -> pickup.get(), new com.waka.identity.profile.ProfileCrypto(e2, m2, "test-key", random), clock);
@@ -446,6 +452,7 @@ class AdmissionReviewMySqlVerificationTest {
         rides.presence(driver.token, client, true, centre);
         var quote = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED, 2, centre, there);
         assertEquals(1200, quote.totalXaf(), "2 seats x 600 F");
+        assertNotNull(quote.route(), "blue: the trip's shape comes with the price, from the same maps call");
         pickup.set(900);
         var tooFar = rides.search(rider.token, client, UUID.randomUUID(), quote.quoteId());
         assertFalse(tooFar.proposalPending(), "15 minutes away: above the 10-minute pickup target");
@@ -467,6 +474,7 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(centre, followed.driverPosition());
         assertNotNull(followed.driverPositionAt());
         assertNull(rides.ride(driver.token, client, ride.reservationId()).driverPosition());
+        assertEquals(quote.route(), followed.route(), "the client keeps seeing his trip in blue, without a new maps call");
         assertEquals(ride.reservationId(), rides.activeRide(rider.token, client).reservationId());
         assertEquals("driver", rides.activeRide(driver.token, client).viewerRole());
         assertNull(rides.activeRide(agent.token, client), "nothing in progress for a third account");

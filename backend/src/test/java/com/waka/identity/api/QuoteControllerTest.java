@@ -64,16 +64,16 @@ class QuoteControllerTest {
         Instant now = Instant.parse("2026-10-29T10:00:00Z");
         UUID id = UUID.randomUUID();
         var fresh = new PersistentQuoteService.QuoteView(id, "vip", 2, 7480, "launch-v1", "B09", 600, 7500, "XAF",
-                now, now.plusSeconds(300), false);
+                now, now.plusSeconds(300), false, "_p~iF~ps|U_ulLnnqC");
         var replay = new PersistentQuoteService.QuoteView(id, "vip", 2, 7480, "launch-v1", "B09", 600, 7500, "XAF",
-                now, now.plusSeconds(300), true);
+                now, now.plusSeconds(300), true, null);
         var origin = new GeoPoint(new BigDecimal("3.848"), new BigDecimal("11.502"));
         when(service.create(any(), eq(client), eq(key), eq(PersistentQuoteService.Mode.VIP), eq(2), eq(origin), any()))
                 .thenReturn(fresh).thenReturn(replay);
         MockMvc mvc = mvc(service);
         mvc.perform(quote(BODY)).andExpect(status().isCreated()).andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.totalXaf").value(7500)).andExpect(jsonPath("$.placePriceXaf").value(600))
-                .andExpect(jsonPath("$.origin").doesNotExist());
+                .andExpect(jsonPath("$.origin").doesNotExist()).andExpect(jsonPath("$.route").value("_p~iF~ps|U_ulLnnqC"));
         mvc.perform(quote(BODY)).andExpect(status().isOk());
     }
 

@@ -15,6 +15,8 @@ import 'voyages_page_test.dart' show iso, departure, settle;
 const _ride = '11111111-2222-4333-8444-555555555555';
 const _quote = '21111111-2222-4333-8444-555555555555';
 const _search = '31111111-2222-4333-8444-555555555555';
+/// Google's documented sample polyline: three points.
+const _shape = '_p~iF~ps|U_ulLnnqC_mqNvxq`@';
 
 /// A stand-in server answering like K31 and K35; the payments come from [PayFixture].
 class RideFixture extends PayFixture implements RideGateway {
@@ -30,7 +32,7 @@ class RideFixture extends PayFixture implements RideGateway {
     'boardingCode': rideState == 'awaiting_payment' ? null : '048213', 'refundXaf': rideState == 'cancelled_by_client' ? 370 : null,
     'pickup': {'latitude': 3.8667, 'longitude': 11.5167}, 'dropoff': {'latitude': 3.8935, 'longitude': 11.509},
     'driverPosition': rideState == 'confirmed' ? {'latitude': 3.87, 'longitude': 11.52} : null,
-    'driverPositionAt': rideState == 'confirmed' ? iso(departure) : null,
+    'driverPositionAt': rideState == 'confirmed' ? iso(departure) : null, 'route': _shape,
   };
 
   @override
@@ -64,7 +66,7 @@ class RideFixture extends PayFixture implements RideGateway {
     if (outside) throw const PhotoProblem(PhotoFailure.outsideServiceArea);
     return RideQuoteView.parse({'quoteId': _quote, 'mode': mode, 'passengerCount': people, 'distanceMetres': 3677,
       'fareVersion': 'launch-v1', 'bandCode': 'B05', 'placePriceXaf': 370, 'totalXaf': 370 * people, 'currency': 'XAF',
-      'createdAt': iso(departure), 'expiresAt': iso(departure), 'idempotentReplay': false});
+      'createdAt': iso(departure), 'expiresAt': iso(departure), 'idempotentReplay': false, 'route': _shape});
   }
 
   @override
@@ -95,7 +97,8 @@ Widget _fakeMap(BuildContext context, RidePoint? origin, RidePoint? destination,
       key: const Key('carte'),
       onTap: () => onTap(const RidePoint(3.86, 11.52)),
       child: ColoredBox(color: Colors.green,
-          child: Text('carte ${origin != null ? 'D' : '-'}${destination != null ? 'A' : '-'}${driver != null ? 'C' : ''}')),
+          child: Text('carte ${origin != null ? 'D' : '-'}${destination != null ? 'A' : '-'}${driver != null ? 'C' : ''}'
+              '${paths == null ? '' : ' ${paths.map((p) => '${p.name}:${p.points.length}').join(',')}'}')),
     );
 
 Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideFixture)? before}) async {
@@ -130,6 +133,10 @@ void main() {
     expect(() => PlaceSuggestion.parseList([{'placeId': '../x', 'mainText': 'A', 'secondaryText': ''}]), throwsA(isA<PhotoProblem>()));
     expect(() => parsePlaceLocation({'placeId': 'ChIJother0001', 'latitude': 3.8, 'longitude': 11.5}, 'ChIJposte0001'),
         throwsA(isA<PhotoProblem>()));
+    expect(RideQuoteView.parse({'quoteId': _quote, 'mode': 'shared', 'passengerCount': 1, 'distanceMetres': 10, 'fareVersion': 'v',
+      'bandCode': 'B01', 'placePriceXaf': 1, 'totalXaf': 1, 'currency': 'XAF', 'createdAt': '2026-10-30T10:00:00Z',
+      'expiresAt': '2026-10-30T10:05:00Z', 'idempotentReplay': false, 'route': 'not a shape'}).route, isNull,
+        reason: 'an unreadable shape is dropped, the price stays');
     expect(() => RideSearchView.parse({'searchId': _search, 'state': 'matched', 'expiresAt': '2026-10-30T10:00:00Z',
       'proposalPending': false, 'ride': null, 'idempotentReplay': false}), throwsA(isA<PhotoProblem>()));
     expect(const RidePoint(3.86666666, 11.5).toJson(), {'latitude': 3.866667, 'longitude': 11.5});
@@ -149,6 +156,7 @@ void main() {
     await settle(tester);
     expect(find.text('370 F'), findsOneWidget);
     expect(find.textContaining('3,7 km par la route'), findsOneWidget);
+    expect(find.text('carte DA client:3'), findsOneWidget, reason: 'the trip by road in blue, with the price');
     expect(server.rideCalls, contains('quote:shared:1:{latitude: 3.8667, longitude: 11.5167}:{latitude: 3.8935, longitude: 11.509}'));
 
     server.searchState = 'searching';
@@ -204,7 +212,7 @@ void main() {
   testWidgets('une course en cours est retrouvée à l’ouverture, avec le chauffeur sur la carte', (tester) async {
     await _open(tester, before: (server) { server.inProgress = true; server.rideState = 'confirmed'; });
     expect(find.text('Course payée : le chauffeur arrive.'), findsOneWidget);
-    expect(find.text('carte DAC'), findsOneWidget, reason: 'pickup, drop-off and the driver');
+    expect(find.text('carte DAC client:3'), findsOneWidget, reason: 'pickup, drop-off, the driver and the trip in blue');
     expect(find.text('048213'), findsOneWidget);
     expect(find.text('Voir le prix'), findsNothing);
   });

@@ -120,7 +120,7 @@ void main() {
     expect(() => CityRideView.parse({'reservationId': _rideIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'state': 'confirmed', 'holdExpiresAt': null, 'arrivedAt': null, 'viewerRole': 'driver', 'boardingCode': '123456',
       'refundXaf': null, 'pickup': {'latitude': 3.8, 'longitude': 11.5}, 'dropoff': {'latitude': 3.9, 'longitude': 11.5},
-      'driverPosition': null, 'driverPositionAt': null}),
+      'driverPosition': null, 'driverPositionAt': null, 'route': null}),
         throwsA(isA<PhotoProblem>()), reason: 'a driver never receives the client code');
   });
 
