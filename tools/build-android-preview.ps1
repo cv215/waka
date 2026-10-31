@@ -13,7 +13,8 @@ try {
     }
     Push-Location (Join-Path $PSScriptRoot '..\apps\mobile')
     try {
-        & $Flutter --no-version-check --suppress-analytics build apk --debug --no-pub --dart-define=WAKA_ENV=dev --dart-define=WAKA_API_BASE_URL=http://10.0.2.2:8080
+        # Through cmd: Windows PowerShell 5.1 would stop on Java's harmless warnings written to stderr.
+        & cmd /c "`"$Flutter`" --no-version-check --suppress-analytics build apk --debug --no-pub --dart-define=WAKA_ENV=dev --dart-define=WAKA_API_BASE_URL=http://10.0.2.2:8080 2>&1"
         if ($LASTEXITCODE -ne 0) { throw 'Construction de l APK en echec.' }
     } finally { Pop-Location }
 } finally {
