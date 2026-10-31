@@ -6,6 +6,7 @@ import 'package:waka_mobile/features/identity/data/login_models.dart';
 import 'package:waka_mobile/features/identity/data/login_store.dart';
 import 'package:waka_mobile/features/identity/data/ride_models.dart';
 import 'package:waka_mobile/features/identity/data/vehicle_photo_models.dart';
+import 'package:waka_mobile/features/rides/presentation/city_ride_page.dart' show RidePath;
 import 'package:waka_mobile/features/rides/presentation/driver_ride_page.dart';
 
 import 'city_ride_test.dart' show RideFixture;
@@ -72,13 +73,26 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
 
   @override
   Future<CityRideView> cityRide(LoginSession s, String c, String id) async => CityRideView.parse(driverRide(id));
+
+  bool withDirection = false;
+  @override
+  Future<ProposalPathsView> proposalPaths(LoginSession s, String c, String id) async {
+    driverCalls.add('paths:$id');
+    return ProposalPathsView.parse({'normal': withDirection ? '_p~iF~ps|U_ulLnnqC' : null, 'client': '_p~iF~ps|U_ulLnnqC',
+      'combined': '_p~iF~ps|U_ulLnnqC_mqNvxq`@'});
+  }
 }
 
-Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap, {RidePoint? driver}) =>
+Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap,
+        {RidePoint? driver, List<RidePath>? paths}) =>
     GestureDetector(
-  key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)), child: const ColoredBox(color: Colors.green));
+  key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)),
+  child: ColoredBox(color: Colors.green, child: Text('tracés ${(paths ?? const []).map((p) => p.name).join('+')}')));
+
+final opened = <Uri>[];
 
 Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202)}) async {
+  opened.clear();
   tester.view.physicalSize = const Size(900, 2600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -92,6 +106,7 @@ Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoi
     return (login, gateway);
   }))!;
   await tester.pumpWidget(MaterialApp(home: DriverRidePage(login: login, mapBuilder: _fakeMap, readPosition: () async => gps,
+      openLink: (link) async { opened.add(link); return true; },
       pollEvery: null, presenceEvery: null)));
   await settle(tester);
   return gateway;
@@ -155,6 +170,45 @@ void main() {
     await settle(tester);
     expect(server.driverCalls.single, 'presence:true:{latitude: 3.8667, longitude: 11.5167}');
     expect(find.text('En ligne'), findsOneWidget);
+  });
+
+  test('un tracé reçu est décodé strictement', () {
+    final shapes = ProposalPathsView.parse({'normal': null, 'client': '_p~iF~ps|U_ulLnnqC', 'combined': '_p~iF~ps|U_ulLnnqC'});
+    expect(shapes.client!.first.latitude, 38.5);
+    expect(shapes.client!.last.longitude, -120.95);
+    expect(() => ProposalPathsView.parse({'normal': null, 'client': 'a b', 'combined': null}), throwsA(isA<PhotoProblem>()));
+  });
+
+  testWidgets('les trois tracés de la proposition sont demandés une seule fois ; Naviguer ouvre Google Maps ou Waze', (tester) async {
+    final server = await _open(tester);
+    server.withDirection = true;
+    await tester.enterText(find.widgetWithText(TextField, 'Où vas-tu ? (facultatif)'), 'Bast');
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
+    await settle(tester);
+    await tester.tap(find.byType(Switch));
+    await settle(tester);
+    await tester.tap(find.text('Actualiser'));
+    await settle(tester);
+    await tester.tap(find.text('Actualiser'));
+    await settle(tester);
+    expect(find.text('tracés normal+combine+client'), findsOneWidget, reason: 'green under, yellow, then blue on top');
+    expect(find.text('Ton trajet normal'), findsOneWidget);
+    expect(find.text('Ton nouveau trajet'), findsOneWidget);
+    expect(server.driverCalls.where((c) => c.startsWith('paths:')), hasLength(1), reason: 'asked once despite two refreshes');
+
+    await tester.tap(find.text('Accepter'));
+    await settle(tester);
+    await tester.tap(find.textContaining('Aller au client'));
+    await settle(tester);
+    expect(opened.single.host, 'www.google.com');
+    expect(opened.single.queryParameters['destination'], '3.8667,11.5167');
+    expect(opened.single.queryParameters['dir_action'], 'navigate');
+    await tester.tap(find.text('Waze'));
+    await settle(tester);
+    expect(opened.last.toString(), 'https://waze.com/ul?ll=3.8667%2C11.5167&navigate=yes');
   });
 
   testWidgets('avec une direction, le chauffeur prend deux clients en partagé et mène chaque course', (tester) async {

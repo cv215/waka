@@ -51,6 +51,14 @@ public final class RideController {
         return call(request, (token, client) -> service().presence(token, client, online, where, towards), HttpStatus.OK);
     }
 
+    /** The route shapes of one of the driver's proposals (display only), computed once. */
+    @GetMapping(path = "/api/v1/proposals/{proposalId}/paths", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentRideService.ProposalPaths> proposalPaths(@PathVariable String proposalId, HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(proposalId);
+        MeRequestReader.emptyGet(request);
+        return call(request, (token, client) -> service().proposalPaths(token, client, id), HttpStatus.OK);
+    }
+
     /** R15: the rides the driver carries now. */
     @GetMapping(path = "/api/v1/driver/rides", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<List<PersistentRideService.RideView>> driverRides(HttpServletRequest request) throws IOException {

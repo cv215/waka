@@ -98,6 +98,31 @@ class GoogleRoutesProviderTest {
         assertEquals(new BigDecimal(12), limited.roadDistanceMetres(AKWA, BONAPRISO));
     }
 
+    @Test void routeShapeAsksOnlyTheOverviewPolylineThroughTheStopsInOrder() throws Exception {
+        var mvan = new GeoPoint(new BigDecimal("3.827"), new BigDecimal("11.515"));
+        answer = "{\"routes\":[{\"polyline\":{\"encodedPolyline\":\"_p~iF~ps|U_ulLnnqC\"}}]}";
+        assertEquals("_p~iF~ps|U_ulLnnqC", provider.encodedPath(List.of(AKWA, BONAPRISO, mvan)));
+        String call = seen.getFirst();
+        assertTrue(call.contains("mask=routes.polyline.encodedPolyline ") && call.contains("\"polylineQuality\":\"OVERVIEW\"")
+                && call.indexOf("\"intermediates\"") < call.indexOf("\"latitude\":4.035") && call.contains("\"longitude\":9.693")
+                && call.indexOf("\"latitude\":4.0511") < call.indexOf("\"latitude\":3.827"), call);
+        answer = "{}";
+        assertNull(provider.encodedPath(List.of(AKWA, BONAPRISO)), "no road");
+        answer = "{\"routes\":[{\"polyline\":{\"encodedPolyline\":\"<script>\"}}]}";
+        assertThrows(RouteDistanceProvider.RouteUnavailableException.class, () -> provider.encodedPath(List.of(AKWA, BONAPRISO)));
+        assertThrows(IllegalArgumentException.class, () -> provider.encodedPath(List.of(AKWA)));
+    }
+
+    @Test void straightPathsAreEncodedLikeGoogle() {
+        // Google's documented example: (38.5,-120.2), (40.7,-120.95), (43.252,-126.453).
+        assertEquals("_p~iF~ps|U_ulLnnqC_mqNvxq`@", Polylines.encode(List.of(
+                new GeoPoint(new BigDecimal("38.5"), new BigDecimal("-120.2")),
+                new GeoPoint(new BigDecimal("40.7"), new BigDecimal("-120.95")),
+                new GeoPoint(new BigDecimal("43.252"), new BigDecimal("-126.453")))));
+        assertTrue(Polylines.valid("_p~iF~ps|U"));
+        assertFalse(Polylines.valid("a b"));
+    }
+
     @Test void onlyGoogleOrALocalStandInAndAKeyThatIsNeverPrinted() {
         assertThrows(IllegalArgumentException.class, () -> new GoogleRoutesProvider(URI.create("https://evil.example"), KEY));
         assertThrows(IllegalArgumentException.class, () -> new GoogleRoutesProvider("short"));

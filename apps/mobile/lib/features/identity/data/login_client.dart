@@ -107,6 +107,8 @@ abstract interface class DriverRideGateway {
       {RidePoint? destination});
   /// Every ride the driver carries now (several shared clients with a direction).
   Future<List<CityRideView>> driverRides(LoginSession session, String client);
+  /// The route shapes of one of his proposals (the server asks the maps provider once per proposal).
+  Future<ProposalPathsView> proposalPaths(LoginSession session, String client, String proposalId);
   Future<List<DriverProposalView>> driverProposals(LoginSession session, String client);
   /// The ride on acceptance; null on refusal.
   Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept);
@@ -151,6 +153,12 @@ class LoginClient
     return DriverPresenceView.parse(await _photoSend(session, client, 'PUT', '/api/v1/driver/presence', 200,
         contentType: 'application/json', bytes: _json({'online': online, ...?position?.toJson(),
           if (towards != null) ...{'destinationLatitude': towards['latitude'], 'destinationLongitude': towards['longitude']}})));
+  }
+
+  @override
+  Future<ProposalPathsView> proposalPaths(LoginSession session, String client, String proposalId) async {
+    if (!isLoginUuid(proposalId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return ProposalPathsView.parse(await _photoSend(session, client, 'GET', '/api/v1/proposals/$proposalId/paths', 200, maxBytes: 65536));
   }
 
   @override

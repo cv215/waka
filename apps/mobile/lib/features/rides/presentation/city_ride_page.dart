@@ -61,17 +61,31 @@ Future<RidePoint?> devicePosition() async {
   }
 }
 
+/// A route drawn on the map. Widths are fixed so overlapping routes stay readable: the widest underneath.
+class RidePath {
+  const RidePath(this.name, this.points, this.color, this.width);
+  final String name;
+  final List<RidePoint> points;
+  final Color color;
+  final int width;
+  /// R15 colours: the driver's own route, the client's trip, the driver's route with this client.
+  static RidePath normal(List<RidePoint> p) => RidePath('normal', p, const Color(0xFF2E7D32), 9);
+  static RidePath combined(List<RidePoint> p) => RidePath('combine', p, const Color(0xFFF9A825), 6);
+  static RidePath client(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 3);
+}
+
 /// Builds the map; tests replace it because platform maps need a device.
 typedef RideMapBuilder = Widget Function(BuildContext context, RidePoint? origin, RidePoint? destination,
-    void Function(RidePoint point) onTap, {RidePoint? driver});
+    void Function(RidePoint point) onTap, {RidePoint? driver, List<RidePath>? paths});
 
 Widget googleRideMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint point) onTap,
-        {RidePoint? driver}) =>
-    _GoogleRideMap(origin: origin, destination: destination, driver: driver, onTap: onTap);
+        {RidePoint? driver, List<RidePath>? paths}) =>
+    _GoogleRideMap(origin: origin, destination: destination, driver: driver, paths: paths ?? const [], onTap: onTap);
 
 class _GoogleRideMap extends StatefulWidget {
-  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver});
+  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver, this.paths = const []});
   final RidePoint? origin, destination, driver;
+  final List<RidePath> paths;
   final void Function(RidePoint point) onTap;
   @override
   State<_GoogleRideMap> createState() => _GoogleRideMapState();
@@ -86,7 +100,19 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
   void didUpdateWidget(_GoogleRideMap old) {
     super.didUpdateWidget(old);
     final o = widget.origin, d = widget.destination;
-    if (o != null && d != null && (o != old.origin || d != old.destination)) {
+    if (widget.paths.isNotEmpty && !identical(widget.paths, old.paths)) {
+      // Frame every drawn route once, when they arrive.
+      final all = [for (final p in widget.paths) ...p.points];
+      double minLat = all.first.latitude, maxLat = minLat, minLon = all.first.longitude, maxLon = minLon;
+      for (final p in all) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLon) minLon = p.longitude;
+        if (p.longitude > maxLon) maxLon = p.longitude;
+      }
+      _controller?.animateCamera(CameraUpdate.newLatLngBounds(
+          LatLngBounds(southwest: LatLng(minLat, minLon), northeast: LatLng(maxLat, maxLon)), 32));
+    } else if (o != null && d != null && (o != old.origin || d != old.destination)) {
       final bounds = LatLngBounds(
         southwest: LatLng(o.latitude < d.latitude ? o.latitude : d.latitude, o.longitude < d.longitude ? o.longitude : d.longitude),
         northeast: LatLng(o.latitude > d.latitude ? o.latitude : d.latitude, o.longitude > d.longitude ? o.longitude : d.longitude),
@@ -107,6 +133,11 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
     myLocationButtonEnabled: false,
     mapToolbarEnabled: false,
     gestureRecognizers: {Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new)},
+    polylines: {
+      for (final (i, path) in widget.paths.indexed)
+        Polyline(polylineId: PolylineId(path.name), points: [for (final p in path.points) _at(p)], color: path.color,
+            width: path.width, zIndex: i, startCap: Cap.roundCap, endCap: Cap.roundCap, jointType: JointType.round),
+    },
     markers: {
       if (widget.origin != null)
         Marker(markerId: const MarkerId('depart'), position: _at(widget.origin!), infoWindow: const InfoWindow(title: 'Départ'),
