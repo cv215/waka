@@ -125,6 +125,21 @@ void main() {
       'action:finish:-']));
   });
 
+  testWidgets('sans GPS, le chauffeur écrit le lieu où il se trouve, puis passe en ligne à ce point', (tester) async {
+    final server = await _open(tester, gps: null);
+    await tester.enterText(find.widgetWithText(TextField, 'Où es-tu ?'), 'Poste');
+    await tester.pump(const Duration(milliseconds: 450)); // the typing delay, on the test clock
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(ListTile, 'Poste centrale'));
+    await settle(tester);
+    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await settle(tester);
+    expect(server.driverCalls.single, 'presence:true:{latitude: 3.8667, longitude: 11.5167}');
+    expect(find.text('En ligne : tu peux recevoir des courses'), findsOneWidget);
+  });
+
   testWidgets('sans GPS, la position vient de la carte ; un compte non chauffeur est refusé clairement', (tester) async {
     final server = await _open(tester, gps: null);
     await tester.tap(find.byType(Switch));
