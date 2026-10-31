@@ -370,3 +370,5 @@ Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R
 - **Chauffeur taxi et particulier** : une même personne peut avoir **deux dossiers approuvés au plus, un taxi et un particulier**, et basculer de l'un à l'autre selon le véhicule utilisé (à réaliser à l'étape 4 ; aujourd'hui un compte n'a qu'un dossier).
 
 **Précision de Claude** : « deux au plus » est compris comme un taxi et un particulier, jamais deux du même type ; à confirmer par le fondateur avant l'étape 4.
+
+**Étape 2, validée par le fondateur (31 octobre 2026)** : carte plein écran et un seul panneau en bas. Le départ est la position du téléphone (modifiable) ; une destination donne **Partagé et VIP côte à côte** avec leurs prix et un seul bouton « Commander » ; la recherche, le paiement et l'arrivée du chauffeur suivent dans le même panneau. Les trois dernières destinations sont gardées sur l'appareil seulement. Une fois la course payée, le client voit **le prénom du chauffeur, la voiture, sa couleur et sa plaque**, rien d'autre.

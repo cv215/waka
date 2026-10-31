@@ -51,6 +51,15 @@ public final class PersistentQuoteService {
     private final Clock clock;
     private final PricingEngine engine = new PricingEngine();
     private final String gate;
+    /**
+     * The same trip asked again within five minutes (the other mode, more seats) reuses the road already measured: showing
+     * Partagé and VIP side by side costs one maps call. Exact points only; a missing road is never kept.
+     */
+    private record KeptRoad(RouteDistanceProvider.RoadRoute road, java.time.Instant at) { }
+    private static final Duration ROAD_KEPT = Duration.ofMinutes(5);
+    private final java.util.Map<String, KeptRoad> roads = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, KeptRoad> eldest) { return size() > 500; }
+    });
     /** Trip shapes by quote, reused for the ride (client's map) and the driver's proposal: never asked twice. */
     private final java.util.Map<String, String> routeCache = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
         @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, String> eldest) { return size() > 1000; }
@@ -92,10 +101,17 @@ public final class PersistentQuoteService {
         Lookup first = sessions.withAuthenticatedSession(token, client, session -> lookup(session.accountId(), key, payloadFields));
         if (first != null) return unwrap(first);
         if (!area.covers(origin) || !area.covers(destination)) throw new QuoteException(QuoteException.Code.OUTSIDE_SERVICE_AREA);
+        String trip = origin.canonical() + ";" + destination.canonical();
+        KeptRoad kept = roads.get(trip);
         RouteDistanceProvider.RoadRoute road;
-        try { road = routes.roadRoute(origin, destination); }
-        catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException hidden) {
-            throw new QuoteException(QuoteException.Code.ROUTE_UNAVAILABLE);
+        if (kept != null && clock.instant().isBefore(kept.at().plus(ROAD_KEPT))) {
+            road = kept.road();
+        } else {
+            try { road = routes.roadRoute(origin, destination); }
+            catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException hidden) {
+                throw new QuoteException(QuoteException.Code.ROUTE_UNAVAILABLE);
+            }
+            if (road != null && road.metres() != null) roads.put(trip, new KeptRoad(road, clock.instant()));
         }
         if (road == null || road.metres() == null) throw new QuoteException(QuoteException.Code.NO_ROUTE);
         BigDecimal distance = road.metres();

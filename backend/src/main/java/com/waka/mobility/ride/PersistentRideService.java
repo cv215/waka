@@ -6,6 +6,7 @@ import com.waka.geo.PickupTimeProvider;
 import com.waka.geo.RouteDistanceProvider;
 import com.waka.geo.RoutePathProvider;
 import com.waka.identity.admission.PersistentDriverApplicationService;
+import com.waka.identity.profile.PersistentProfileService;
 import com.waka.identity.profile.ProfileCrypto;
 import com.waka.identity.session.PersistentSessionService;
 import com.waka.mobility.quote.PersistentQuoteService;
@@ -57,11 +58,19 @@ public final class PersistentRideService {
      * {@code driverPosition}/{@code driverPositionAt}: for the client only, while the driver comes (from acceptance until
      * boarding), and only when the driver's position is less than a minute old; otherwise null. {@code route}: the
      * trip's road shape kept from the quote (encoded polyline, display only), or null; it never costs a maps call.
+     * {@code driver}: for the client only, once the ride is paid and until the drop-off, who to look for; otherwise null.
      */
     public record RideView(UUID reservationId, String mode, int seats, long priceXaf, long driverXaf, String state,
             Instant holdExpiresAt, Instant arrivedAt, String viewerRole, String boardingCode, Long refundXaf,
-            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt, String route) {
+            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt, String route, DriverCard driver) {
         @Override public String toString() { return "RideView[REDACTED]"; }
+    }
+    /**
+     * What the paying client needs to find his car, and nothing more (no phone, no full name): the driver's first name,
+     * the vehicle (make and model), its colour and plate as declared in the approved file. Each may be null.
+     */
+    public record DriverCard(String firstName, String vehicle, String color, String plate) {
+        @Override public String toString() { return "DriverCard[REDACTED]"; }
     }
     public record SearchView(UUID searchId, String state, Instant expiresAt, boolean proposalPending, RideView ride,
             boolean idempotentReplay) { }
@@ -112,6 +121,8 @@ public final class PersistentRideService {
     private final JdbcFareScheduleRepository fares;
     private final PickupTimeProvider pickupTimes;
     private final RoutePathProvider paths;
+    /** The driver's name for his card; null when not assembled (the card then has no first name). */
+    private final PersistentProfileService profiles;
     /** Route shapes are asked once per proposal, then reused on every refresh (the driver's screen polls). */
     private final Map<String, ProposalPaths> pathCache = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, ProposalPaths> eldest) { return size() > 200; }
@@ -130,6 +141,13 @@ public final class PersistentRideService {
     public PersistentRideService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
             PersistentQuoteService quotes, JdbcFareScheduleRepository fares, PickupTimeProvider pickupTimes, RoutePathProvider paths,
             ProfileCrypto crypto, Clock clock) {
+        this(sessions, jdbc, applications, quotes, fares, pickupTimes, paths, null, crypto, clock);
+    }
+
+    public PersistentRideService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
+            PersistentQuoteService quotes, JdbcFareScheduleRepository fares, PickupTimeProvider pickupTimes, RoutePathProvider paths,
+            PersistentProfileService profiles, ProfileCrypto crypto, Clock clock) {
+        this.profiles = profiles;
         this.paths = Objects.requireNonNull(paths);
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
@@ -718,11 +736,23 @@ public final class PersistentRideService {
             var quote = quotes.forRideLocked(UUID.fromString(clientId), UUID.fromString(rs.getString("quote_id")));
             LocalDateTime arrived = rs.getObject("arrived_at", LocalDateTime.class);
             Seen driver = isClient && COMING.contains(state) ? driverPosition(rs.getString("driver_account_id")) : null;
+            DriverCard card = isClient && PAID.contains(state) ? card(UUID.fromString(rs.getString("driver_account_id"))) : null;
             return new RideView(UUID.fromString(id), rs.getString("mode"), rs.getInt("seats"), rs.getLong("price_xaf"), rs.getLong("driver_xaf"),
                     state, instant(rs.getObject("hold_expires_at", LocalDateTime.class)), arrived == null ? null : instant(arrived),
                     isClient ? "client" : "driver", code, (Long) rs.getObject("refund_xaf", Long.class), quote.origin(), quote.destination(),
-                    driver == null ? null : driver.position(), driver == null ? null : driver.at(), quotes.route(quote.quoteId()));
+                    driver == null ? null : driver.position(), driver == null ? null : driver.at(), quotes.route(quote.quoteId()), card);
         }, gate, id).getFirst();
+    }
+    /** Paid and not yet dropped off: the client looks for his car. */
+    private static final Set<String> PAID = Set.of("confirmed", "driver_arrived", "boarded");
+    private DriverCard card(UUID driver) {
+        var vehicle = applications.vehicleLocked(driver, micros(clock.instant()));
+        String name = profiles == null ? null : profiles.displayNameLocked(driver);
+        String first = name == null ? null : name.trim().split("\\s+")[0];
+        String model = vehicle == null ? null : String.join(" ", java.util.stream.Stream.of(vehicle.brand(), vehicle.model())
+                .filter(v -> v != null && !v.isBlank()).toList());
+        return new DriverCard(first, model == null || model.isEmpty() ? null : model, vehicle == null ? null : vehicle.color(),
+                vehicle == null ? null : vehicle.registration());
     }
     private String codeMac(String rideId, String code) { return crypto.requestMac(rideId, "ride-boarding-code-v1", code); }
     private byte[] codeAad(String rideId, String keyId) { return ProfileCrypto.aad("waka-ride-boarding-code-v1", gate, rideId, keyId); }

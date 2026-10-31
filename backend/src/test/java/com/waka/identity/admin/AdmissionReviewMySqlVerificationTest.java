@@ -475,6 +475,7 @@ class AdmissionReviewMySqlVerificationTest {
         assertNotNull(followed.driverPositionAt());
         assertNull(rides.ride(driver.token, client, ride.reservationId()).driverPosition());
         assertEquals(quote.route(), followed.route(), "the client keeps seeing his trip in blue, without a new maps call");
+        assertNull(followed.driver(), "no driver card before payment");
         assertEquals(ride.reservationId(), rides.activeRide(rider.token, client).reservationId());
         assertEquals("driver", rides.activeRide(driver.token, client).viewerRole());
         assertNull(rides.activeRide(agent.token, client), "nothing in progress for a third account");
@@ -488,6 +489,13 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(com.waka.mobility.ride.RideException.Code.NOT_PAID,
                 code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "arrive", null)));
         jdbc.update("UPDATE ride_reservation SET state='confirmed' WHERE gate_hash=? AND id=?", gate, ride.reservationId().toString());
+        // Paid: the client sees who to look for (car, colour, plate), the driver never gets such a card.
+        var card = rides.ride(rider.token, client, ride.reservationId()).driver();
+        assertEquals("Marque Modele", card.vehicle());
+        assertEquals("Bleu", card.color());
+        assertNotNull(card.plate());
+        assertNull(card.firstName(), "no profile service assembled in this test: no name rather than a guess");
+        assertNull(rides.ride(driver.token, client, ride.reservationId()).driver());
         rides.driverAction(driver.token, client, ride.reservationId(), "arrive", null);
         assertEquals(com.waka.mobility.ride.RideException.Code.TOO_EARLY,
                 code.apply(() -> rides.driverAction(driver.token, client, ride.reservationId(), "client_absent", null)), "five minutes of waiting first");

@@ -497,7 +497,7 @@ Calcul côté serveur, dans cet ordre :
 4. Prix tiré de la version de grille **configurée explicitement** (aucune version « active » implicite).
 5. Arrondi au franc seulement à la fin.
 
-Réponse 201 : `quoteId, mode, passengerCount, distanceMetres, fareVersion, bandCode, placePriceXaf, totalXaf, currency, createdAt, expiresAt (+300 s), idempotentReplay, route`. Les points ne sont jamais renvoyés ; ils sont stockés chiffrés. `route` est le trajet routier du client (polyligne encodé, forme simplifiée, tracé en bleu), obtenu dans le même appel Google que la distance, sans coût en plus. Il sert seulement à l'affichage et n'est gardé qu'en mémoire : il peut valoir `null` (fournisseur sans tracé, tracé illisible, ou réponse rejouée après un redémarrage).
+Réponse 201 : `quoteId, mode, passengerCount, distanceMetres, fareVersion, bandCode, placePriceXaf, totalXaf, currency, createdAt, expiresAt (+300 s), idempotentReplay, route`. Les points ne sont jamais renvoyés ; ils sont stockés chiffrés. `route` est le trajet routier du client (polyligne encodé, forme simplifiée, tracé en bleu), obtenu dans le même appel Google que la distance, sans coût en plus. Il sert seulement à l'affichage et n'est gardé qu'en mémoire : il peut valoir `null` (fournisseur sans tracé, tracé illisible, ou réponse rejouée après un redémarrage). Le même trajet (mêmes points exacts) redemandé dans les 5 minutes, dans l'autre formule ou avec un autre nombre de personnes, réutilise la route déjà mesurée : afficher Partagé et VIP côte à côte coûte un seul appel Google.
 
 Même clé, même demande : le même devis est rendu en 200, même s'il a expiré. Son prix et son échéance ne changent pas, et le fournisseur n'est pas rappelé. Même clé avec une autre demande : 409 `IDEMPOTENCY_KEY_REUSED`.
 
@@ -716,6 +716,7 @@ Une proposition part au chauffeur recevable le plus proche **en temps de route**
 ### K36 — Suivre le chauffeur et retrouver sa course (R13)
 
 - **Course vue par le client** (`GET /api/v1/rides/{id}` et les autres réponses de course) : deux champs s'ajoutent, `driverPosition {latitude, longitude}` et `driverPositionAt`. Ils sont remplis seulement pour le client, de l'acceptation jusqu'à l'embarquement (`awaiting_payment`, `confirmed`, `driver_arrived`), et seulement si la position du chauffeur date de moins d'une minute. Sinon ils valent `null`, et toujours pour le chauffeur.
+- **Carte du chauffeur** : pour le client seulement, une fois la course payée et jusqu'à la dépose (`confirmed`, `driver_arrived`, `boarded`), la course ajoute `driver {firstName, vehicle, color, plate}` : le prénom du chauffeur (premier mot de son nom), la marque et le modèle, la couleur et la plaque déclarés dans son dossier. Chaque champ peut valoir `null`. Jamais de téléphone ni de nom complet ; `driver` vaut `null` avant le paiement et toujours pour le chauffeur.
 - **Trajet en bleu** : chaque course ajoute aussi `route`, le trajet routier du devis (polyligne encodé, affichage seulement), pour les deux parties. Il ne coûte aucun appel Google : il vaut `null` si le serveur ne l'a plus en mémoire.
 - **`GET /api/v1/me/active-ride`** : la course encore en cours du compte, comme client ou comme chauffeur (la plus récente), pour la retrouver après avoir fermé l'application. Répond 404 `RESOURCE_NOT_FOUND` s'il n'y en a pas.
 

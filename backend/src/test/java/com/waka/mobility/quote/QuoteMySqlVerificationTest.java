@@ -115,13 +115,17 @@ class QuoteMySqlVerificationTest {
         assertEquals(vip.createdAt().plusSeconds(300), vip.expiresAt());
         var shared = quotes.create(login.token, client, UUID.randomUUID(), PersistentQuoteService.Mode.SHARED, 3, origin, destination);
         assertEquals(1800, shared.totalXaf());
+        assertEquals(1, providerCalls.get(), "Partagé and VIP side by side: the same road, one maps call");
+        clock.advance(301); // the road is kept five minutes; a new distance needs a new measure
         distance.set(new BigDecimal("1000.4"));
         var small = quotes.create(login.token, client, UUID.randomUUID(), PersistentQuoteService.Mode.VIP, 1, origin, destination);
         assertEquals(205, small.placePriceXaf());
         assertEquals(2563, small.totalXaf(), "25 x 205 / 2 = 2562.5, rounded once at the end");
+        clock.advance(301);
         distance.set(new BigDecimal("17900.5"));
         assertFailure(QuoteException.Code.DISTANCE_OUT_OF_RANGE,
                 () -> quotes.create(login.token, client, UUID.randomUUID(), PersistentQuoteService.Mode.SHARED, 1, origin, destination));
+        clock.advance(301);
         distance.set(null);
         assertFailure(QuoteException.Code.NO_ROUTE,
                 () -> quotes.create(login.token, client, UUID.randomUUID(), PersistentQuoteService.Mode.SHARED, 1, origin, destination));

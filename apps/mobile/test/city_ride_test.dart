@@ -33,6 +33,8 @@ class RideFixture extends PayFixture implements RideGateway {
     'pickup': {'latitude': 3.8667, 'longitude': 11.5167}, 'dropoff': {'latitude': 3.8935, 'longitude': 11.509},
     'driverPosition': rideState == 'confirmed' ? {'latitude': 3.87, 'longitude': 11.52} : null,
     'driverPositionAt': rideState == 'confirmed' ? iso(departure) : null, 'route': _shape,
+    'driver': {'confirmed', 'driver_arrived', 'boarded'}.contains(rideState)
+        ? {'firstName': 'Paul', 'vehicle': 'Toyota Yaris', 'color': 'Grise', 'plate': 'LT 123 AB'} : null,
   };
 
   @override
@@ -65,7 +67,7 @@ class RideFixture extends PayFixture implements RideGateway {
     rideCalls.add('quote:$mode:$people:${o.toJson()}:${d.toJson()}');
     if (outside) throw const PhotoProblem(PhotoFailure.outsideServiceArea);
     return RideQuoteView.parse({'quoteId': _quote, 'mode': mode, 'passengerCount': people, 'distanceMetres': 3677,
-      'fareVersion': 'launch-v1', 'bandCode': 'B05', 'placePriceXaf': 370, 'totalXaf': 370 * people, 'currency': 'XAF',
+      'fareVersion': 'launch-v1', 'bandCode': 'B05', 'placePriceXaf': 370, 'totalXaf': mode == 'vip' ? 4625 : 370 * people, 'currency': 'XAF',
       'createdAt': iso(departure), 'expiresAt': iso(departure), 'idempotentReplay': false, 'route': _shape});
   }
 
@@ -101,7 +103,8 @@ Widget _fakeMap(BuildContext context, RidePoint? origin, RidePoint? destination,
               '${paths == null ? '' : ' ${paths.map((p) => '${p.name}:${p.points.length}').join(',')}'}')),
     );
 
-Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideFixture)? before}) async {
+Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideFixture)? before,
+    RidePoint? gps = const RidePoint(3.8667, 11.5167), Duration? pollEvery}) async {
   tester.view.physicalSize = const Size(900, 2600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -115,9 +118,8 @@ Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideF
     await login.initialize();
     return (login, gateway);
   }))!;
-  await tester.pumpWidget(MaterialApp(home: CityRidePage(login: login, mapBuilder: _fakeMap, pollEvery: null,
-      readPosition: () async => const RidePoint(3.8667, 11.5167),
-      typingDelay: Duration.zero)));
+  await tester.pumpWidget(MaterialApp(home: CityRidePage(login: login, mapBuilder: _fakeMap, pollEvery: pollEvery,
+      readPosition: () async => gps, typingDelay: Duration.zero)));
   await settle(tester);
   return (login, gateway);
 }
@@ -142,102 +144,109 @@ void main() {
     expect(const RidePoint(3.86666666, 11.5).toJson(), {'latitude': 3.866667, 'longitude': 11.5});
   });
 
-  testWidgets('chercher le départ et l’arrivée, voir le prix du serveur, commander, payer et recevoir le code', (tester) async {
-    final (_, server) = await _open(tester);
-    await _type(tester, 'Départ', 'Poste');
-    await tester.tap(find.widgetWithText(ListTile, 'Poste centrale'));
-    await settle(tester);
+  testWidgets('départ = ma position ; une destination donne Partagé et VIP côte à côte ; commander et payer', (tester) async {
+    final (_, server) = await _open(tester, pollEvery: const Duration(seconds: 1));
+    expect(find.text('Où vas-tu ?'), findsOneWidget);
+    expect(find.text('Départ : Ma position'), findsOneWidget, reason: 'the pickup is the phone position, no field to fill');
     expect(find.text('carte D-'), findsOneWidget);
-    await _type(tester, 'Arrivée', 'Bast');
+    await _type(tester, 'Chercher un lieu', 'Bast');
     await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
     await settle(tester);
-    expect(find.text('carte DA'), findsOneWidget);
-    await tester.tap(find.text('Voir le prix'));
-    await settle(tester);
     expect(find.text('370 F'), findsOneWidget);
-    expect(find.textContaining('3,7 km par la route'), findsOneWidget);
-    expect(find.text('carte DA client:3'), findsOneWidget, reason: 'the trip by road in blue, with the price');
-    expect(server.rideCalls, contains('quote:shared:1:{latitude: 3.8667, longitude: 11.5167}:{latitude: 3.8935, longitude: 11.509}'));
+    expect(find.text('4625 F'), findsOneWidget, reason: 'both prices at once');
+    expect(find.text('Commander · 370 F'), findsOneWidget);
+    expect(find.textContaining('3,7 km'), findsOneWidget);
+    expect(find.text('carte DA client:3'), findsOneWidget, reason: 'the trip by road in blue');
+    expect(server.rideCalls.where((c) => c.startsWith('quote:')),
+        ['quote:shared:1:{latitude: 3.8667, longitude: 11.5167}:{latitude: 3.8935, longitude: 11.509}',
+          'quote:vip:1:{latitude: 3.8667, longitude: 11.5167}:{latitude: 3.8935, longitude: 11.509}']);
+
+    await tester.tap(find.text('VIP'));
+    await settle(tester);
+    expect(find.text('Commander · 4625 F'), findsOneWidget);
+    await tester.tap(find.text('Partagé'));
+    await tester.tap(find.byTooltip('Plus'));
+    await settle(tester);
+    expect(find.text('Commander · 740 F'), findsOneWidget, reason: 'two places, priced again by the server');
 
     server.searchState = 'searching';
-    await tester.tap(find.text('Commander'));
-    // The search spinner never stops: pump instead of waiting for the screen to settle.
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.tap(find.text('Commander · 740 F'));
+    await tester.pump();
     await tester.pump();
     expect(find.text('Recherche d’un chauffeur proche…'), findsOneWidget);
     server.searchState = 'matched';
-    await tester.tap(find.text('Actualiser'));
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pump(const Duration(seconds: 1));
     await tester.pump();
-    await settle(tester);
-    expect(find.text('Chauffeur trouvé : paie la course pour la confirmer.'), findsOneWidget);
+    expect(find.text('Chauffeur trouvé : paie pour confirmer'), findsOneWidget);
     expect(find.text('048213'), findsNothing, reason: 'no code before payment');
-
+    expect(find.text('Paul · Toyota Yaris'), findsNothing, reason: 'no driver card before payment');
     await tester.tap(find.text('Payer 370 F'));
     await settle(tester);
     expect(find.text('Payer la course'), findsOneWidget);
     expect(find.text('Montant : 370 F'), findsOneWidget, reason: 'the amount is the server ride price');
   });
 
-  testWidgets('un point choisi sur la carte, hors zone : le message du serveur est expliqué', (tester) async {
-    final (_, server) = await _open(tester);
+  testWidgets('la destination choisie revient en raccourci ; le départ se change', (tester) async {
+    await _open(tester);
+    await _type(tester, 'Chercher un lieu', 'Bast');
+    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
+    await settle(tester);
+    await tester.tap(find.byTooltip('Retour'));
+    await settle(tester);
+    expect(find.widgetWithIcon(ListTile, Icons.history), findsOneWidget);
+    await tester.tap(find.text('Changer'));
+    await settle(tester);
+    expect(find.text('D’où pars-tu ?'), findsOneWidget);
+    await _type(tester, 'Chercher un lieu', 'Poste');
+    await tester.tap(find.widgetWithText(ListTile, 'Poste centrale'));
+    await settle(tester);
+    expect(find.text('Départ : Poste centrale'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
+    await settle(tester);
+    expect(find.text('Commander · 370 F'), findsOneWidget, reason: 'one touch on a recent place gives the prices');
+  });
+
+  testWidgets('sans GPS, le départ est demandé après la destination ; hors zone, le message du serveur est expliqué', (tester) async {
+    final (_, server) = await _open(tester, gps: null);
+    expect(find.text('Départ : à choisir'), findsOneWidget);
     server.outside = true;
     await tester.tap(find.byKey(const Key('carte')));
     await settle(tester);
+    expect(find.text('D’où pars-tu ?'), findsOneWidget, reason: 'no pickup yet: asked next');
     await tester.tap(find.byKey(const Key('carte')));
     await settle(tester);
-    expect(find.text('Point choisi sur la carte'), findsNWidgets(2));
-    await tester.tap(find.text('Voir le prix'));
-    await settle(tester);
     expect(find.textContaining('Yaoundé seulement'), findsOneWidget);
-  });
-
-  testWidgets('un départ écrit sans être choisi est signalé ; « Ma position » le remplit', (tester) async {
-    await _open(tester);
-    await _type(tester, 'Départ', 'mobil omnisports');
-    await _type(tester, 'Arrivée', 'Bast');
-    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
-    await settle(tester);
-    expect(find.text('Touche ce champ et choisis un lieu dans la liste'), findsOneWidget);
-    expect(find.textContaining('choisis d’abord le départ'), findsOneWidget);
-    await tester.tap(find.byTooltip('Ma position'));
-    await settle(tester);
-    expect(find.text('carte DA'), findsOneWidget);
-    expect(find.text('Touche ce champ et choisis un lieu dans la liste'), findsNothing);
-    await tester.tap(find.text('Voir le prix'));
-    await settle(tester);
-    expect(find.text('370 F'), findsOneWidget);
   });
 
   test('une réponse illisible demande de recharger, pas de vérifier le trajet', () {
     expect(rideMessage(PhotoFailure.invalidResponse), contains('recharge la page'));
   });
 
-  testWidgets('une course en cours est retrouvée à l’ouverture, avec le chauffeur sur la carte', (tester) async {
+  testWidgets('une course en cours est retrouvée : chauffeur sur la carte, prénom, voiture, plaque et code', (tester) async {
     await _open(tester, before: (server) { server.inProgress = true; server.rideState = 'confirmed'; });
-    expect(find.text('Course payée : le chauffeur arrive.'), findsOneWidget);
+    expect(find.text('Ton chauffeur arrive'), findsOneWidget);
     expect(find.text('carte DAC client:3'), findsOneWidget, reason: 'pickup, drop-off, the driver and the trip in blue');
+    expect(find.text('Paul · Toyota Yaris'), findsOneWidget);
+    expect(find.text('Grise · LT 123 AB'), findsOneWidget);
     expect(find.text('048213'), findsOneWidget);
-    expect(find.text('Voir le prix'), findsNothing);
+    expect(find.text('Où vas-tu ?'), findsNothing);
   });
 
-  testWidgets('une course payée montre le code et peut être annulée avec remboursement', (tester) async {
+  testWidgets('une course payée peut être annulée avec remboursement, puis une nouvelle commence', (tester) async {
     final (_, server) = await _open(tester);
     await tester.tap(find.byKey(const Key('carte')));
-    await tester.tap(find.byKey(const Key('carte')));
-    await settle(tester);
-    await tester.tap(find.text('Voir le prix'));
     await settle(tester);
     server.searchState = 'matched';
     server.rideState = 'confirmed';
-    await tester.tap(find.text('Commander'));
+    await tester.tap(find.text('Commander · 370 F'));
     await settle(tester);
-    expect(find.text('Course payée : le chauffeur arrive.'), findsOneWidget);
-    expect(find.text('048213'), findsOneWidget);
-    await tester.tap(find.text('Annuler la course (remboursée)'));
+    expect(find.text('Ton chauffeur arrive'), findsOneWidget);
+    await tester.tap(find.text('Annuler la course'));
     await settle(tester);
     expect(find.text('Course annulée.'), findsOneWidget);
-    expect(find.text('Remboursé : 370 F'), findsOneWidget);
-    expect(find.text('Nouvelle course'), findsOneWidget);
+    expect(find.text('370 F · remboursé : 370 F'), findsOneWidget);
+    await tester.tap(find.text('Nouvelle course'));
+    await settle(tester);
+    expect(find.text('Où vas-tu ?'), findsOneWidget);
   });
 }

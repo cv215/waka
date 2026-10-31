@@ -1,12 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 
-import '../../../core/presentation/waka_page.dart';
+import '../../../core/presentation/preference_store.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/login_models.dart';
@@ -34,9 +36,9 @@ String rideMessage(PhotoFailure failure) => switch (failure) {
 };
 
 String rideStateLabel(String state) => switch (state) {
-  'awaiting_payment' => 'Chauffeur trouvé : paie la course pour la confirmer.',
-  'confirmed' => 'Course payée : le chauffeur arrive.',
-  'driver_arrived' => 'Le chauffeur est arrivé au point de départ.',
+  'awaiting_payment' => 'Chauffeur trouvé : paie pour confirmer',
+  'confirmed' => 'Ton chauffeur arrive',
+  'driver_arrived' => 'Ton chauffeur est là',
   'boarded' => 'Tu es à bord. Bonne route !',
   'finished' => 'Course terminée. Merci d’avoir voyagé avec WAKA.',
   'cancelled_by_client' => 'Course annulée.',
@@ -170,8 +172,9 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
   );
 }
 
-/// « Course en ville » (R13): choose the pickup and drop-off by search or on the map, see the server's price, find a
-/// driver, pay within three minutes, follow the ride. Nothing about the price is computed on the phone.
+/// « Course en ville » (R13), step 2 of the redesign: a full-screen map and one panel at the bottom that follows the
+/// moment — where to (the pickup is this phone's position), the two prices side by side and one order button, then
+/// the search, the payment and the driver coming, in the same panel. Nothing about the price is computed on the phone.
 class CityRidePage extends StatefulWidget {
   const CityRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
       this.pollEvery = const Duration(seconds: 4), this.typingDelay = const Duration(milliseconds: 400), this.actions});
@@ -189,17 +192,39 @@ class CityRidePage extends StatefulWidget {
 
 enum _Field { origin, destination }
 
+/// A destination chosen before, kept on this device only (three at most) to choose it again in one touch.
+class _Recent {
+  const _Recent(this.label, this.point);
+  final String label;
+  final RidePoint point;
+  Map<String, Object> toJson() => {'label': label, 'lat': point.latitude, 'lon': point.longitude};
+  static List<_Recent> parse(String? raw) {
+    try {
+      final list = jsonDecode(raw ?? '[]') as List;
+      return [
+        for (final e in list.take(3))
+          _Recent((e as Map)['label'] as String, RidePoint((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
 class _CityRidePageState extends State<CityRidePage> {
   RideGateway get _gateway => widget.login.gateway as RideGateway;
   final _originText = TextEditingController(), _destinationText = TextEditingController();
   RidePoint? _origin, _destination;
-  _Field _active = _Field.origin;
+  /// Which point the field and a touch on the map set: the destination, unless the client changes the pickup.
+  _Field _active = _Field.destination;
   List<PlaceSuggestion> _suggestions = const [];
+  List<_Recent> _recents = const [];
   String _placeSession = randomLoginId();
   Timer? _typing, _poll;
   String _mode = 'shared';
   int _people = 1;
-  RideQuoteView? _quote;
+  /// Both prices of the same trip ('shared', 'vip'); the server measures the road once for the two.
+  Map<String, RideQuoteView> _quotes = const {};
   RideSearchView? _search;
   CityRideView? _ride;
   String? _message;
@@ -210,16 +235,23 @@ class _CityRidePageState extends State<CityRidePage> {
   @override
   void initState() {
     super.initState();
-    // A ride still in progress (the screen or the phone was closed) is found again.
+    readPreference(_recentKey).then((raw) { if (mounted) setState(() => _recents = _Recent.parse(raw)); });
     _run(() async {
       final (session, client) = _context();
+      // A ride still in progress (the screen or the phone was closed) is found again.
       final ride = await _gateway.activeRide(session, client);
       if (mounted && ride != null && ride.viewerRole == 'client') {
         setState(() => _ride = ride);
         _follow();
+        return;
       }
+      // Otherwise the pickup is where the phone is, when it can tell.
+      final here = await widget.readPosition();
+      if (mounted && here != null && _origin == null) setState(() { _origin = here; _originText.text = 'Ma position'; });
     });
   }
+
+  static const _recentKey = 'waka_recent_places';
 
   @override
   void dispose() {
@@ -256,7 +288,7 @@ class _CityRidePageState extends State<CityRidePage> {
     _typing?.cancel();
     setState(() {
       if (field == _Field.origin) { _origin = null; } else { _destination = null; }
-      _quote = null;
+      _quotes = const {};
       if (text.trim().length < 3) _suggestions = const [];
     });
     if (text.trim().length < 3) return;
@@ -272,47 +304,70 @@ class _CityRidePageState extends State<CityRidePage> {
     final point = await _gateway.placeLocation(session, client, place.placeId, _placeSession);
     _placeSession = randomLoginId(); // one billed session per chosen place
     if (!mounted) return;
-    setState(() {
-      _suggestions = const [];
-      _quote = null;
-      if (_active == _Field.origin) {
-        _origin = point;
-        _originText.text = place.mainText;
-        _active = _Field.destination;
-      } else {
-        _destination = point;
-        _destinationText.text = place.mainText;
-      }
-    });
+    // Inside the same busy step: the prices follow at once when both points are known.
+    if (_set(_active, point, place.mainText)) await _askPrices();
   });
 
   void _tapped(RidePoint point) {
-    if (_search != null) return;
-    setState(() {
-      _suggestions = const [];
-      _quote = null;
-      if (_active == _Field.origin) {
-        _origin = point;
-        _originText.text = 'Point choisi sur la carte';
-        _active = _Field.destination;
-      } else {
-        _destination = point;
-        _destinationText.text = 'Point choisi sur la carte';
-      }
-    });
+    if (_search != null || _ride != null) return;
+    if (_set(_active, point, 'Point choisi sur la carte')) _prices();
   }
 
-  Future<void> _price() => _run(() async {
+  /// A point is set; true once both are known (the caller then asks the two prices).
+  bool _set(_Field field, RidePoint point, String label) {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _suggestions = const [];
+      _quotes = const {};
+      if (field == _Field.origin) {
+        _origin = point;
+        _originText.text = label;
+      } else {
+        _destination = point;
+        _destinationText.text = label;
+      }
+      // Without a pickup yet (no GPS), the panel asks for it next.
+      _active = _origin == null ? _Field.origin : _Field.destination;
+    });
+    if (field == _Field.destination && label != 'Point choisi sur la carte') _remember(_Recent(label, point));
+    return _origin != null && _destination != null;
+  }
+
+  void _remember(_Recent place) {
+    final kept = [place, ..._recents.where((r) => r.label != place.label)].take(3).toList();
+    setState(() => _recents = kept);
+    writePreference(_recentKey, jsonEncode([for (final r in kept) r.toJson()]));
+  }
+
+  /// Partagé and VIP for the same trip and number of people, one after the other (the second reuses the road).
+  Future<void> _prices() => _run(_askPrices);
+
+  Future<void> _askPrices() async {
     final (session, client) = _context();
-    final request = 'quote:$_mode:$_people:${_origin!.toJson()}:${_destination!.toJson()}';
-    final quote = await _gateway.quoteRide(session, client, _key(request), _mode, _people, _origin!, _destination!);
-    _keys.remove(request);
-    if (mounted) setState(() => _quote = quote);
-  });
+    final found = <String, RideQuoteView>{};
+    for (final mode in const ['shared', 'vip']) {
+      final request = 'quote:$mode:$_people:${_origin!.toJson()}:${_destination!.toJson()}';
+      found[mode] = await _gateway.quoteRide(session, client, _key(request), mode, _people, _origin!, _destination!);
+      _keys.remove(request);
+      if (mounted) setState(() => _quotes = Map.unmodifiable({..._quotes, ...found}));
+    }
+  }
+
+  void _changePeople(int people) {
+    setState(() { _people = people; _quotes = const {}; });
+    _prices();
+  }
 
   Future<void> _order() => _run(() async {
     final (session, client) = _context();
-    final quote = _quote!;
+    var quote = _quotes[_mode]!;
+    if (!DateTime.now().toUtc().isBefore(quote.expiresAt)) {
+      // A price is valid five minutes: ask it again before ordering, never order on a stale one.
+      final request = 'quote:$_mode:$_people:${_origin!.toJson()}:${_destination!.toJson()}';
+      quote = await _gateway.quoteRide(session, client, _key(request), _mode, _people, _origin!, _destination!);
+      _keys.remove(request);
+      if (mounted) setState(() => _quotes = Map.unmodifiable({..._quotes, _mode: quote}));
+    }
     final search = await _gateway.startRideSearch(session, client, _key('search:${quote.quoteId}'), quote.quoteId);
     if (mounted) setState(() { _search = search; _ride = search.ride; });
     _follow();
@@ -360,41 +415,23 @@ class _CityRidePageState extends State<CityRidePage> {
     final payment = await showDialog<PaymentView>(context: context, barrierDismissible: false, builder: (_) => PayDialog(
         login: widget.login, purpose: 'ride', targetId: ride.reservationId, amountXaf: ride.priceXaf, title: 'Payer la course',
         pollEvery: widget.pollEvery));
-    if (payment != null && payment.state == 'succeeded' && payment.applied && mounted) {
-      setState(() => _message = 'Course payée : le chauffeur est en route.');
-    }
+    if (payment != null && payment.state == 'succeeded' && payment.applied && mounted) setState(() => _message = null);
     await _run(_refreshNow);
   }
 
+  /// Back to « Où vas-tu ? », keeping the pickup.
   void _restart() {
     _poll?.cancel();
-    setState(() { _search = null; _ride = null; _quote = null; _message = null; _keys.clear(); });
-  }
-
-  Widget _placeField(_Field field, TextEditingController controller, String label, IconData icon) {
-    final chosen = (field == _Field.origin ? _origin : _destination) != null;
-    // Text typed but no place chosen: the point is unknown, so the price cannot be asked yet.
-    final unchosen = !chosen && controller.text.trim().isNotEmpty && _search == null && _ride == null;
-    return TextField(
-      controller: controller,
-      enabled: !_busy && _search == null && _ride == null,
-      onTap: () {
-        setState(() => _active = field);
-        if (unchosen) _typed(field, controller.text); // bring the suggestions back
-      },
-      onChanged: (text) => _typed(field, text),
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-        helperText: _active == field && !unchosen && _search == null ? 'Écris un lieu, ou touche la carte' : null,
-        errorText: unchosen && _active != field ? 'Touche ce champ et choisis un lieu dans la liste' : null,
-        suffixIcon: chosen
-            ? const Icon(Icons.check_circle_outline)
-            : field == _Field.origin && _search == null && _ride == null
-                ? IconButton(tooltip: 'Ma position', icon: const Icon(Icons.my_location), onPressed: _busy ? null : _here)
-                : null,
-      ),
-    );
+    setState(() {
+      _search = null;
+      _ride = null;
+      _quotes = const {};
+      _destination = null;
+      _destinationText.clear();
+      _message = null;
+      _keys.clear();
+      _active = _Field.destination;
+    });
   }
 
   /// The pickup at this phone's position (GPS; only over https in a browser).
@@ -405,139 +442,241 @@ class _CityRidePageState extends State<CityRidePage> {
       setState(() => _message = 'Position introuvable : autorise la localisation, ou écris le lieu de départ.');
       return;
     }
-    setState(() {
-      _origin = point;
-      _originText.text = 'Ma position';
-      _suggestions = const [];
-      _quote = null;
-      _active = _Field.destination;
-    });
+    if (_set(_Field.origin, point, 'Ma position')) await _askPrices();
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final ride = _ride, search = _search, quote = _quote;
-    // Blue: the trip by road, from the price onwards and during the ride.
-    final trip = ride != null ? ride.route : quote?.route;
-    return WakaPage(
-      title: 'Course en ville',
-      actions: widget.actions,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(height: 260, child: widget.mapBuilder(context, _ride?.pickup ?? _origin, _ride?.dropoff ?? _destination, _tapped,
-                driver: _ride?.driverPosition, paths: trip == null ? null : [RidePath.trip(trip)])),
-          ),
-          const SizedBox(height: 16),
-          _placeField(_Field.origin, _originText, 'Départ', Icons.trip_origin),
-          if (_active == _Field.origin) ..._suggestionTiles(),
-          const SizedBox(height: 8),
-          _placeField(_Field.destination, _destinationText, 'Arrivée', Icons.place_outlined),
-          if (_active == _Field.destination) ..._suggestionTiles(),
-          const SizedBox(height: 16),
-          if (search == null && ride == null) ...[
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'shared', label: Text('Partagé'), icon: Icon(Icons.groups_outlined)),
-                ButtonSegment(value: 'vip', label: Text('VIP'), icon: Icon(Icons.star_outline)),
-              ],
-              selected: {_mode},
-              onSelectionChanged: _busy ? null : (s) => setState(() { _mode = s.first; _quote = null; }),
-            ),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(child: Text(_mode == 'shared' ? 'Places à réserver' : 'Personnes dans la voiture')),
-              IconButton(tooltip: 'Moins', onPressed: _busy || _people <= 1 ? null : () => setState(() { _people--; _quote = null; }),
-                  icon: const Icon(Icons.remove_circle_outline)),
-              Text('$_people', style: theme.textTheme.titleMedium),
-              IconButton(tooltip: 'Plus', onPressed: _busy || _people >= 5 ? null : () => setState(() { _people++; _quote = null; }),
-                  icon: const Icon(Icons.add_circle_outline)),
-            ]),
-            const SizedBox(height: 8),
-            if (quote == null) ...[
-              FilledButton.icon(
-                onPressed: _busy || _origin == null || _destination == null ? null : _price,
-                icon: const Icon(Icons.payments_outlined),
-                label: const Text('Voir le prix'),
-              ),
-              if (_origin == null || _destination == null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(_origin == null
-                      ? 'Pour voir le prix, choisis d’abord le départ dans la liste, avec « Ma position » ou sur la carte.'
-                      : 'Pour voir le prix, choisis l’arrivée dans la liste ou sur la carte.'),
+    final ride = _ride, search = _search;
+    final choosing = ride == null && search == null;
+    final priced = choosing && _origin != null && _destination != null;
+    // Blue: the trip by road, from the prices onwards and during the ride.
+    final trip = ride?.route ?? (_quotes[_mode] ?? _quotes.values.firstOrNull)?.route;
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: Stack(children: [
+        Positioned.fill(child: widget.mapBuilder(context, ride?.pickup ?? _origin, ride?.dropoff ?? _destination, _tapped,
+            driver: ride?.driverPosition, paths: trip == null ? null : [RidePath.trip(trip)])),
+        SafeArea(child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(children: [
+            if (priced) _round(IconButton(tooltip: 'Retour', onPressed: _busy ? null : _restart, icon: const Icon(Icons.arrow_back))),
+            const Spacer(),
+            for (final action in widget.actions ?? const <Widget>[]) _round(action),
+          ]),
+        )),
+        // In a browser the map is a page element that would take the touches meant for what is drawn over it.
+        Align(alignment: Alignment.bottomCenter, child: PointerInterceptor(child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.62, maxWidth: 640),
+          child: Material(
+            color: scheme.surface,
+            elevation: 8,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+            child: SafeArea(top: false, child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+                Center(child: Container(width: 36, height: 4, margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2)))),
+                if (ride != null) ..._ridePanel(ride)
+                else if (search != null) ..._searchPanel(search)
+                else if (priced) ..._pricePanel()
+                else ..._wherePanel(),
+                if (_message != null) Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(_message!, style: TextStyle(color: scheme.error)),
                 ),
-            ] else ...[
-              Card(child: ListTile(
-                leading: const Icon(Icons.route),
-                title: Text('${quote.totalXaf} F', style: theme.textTheme.headlineSmall),
-                subtitle: Text('${(quote.distanceMetres / 1000).toStringAsFixed(1).replaceAll('.', ',')} km par la route · '
-                    '${quote.mode == 'vip' ? 'VIP' : '${quote.passengerCount} place(s) partagée(s)'}'),
-              )),
-              const SizedBox(height: 8),
-              FilledButton.icon(onPressed: _busy ? null : _order, icon: const Icon(Icons.local_taxi), label: const Text('Commander')),
-            ],
-          ] else if (ride == null && search != null) ...[
-            Card(child: ListTile(
-              leading: search.state == 'searching' ? const CircularProgressIndicator() : const Icon(Icons.search_off),
-              title: Text(switch (search.state) {
-                'searching' => 'Recherche d’un chauffeur proche…',
-                'expired' => 'Aucun chauffeur disponible pour l’instant.',
-                _ => 'Recherche annulée.',
-              }),
-            )),
-            const SizedBox(height: 8),
-            if (search.state == 'searching') ...[
-              OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
-              TextButton(onPressed: _busy ? null : _cancel, child: const Text('Annuler la recherche')),
-            ] else
-              FilledButton(onPressed: _restart, child: const Text('Nouvelle course')),
-          ] else if (ride != null) ...[
-            Card(child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(rideStateLabel(ride.state), style: theme.textTheme.titleMedium),
-                if (ride.driverPosition != null) const Text('Le repère bleu montre ton chauffeur, mis à jour toutes les quelques secondes.'),
-                const SizedBox(height: 8),
-                Text('Prix : ${ride.priceXaf} F'),
-                if (ride.boardingCode != null && {'confirmed', 'driver_arrived'}.contains(ride.state)) ...[
-                  const SizedBox(height: 8),
-                  Text('Code à donner au chauffeur à la montée :'),
-                  SelectableText(ride.boardingCode!, style: theme.textTheme.displaySmall),
-                ],
-                if (ride.refundXaf != null) Text('Remboursé : ${ride.refundXaf} F'),
               ]),
             )),
-            const SizedBox(height: 8),
-            if (ride.state == 'awaiting_payment')
-              FilledButton.icon(onPressed: _busy ? null : () => _pay(ride), icon: const Icon(Icons.payments),
-                  label: Text('Payer ${ride.priceXaf} F')),
-            if (ride.active) OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
-            if (ride.active && ride.state != 'boarded')
-              TextButton(onPressed: _busy ? null : _cancel, child: const Text('Annuler la course (remboursée)')),
-            if (!ride.active) FilledButton(onPressed: _restart, child: const Text('Nouvelle course')),
-          ],
-          if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
-          if (_message != null) Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(_message!, style: TextStyle(color: theme.colorScheme.error)),
           ),
-        ],
+        ))),
+      ]),
+    );
+  }
+
+  Widget _round(Widget child) => Padding(
+    padding: const EdgeInsets.only(left: 8),
+    child: PointerInterceptor(child: Material(color: Theme.of(context).colorScheme.surface, shape: const CircleBorder(),
+        elevation: 3, child: child)),
+  );
+
+  /// 1. Where to: the pickup is this phone's position (changeable), one search field, the recent places.
+  List<Widget> _wherePanel() {
+    final theme = Theme.of(context);
+    final editingOrigin = _active == _Field.origin;
+    return [
+      Text(editingOrigin ? 'D’où pars-tu ?' : 'Où vas-tu ?', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 12),
+      TextField(
+        key: ValueKey(_active),
+        controller: editingOrigin ? _originText : _destinationText,
+        enabled: !_busy,
+        onChanged: (text) => _typed(_active, text),
+        decoration: InputDecoration(
+          hintText: 'Chercher un lieu',
+          prefixIcon: const Icon(Icons.search),
+          filled: true,
+          fillColor: theme.colorScheme.surfaceContainerHigh,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+          suffixIcon: editingOrigin
+              ? IconButton(tooltip: 'Ma position', icon: const Icon(Icons.my_location), onPressed: _busy ? null : _here)
+              : null,
+        ),
+      ),
+      for (final place in _suggestions)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.location_on_outlined),
+          title: Text(place.mainText),
+          subtitle: place.secondaryText.isEmpty ? null : Text(place.secondaryText),
+          onTap: _busy ? null : () => _choose(place),
+        ),
+      if (_suggestions.isEmpty && !editingOrigin)
+        for (final recent in _recents)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.history),
+            title: Text(recent.label),
+            onTap: _busy ? null : () { if (_set(_Field.destination, recent.point, recent.label)) _prices(); },
+          ),
+      const SizedBox(height: 8),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        leading: Icon(Icons.trip_origin, color: theme.colorScheme.onSurface),
+        title: Text(editingOrigin
+            ? 'Choisis le départ, ou touche la carte'
+            : 'Départ : ${_origin == null ? 'à choisir' : _originText.text}'),
+        trailing: editingOrigin ? null : TextButton(
+            onPressed: _busy ? null : () => setState(() { _active = _Field.origin; _suggestions = const []; }),
+            child: const Text('Changer')),
+      ),
+      if (_busy) const LinearProgressIndicator(),
+    ];
+  }
+
+  /// 2. The two prices side by side, the number of people, one order button.
+  List<Widget> _pricePanel() {
+    final theme = Theme.of(context);
+    final shared = _quotes['shared'], vip = _quotes['vip'], chosen = _quotes[_mode];
+    final km = (shared ?? vip)?.distanceMetres;
+    return [
+      Text('${_originText.text} → ${_destinationText.text}${km == null ? '' : ' · ${(km / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'}',
+          maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: _option('shared', 'Partagé', shared == null ? null : '${shared.totalXaf} F',
+            _people == 1 ? 'une place' : '$_people places', Icons.groups_outlined)),
+        const SizedBox(width: 10),
+        Expanded(child: _option('vip', 'VIP', vip == null ? null : '${vip.totalXaf} F', 'voiture entière', Icons.star_outline)),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: Text('Personnes', style: theme.textTheme.bodyLarge)),
+        IconButton(tooltip: 'Moins', onPressed: _busy || _people <= 1 ? null : () => _changePeople(_people - 1),
+            icon: const Icon(Icons.remove_circle_outline)),
+        Text('$_people', style: theme.textTheme.titleMedium),
+        IconButton(tooltip: 'Plus', onPressed: _busy || _people >= 5 ? null : () => _changePeople(_people + 1),
+            icon: const Icon(Icons.add_circle_outline)),
+      ]),
+      const SizedBox(height: 8),
+      FilledButton(
+        onPressed: _busy || chosen == null ? null : _order,
+        child: _busy && chosen == null
+            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
+            : Text(chosen == null ? 'Commander' : 'Commander · ${chosen.totalXaf} F'),
+      ),
+    ];
+  }
+
+  Widget _option(String mode, String title, String? price, String detail, IconData icon) {
+    final theme = Theme.of(context);
+    final on = _mode == mode;
+    return Semantics(
+      selected: on,
+      button: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => setState(() => _mode = mode),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: on ? theme.colorScheme.primary : theme.colorScheme.outlineVariant, width: on ? 2 : 1),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [Icon(icon, size: 20), const SizedBox(width: 6), Text(title, style: theme.textTheme.titleMedium)]),
+            const SizedBox(height: 6),
+            Text(price ?? '…', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text(detail, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ]),
+        ),
       ),
     );
   }
 
-  List<Widget> _suggestionTiles() => [
-    for (final place in _suggestions)
-      ListTile(
-        dense: true,
-        leading: const Icon(Icons.location_on_outlined),
-        title: Text(place.mainText),
-        subtitle: place.secondaryText.isEmpty ? null : Text(place.secondaryText),
-        onTap: _busy ? null : () => _choose(place),
-      ),
-  ];
+  /// 3a. The search for a driver.
+  List<Widget> _searchPanel(RideSearchView search) {
+    final theme = Theme.of(context);
+    final searching = search.state == 'searching';
+    return [
+      Row(children: [
+        if (searching) const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 3))
+        else const Icon(Icons.search_off),
+        const SizedBox(width: 14),
+        Expanded(child: Text(switch (search.state) {
+          'searching' => 'Recherche d’un chauffeur proche…',
+          'expired' => 'Aucun chauffeur disponible pour l’instant.',
+          _ => 'Recherche annulée.',
+        }, style: theme.textTheme.titleMedium)),
+      ]),
+      const SizedBox(height: 16),
+      if (searching)
+        OutlinedButton(onPressed: _busy ? null : _cancel, child: const Text('Annuler'))
+      else
+        FilledButton(onPressed: _restart, child: const Text('Nouvelle course')),
+    ];
+  }
+
+  /// 3b. The ride: pay, then who is coming and the code, in the same panel.
+  List<Widget> _ridePanel(CityRideView ride) {
+    final theme = Theme.of(context);
+    final card = ride.driver;
+    return [
+      Text(rideStateLabel(ride.state), style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+      if (card != null) ...[
+        const SizedBox(height: 12),
+        Row(children: [
+          CircleAvatar(backgroundColor: theme.colorScheme.surfaceContainerHigh, foregroundColor: theme.colorScheme.onSurface,
+              child: const Icon(Icons.person_outline)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text([card.firstName, card.vehicle].whereType<String>().join(' · '), style: theme.textTheme.titleMedium),
+            if (card.plate != null || card.color != null)
+              Text([card.color, card.plate].whereType<String>().join(' · '),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ])),
+        ]),
+      ],
+      if (ride.boardingCode != null && {'confirmed', 'driver_arrived'}.contains(ride.state)) ...[
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(14)),
+          child: Column(children: [
+            Text('Ton code à donner au chauffeur', style: theme.textTheme.bodySmall),
+            SelectableText(ride.boardingCode!, style: theme.textTheme.headlineMedium?.copyWith(letterSpacing: 6, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      ],
+      const SizedBox(height: 8),
+      Text('${ride.priceXaf} F${ride.refundXaf != null ? ' · remboursé : ${ride.refundXaf} F' : ''}',
+          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      const SizedBox(height: 12),
+      if (ride.state == 'awaiting_payment')
+        FilledButton(onPressed: _busy ? null : () => _pay(ride), child: Text('Payer ${ride.priceXaf} F')),
+      if (ride.active && ride.state != 'boarded')
+        TextButton(onPressed: _busy ? null : _cancel, child: const Text('Annuler la course')),
+      if (!ride.active) FilledButton(onPressed: _restart, child: const Text('Nouvelle course')),
+    ];
+  }
 }

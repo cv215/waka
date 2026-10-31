@@ -143,6 +143,16 @@ public final class PersistentProfileService {
                 gate, sql(clock.instant())));
     }
 
+    /**
+     * The account's name inside the caller's transaction (same database), or null without one: the client of a paid
+     * ride sees his driver's first name. Never logged.
+     */
+    public String displayNameLocked(UUID account) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+        ProfileRow row = profile(account);
+        return row == null ? null : decryptName(account, row);
+    }
+
     private ProfileRow profile(UUID account) {
         var rows = jdbc.query("SELECT version,key_id,display_cipher,updated_at FROM identity_profile WHERE gate_hash=? AND account_id=? FOR UPDATE",
                 (rs, n) -> new ProfileRow(rs.getLong("version"), rs.getString("key_id"),
