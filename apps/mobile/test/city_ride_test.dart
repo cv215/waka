@@ -209,6 +209,10 @@ void main() {
     expect(find.text('370 F'), findsOneWidget);
   });
 
+  test('une réponse illisible demande de recharger, pas de vérifier le trajet', () {
+    expect(rideMessage(PhotoFailure.invalidResponse), contains('recharge la page'));
+  });
+
   testWidgets('une course en cours est retrouvée à l’ouverture, avec le chauffeur sur la carte', (tester) async {
     await _open(tester, before: (server) { server.inProgress = true; server.rideState = 'confirmed'; });
     expect(find.text('Course payée : le chauffeur arrive.'), findsOneWidget);
