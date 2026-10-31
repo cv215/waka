@@ -106,7 +106,25 @@ def home_addresses():
                   (a.startswith('172.') and 16 <= int(a.split('.')[1]) <= 31))
 
 
+def serve_admin():
+    """The admin web on this computer only (127.0.0.1:8091), never on the home network."""
+    global ROOT
+    ROOT = Path(__file__).resolve().parent.parent / 'apps' / 'admin' / 'build' / 'web'
+    if not (ROOT / 'index.html').exists():
+        sys.exit('Administration absente : construire apps/admin avec WAKA_API_BASE_URL=http://127.0.0.1:8091.')
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 8091), Handler)
+    print('Administration WAKA prete sur ce poste seulement : http://127.0.0.1:8091')
+    print('Arreter avec Ctrl+C.')
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--admin']:
+        serve_admin()
+        sys.exit(0)
     if not (ROOT / 'index.html').exists():
         sys.exit('Version web absente : construire apps/mobile d abord (voir en tete de ce fichier).')
     server = http.server.ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
