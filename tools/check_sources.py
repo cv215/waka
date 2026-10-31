@@ -39,7 +39,9 @@ def check():
             raise ValueError("Fichier source anormalement volumineux")
         manifest[relative] = hashlib.sha256(raw).hexdigest()
         if path.suffix == ".png":
-            if not re.fullmatch(r"apps/mobile/android/app/src/main/res/mipmap-(?:mdpi|hdpi|xhdpi|xxhdpi|xxxhdpi)/ic_launcher.png", relative):
+            if not re.fullmatch(r"apps/mobile/android/app/src/main/res/mipmap-(?:mdpi|hdpi|xhdpi|xxhdpi|xxxhdpi)/ic_launcher.png"
+                                r"|apps/mobile/web/favicon.png"
+                                r"|apps/mobile/web/icons/(?:Icon-192|Icon-512|Icon-maskable-512|apple-touch-icon).png", relative):
                 raise ValueError("Image non qualifiee dans les sources")
             continue  # Seules les cinq icones statiques du generateur Flutter sont admises.
         body = raw.decode("utf-8-sig")

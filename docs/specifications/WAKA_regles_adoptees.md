@@ -359,3 +359,14 @@ Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R
 - **Tournée affichée** (jaune) : position → arrêts → direction. Les arrêts vont chaque fois au plus proche (à vol d'oiseau), une arrivée toujours après le départ du même client. Elle est recalculée quand un client est accepté, monte, descend ou annule, et au plus toutes les 5 minutes sinon (un appel Google par recalcul, dans le plafond journalier).
 - **Démarrer** : la carte suit la voiture et la position est envoyée toutes les 5 secondes. « Tout le trajet · Google Maps » ouvre Google Maps avec tous les arrêts dans l'ordre ; Waze, qui ne prend qu'une destination, ouvre l'arrêt suivant. Toujours gratuit.
 - **Coût** : les durées de route sont gardées 5 minutes (points arrondis à environ 100 m), pour que les rafraîchissements de l'écran du client ne consomment pas d'appels Google.
+
+## R16 — Refonte de l'application : marque, thèmes, inscription, double profil chauffeur (31 octobre 2026)
+
+**Décisions du fondateur.**
+- **Refonte par étapes**, chacune montrée en maquette puis validée avant d'être codée : 1 inscription, 2 carte pour commander, 3 navigation en bas (Course, Voyages, Activité, Compte), 4 devenir chauffeur et bascule, 5 écran chauffeur, 6 style commun.
+- **Logo** : le W dessiné comme une route, avec les pointillés du milieu de la chaussée, un point plein au départ et un rond à l'arrivée. Fichiers : `docs/marque/`, générés par `tools/generate_brand_assets.py`.
+- **Trois thèmes** : **clair noir et blanc (par défaut)**, sombre, et Cameroun (vert, rouge, jaune). Le choix se fait dans le compte, rubrique Apparence, et reste enregistré sur l'appareil.
+- **Inscription** (étape 1, épurée) : numéro, puis code (vérifié dès le 6e chiffre, sans bouton), puis **nom complet obligatoire** (prénom et nom), puis directement la carte. Un client déjà inscrit arrive tout de suite sur la carte.
+- **Chauffeur taxi et particulier** : une même personne peut avoir **deux dossiers approuvés au plus, un taxi et un particulier**, et basculer de l'un à l'autre selon le véhicule utilisé (à réaliser à l'étape 4 ; aujourd'hui un compte n'a qu'un dossier).
+
+**Précision de Claude** : « deux au plus » est compris comme un taxi et un particulier, jamais deux du même type ; à confirmer par le fondateur avant l'étape 4.
