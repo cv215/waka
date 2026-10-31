@@ -550,6 +550,13 @@ class AdmissionReviewMySqlVerificationTest {
         assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED));
         var p1 = rides.proposals(driver.token, client).getFirst();
         assertEquals(120, p1.detourSeconds());
+        var shapes = rides.proposalPaths(driver.token, client, p1.proposalId());
+        assertNotNull(shapes.normal(), "green: his own route to his direction");
+        assertNotNull(shapes.client(), "blue: the client's trip");
+        assertNotNull(shapes.combined(), "yellow: his route with this client");
+        assertSame(shapes, rides.proposalPaths(driver.token, client, p1.proposalId()), "asked once, then reused");
+        assertEquals(com.waka.mobility.ride.RideException.Code.NOT_FOUND, assertThrows(com.waka.mobility.ride.RideException.class,
+                () -> rides.proposalPaths(rider.token, client, p1.proposalId())).code(), "only the driver it was sent to");
         var r1 = rides.respond(driver.token, client, p1.proposalId(), true);
         assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED), "a second stranger on the way, the car still has seats");
         var r2 = rides.respond(driver.token, client, rides.proposals(driver.token, client).getFirst().proposalId(), true);

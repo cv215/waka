@@ -704,6 +704,13 @@ Une proposition part au chauffeur recevable le plus proche **en temps de route**
 - **Propositions** (`GET /api/v1/driver/proposals`) : chacune ajoute `detourSeconds`. C'est le détour que ce client ajoute à la direction du chauffeur, de 0 à 300 secondes ; il vaut 0 pour un chauffeur sans direction.
 - **Avec une direction** : le chauffeur ne reçoit que des demandes partagées. Il peut en accepter plusieurs tant que les places et le détour total (5 minutes depuis le premier client) le permettent. Une acceptation qui ne tient plus répond 409 `CAR_BUSY`.
 - **`GET /api/v1/driver/rides`** : les courses que le chauffeur porte en ce moment, 10 au plus, les plus anciennes d'abord.
+- **`GET /api/v1/proposals/{id}/paths`** : les tracés d'une proposition, réservés au chauffeur qui l'a reçue, pour l'affichage seulement. Chacun est un polyligne encodé au format Google, en forme simplifiée (« overview ») :
+  - `normal` : le trajet du chauffeur jusqu'à sa direction, ou `null` sans direction ;
+  - `client` : le trajet du client ;
+  - `combined` : le trajet du chauffeur avec ce client.
+
+  Le serveur interroge Google au plus une fois par proposition (3 appels, comptés dans le plafond journalier), puis réutilise les tracés.
+- **Navigation** : l'application ouvre Google Maps ou Waze avec le point à rejoindre déjà rempli. C'est gratuit, et WAKA ne fait aucun appel de navigation.
 
 ### K36 — Suivre le chauffeur et retrouver sa course (R13)
 

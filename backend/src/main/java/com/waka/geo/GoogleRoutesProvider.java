@@ -9,6 +9,8 @@ import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -21,7 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
  * any route means no road exists; anything else unreadable is "unavailable", never a guess from the points.
  * The key comes from the environment, never from Git; points are never logged.
  */
-public final class GoogleRoutesProvider implements RouteDistanceProvider, PickupTimeProvider {
+public final class GoogleRoutesProvider implements RouteDistanceProvider, PickupTimeProvider, RoutePathProvider {
     public static final URI GOOGLE = URI.create("https://routes.googleapis.com");
     private static final int MAX_RESPONSE = 65536;
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -80,20 +82,59 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
         used++;
     }
 
+    /**
+     * The overview shape (few points) of the driving route through the stops, in order: one call whatever the
+     * number of stops (at most 5), counted against the same daily allowance. Field mask: the polyline only.
+     */
+    @Override
+    public String encodedPath(List<GeoPoint> stops) throws RouteUnavailableException {
+        if (stops == null || stops.size() < 2 || stops.size() > 5 || stops.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException("INVALID_POINT");
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("origin", waypoint(stops.getFirst()));
+        body.put("destination", waypoint(stops.getLast()));
+        if (stops.size() > 2) body.put("intermediates", stops.subList(1, stops.size() - 1).stream().map(GoogleRoutesProvider::waypoint).toList());
+        body.put("travelMode", "DRIVE");
+        body.put("routingPreference", "TRAFFIC_UNAWARE");
+        body.put("polylineQuality", "OVERVIEW");
+        body.put("polylineEncoding", "ENCODED_POLYLINE");
+        JsonNode first = firstRoute(body, "routes.polyline.encodedPolyline");
+        if (first == null) return null;
+        JsonNode line = first.path("polyline").get("encodedPolyline");
+        if (line == null || !line.isString() || !Polylines.valid(line.asString())) throw new RouteUnavailableException();
+        return line.asString();
+    }
+
     private Route route(GeoPoint from, GeoPoint to) throws RouteUnavailableException {
         if (from == null || to == null) throw new IllegalArgumentException("INVALID_POINT");
-        spend();
         Map<String, Object> body = Map.of(
                 "origin", waypoint(from),
                 "destination", waypoint(to),
                 "travelMode", "DRIVE",
                 "routingPreference", "TRAFFIC_UNAWARE",
                 "units", "METRIC");
+        JsonNode first = firstRoute(body, "routes.distanceMeters,routes.duration");
+        if (first == null) return null;
+        JsonNode metres = first.get("distanceMeters"), duration = first.get("duration");
+        // Google leaves out a zero distance (same point); the duration is always present.
+        if ((metres != null && (!metres.isIntegralNumber() || metres.asLong() < 0 || metres.asLong() > 5_000_000))
+                || duration == null || !duration.isString() || !duration.asString().matches("[0-9]{1,7}(\\.[0-9]{1,9})?s")) {
+            throw new RouteUnavailableException();
+        }
+        String text = duration.asString();
+        long seconds = new BigDecimal(text.substring(0, text.length() - 1)).setScale(0, java.math.RoundingMode.CEILING).longValueExact();
+        return new Route(metres == null ? 0 : metres.asLong(), seconds);
+    }
+
+    /** One call: the first route of the answer, or null when Google finds none ({} or an empty list). */
+    private JsonNode firstRoute(Map<String, Object> body, String fieldMask) throws RouteUnavailableException {
+        spend();
         JsonNode json;
         try {
             HttpRequest request = HttpRequest.newBuilder(base.resolve("/directions/v2:computeRoutes")).timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/json").header("Content-Type", "application/json")
-                    .header("X-Goog-Api-Key", key).header("X-Goog-FieldMask", "routes.distanceMeters,routes.duration")
+                    .header("X-Goog-Api-Key", key).header("X-Goog-FieldMask", fieldMask)
                     .POST(HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body))).build();
             HttpResponse<java.io.InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             byte[] raw;
@@ -110,16 +151,7 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
         JsonNode routes = json.get("routes");
         if (routes == null || (routes.isArray() && routes.isEmpty())) return null; // Google answers {} when no road joins the points
         if (!routes.isArray()) throw new RouteUnavailableException();
-        JsonNode first = routes.get(0);
-        JsonNode metres = first.get("distanceMeters"), duration = first.get("duration");
-        // Google leaves out a zero distance (same point); the duration is always present.
-        if ((metres != null && (!metres.isIntegralNumber() || metres.asLong() < 0 || metres.asLong() > 5_000_000))
-                || duration == null || !duration.isString() || !duration.asString().matches("[0-9]{1,7}(\\.[0-9]{1,9})?s")) {
-            throw new RouteUnavailableException();
-        }
-        String text = duration.asString();
-        long seconds = new BigDecimal(text.substring(0, text.length() - 1)).setScale(0, java.math.RoundingMode.CEILING).longValueExact();
-        return new Route(metres == null ? 0 : metres.asLong(), seconds);
+        return routes.get(0);
     }
 
     private static Map<String, Object> waypoint(GeoPoint point) {

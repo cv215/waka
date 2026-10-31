@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/presentation/waka_page.dart';
 import '../../identity/application/login_flow.dart';
@@ -39,15 +40,26 @@ String driverStateLabel(String state) => switch (state) {
 
 enum _Spot { here, there }
 
+/// Opens a navigation link in the phone's maps app (Google Maps or Waze); tests replace it.
+typedef OpenLink = Future<bool> Function(Uri link);
+
+Future<bool> openExternally(Uri link) => launchUrl(link, mode: LaunchMode.externalApplication);
+
+/// Turn-by-turn guidance by the maps app the driver already has, free: the destination is filled in.
+Uri googleMapsNavigation(RidePoint to) => Uri.https('www.google.com', '/maps/dir/', {
+  'api': '1', 'destination': '${to.latitude},${to.longitude}', 'travelmode': 'driving', 'dir_action': 'navigate'});
+Uri wazeNavigation(RidePoint to) => Uri.https('waze.com', '/ul', {'ll': '${to.latitude},${to.longitude}', 'navigate': 'yes'});
+
 /// « Mode chauffeur » (R13, R15): be online with a fresh position; with a direction, take several shared clients on the
 /// way; answer proposals within 30 seconds, then take each ride through its steps. The server alone decides who
 /// receives a proposal, the price, the driver's share and the detour allowed.
 class DriverRidePage extends StatefulWidget {
   const DriverRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
-      this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20)});
+      this.openLink = openExternally, this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20)});
   final LoginFlow login;
   final RideMapBuilder mapBuilder;
   final ReadPosition readPosition;
+  final OpenLink openLink;
   /// Null in tests: the driver refreshes by hand.
   final Duration? pollEvery, presenceEvery;
   @override
@@ -67,6 +79,9 @@ class _DriverRidePageState extends State<DriverRidePage> {
   RidePoint? _position, _destination;
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
+  /// Route shapes per proposal, asked once each (the screen refreshes every few seconds).
+  final Map<String, ProposalPathsView> _shapes = {};
+  final Set<String> _askedShapes = {};
   /// Rides carried now, plus the ones that just ended until the driver closes them.
   List<CityRideView> _rides = const [];
   String? _message;
@@ -223,8 +238,54 @@ class _DriverRidePageState extends State<DriverRidePage> {
     if (_canReceive) {
       final list = await _gateway.driverProposals(session, client);
       if (mounted) setState(() => _proposals = list);
+      final first = list.firstOrNull;
+      if (first != null && _askedShapes.add(first.proposalId)) {
+        try {
+          final shapes = await _gateway.proposalPaths(session, client, first.proposalId);
+          if (mounted) setState(() => _shapes[first.proposalId] = shapes);
+        } on PhotoProblem {
+          // Without shapes the proposal is still shown with its pins; the routes are only an aid.
+        }
+      }
     }
   }
+
+  List<RidePath>? _drawn(DriverProposalView? offer) {
+    final shapes = offer == null ? null : _shapes[offer.proposalId];
+    if (shapes == null) return null;
+    return [
+      if (shapes.normal != null) RidePath.normal(shapes.normal!),
+      if (shapes.combined != null) RidePath.combined(shapes.combined!),
+      if (shapes.client != null) RidePath.client(shapes.client!),
+    ];
+  }
+
+  Future<void> _navigate(Uri link) async {
+    final opened = await widget.openLink(link);
+    if (!opened && mounted) setState(() => _message = 'Impossible d’ouvrir l’application de navigation sur ce téléphone.');
+  }
+
+  Widget _legend(ThemeData theme, bool withDirection) => Padding(
+    padding: const EdgeInsets.only(top: 6),
+    child: Wrap(spacing: 12, runSpacing: 4, children: [
+      if (withDirection) _swatch(const Color(0xFF2E7D32), 'Ton trajet normal'),
+      _swatch(const Color(0xFF1565C0), 'Trajet du client'),
+      _swatch(const Color(0xFFF9A825), withDirection ? 'Ton nouveau trajet' : 'Ton trajet avec le client'),
+    ]),
+  );
+
+  Widget _swatch(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+    Container(width: 18, height: 6, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
+    const SizedBox(width: 6),
+    Text(label),
+  ]);
+
+  Widget _navigation(String label, RidePoint to) => Row(children: [
+    Expanded(child: OutlinedButton.icon(onPressed: () => _navigate(googleMapsNavigation(to)), icon: const Icon(Icons.navigation_outlined),
+        label: Text('$label · Google Maps'))),
+    const SizedBox(width: 8),
+    OutlinedButton(onPressed: () => _navigate(wazeNavigation(to)), child: const Text('Waze')),
+  ]);
 
   Future<void> _answer(DriverProposalView proposal, bool accept) => _run(() async {
     final (session, client) = _context();
@@ -299,6 +360,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
       const SizedBox(height: 4),
       Text('Prix : ${ride.priceXaf} F · ta part : ${ride.driverXaf} F'),
       const SizedBox(height: 8),
+      if ({'awaiting_payment', 'confirmed'}.contains(ride.state)) _navigation('Aller au client', ride.pickup),
+      if (ride.state == 'boarded') _navigation('Aller à l’arrivée', ride.dropoff),
       if (ride.state == 'confirmed')
         FilledButton.icon(onPressed: _busy ? null : () => _act(ride, 'arrive'), icon: const Icon(Icons.flag_outlined),
             label: const Text('Je suis arrivé au départ')),
@@ -322,7 +385,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final shown = _rides.where((r) => r.active).firstOrNull;
-    final offer = _proposals.firstOrNull;
+    final offer = _canReceive ? _proposals.firstOrNull : null;
+    final drawn = _drawn(offer);
     return WakaPage(
       title: 'Mode chauffeur',
       child: Column(
@@ -345,9 +409,10 @@ class _DriverRidePageState extends State<DriverRidePage> {
                       }
                       _places = const [];
                     });
-                  }),
+                  }, paths: drawn),
             ),
           ),
+          if (drawn != null && drawn.isNotEmpty) _legend(theme, _destination != null),
           const SizedBox(height: 12),
           SwitchListTile(
             title: Text(_online ? 'En ligne' : 'Hors ligne'),

@@ -1,3 +1,4 @@
+import '../../../core/geo/polyline.dart';
 import 'vehicle_photo_models.dart';
 
 /// R13 (K31, K35): city rides. Distances, prices and states come from the server; the phone only shows them.
@@ -177,6 +178,27 @@ class DriverProposalView {
     try {
       if (value is! List || value.length > 10) throw const FormatException();
       return List.unmodifiable(value.map(parse));
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    }
+  }
+}
+
+/// The three route shapes of a proposal (display only): the driver's own route to his direction (null without one),
+/// the client's trip, and the driver's route with this client.
+class ProposalPathsView {
+  const ProposalPathsView(this.normal, this.client, this.combined);
+  final List<RidePoint>? normal;
+  final List<RidePoint>? client, combined;
+  static ProposalPathsView parse(Object? value) {
+    try {
+      final m = _exact(value, {'normal', 'client', 'combined'});
+      List<RidePoint>? path(Object? v) {
+        if (v == null) return null;
+        if (v is! String) throw const FormatException();
+        return List.unmodifiable(decodePolyline(v).map((p) => RidePoint(p.$1, p.$2)));
+      }
+      return ProposalPathsView(path(m['normal']), path(m['client']), path(m['combined']));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

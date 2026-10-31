@@ -12,6 +12,7 @@ import com.waka.geo.CircleServiceArea;
 import com.waka.geo.GeoPoint;
 import com.waka.geo.PickupTimeProvider;
 import com.waka.geo.RouteDistanceProvider;
+import com.waka.geo.RoutePathProvider;
 import com.waka.identity.admin.AdminCrypto;
 import com.waka.identity.admin.AdminException;
 import com.waka.identity.admin.AdminFunction;
@@ -213,7 +214,8 @@ public class LocalAppAssembly {
         GoogleRoutesProvider google = routes();
         PickupTimeProvider pickup = google != null ? google
                 : (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
-        return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup, profileCrypto("ride"), clock);
+        return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup,
+                google != null ? google : RoutePathProvider.STRAIGHT, profileCrypto("ride"), clock);
     }
 
     /** Address search (K35) around the launch city when the Google server key is given; otherwise none (503). */

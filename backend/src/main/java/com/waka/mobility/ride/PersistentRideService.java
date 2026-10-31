@@ -4,6 +4,7 @@ import com.waka.drivers.DriverAccessService;
 import com.waka.geo.GeoPoint;
 import com.waka.geo.PickupTimeProvider;
 import com.waka.geo.RouteDistanceProvider;
+import com.waka.geo.RoutePathProvider;
 import com.waka.identity.admission.PersistentDriverApplicationService;
 import com.waka.identity.profile.ProfileCrypto;
 import com.waka.identity.session.PersistentSessionService;
@@ -24,6 +25,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -62,6 +64,11 @@ public final class PersistentRideService {
             Instant expiresAt, GeoPoint pickup, GeoPoint dropoff, int detourSeconds) {
         @Override public String toString() { return "ProposalView[REDACTED]"; }
     }
+    /**
+     * Shapes drawn on the driver's map for a proposal (encoded polylines, display only): {@code normal} his route to his
+     * direction (null without one), {@code client} the client's trip, {@code combined} his route with this client.
+     */
+    public record ProposalPaths(String normal, String client, String combined) { }
     /** {@code destination}: the direction the driver gave (R15), or null. */
     public record PresenceView(boolean online, Instant positionAt, GeoPoint destination) {
         @Override public String toString() { return "PresenceView[REDACTED]"; }
@@ -77,6 +84,11 @@ public final class PersistentRideService {
     private final PersistentQuoteService quotes;
     private final JdbcFareScheduleRepository fares;
     private final PickupTimeProvider pickupTimes;
+    private final RoutePathProvider paths;
+    /** Route shapes are asked once per proposal, then reused on every refresh (the driver's screen polls). */
+    private final Map<String, ProposalPaths> pathCache = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, ProposalPaths> eldest) { return size() > 200; }
+    });
     private final ProfileCrypto crypto;
     private final PricingEngine engine = new PricingEngine();
     private final SecureRandom random = new SecureRandom();
@@ -85,6 +97,13 @@ public final class PersistentRideService {
 
     public PersistentRideService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
             PersistentQuoteService quotes, JdbcFareScheduleRepository fares, PickupTimeProvider pickupTimes, ProfileCrypto crypto, Clock clock) {
+        this(sessions, jdbc, applications, quotes, fares, pickupTimes, RoutePathProvider.STRAIGHT, crypto, clock);
+    }
+
+    public PersistentRideService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
+            PersistentQuoteService quotes, JdbcFareScheduleRepository fares, PickupTimeProvider pickupTimes, RoutePathProvider paths,
+            ProfileCrypto crypto, Clock clock) {
+        this.paths = Objects.requireNonNull(paths);
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
         this.applications = Objects.requireNonNull(applications);
@@ -280,6 +299,42 @@ public final class PersistentRideService {
             }
             return new Out<>(List.copyOf(views), null);
         }));
+    }
+
+    /**
+     * The three route shapes of one of the driver's pending proposals, asked from the maps provider at most once
+     * (three calls), then kept: refreshing the screen never asks again.
+     */
+    public ProposalPaths proposalPaths(char[] token, String client, UUID proposalId) {
+        if (proposalId == null) throw invalid();
+        record Stops(GeoPoint position, GeoPoint destination, GeoPoint pickup, GeoPoint dropoff) { }
+        Stops stops = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            String actor = session.accountId().toString();
+            var rows = jdbc.query("SELECT s.quote_id,s.client_account_id FROM ride_proposal p JOIN ride_search s ON s.gate_hash=p.gate_hash AND s.id=p.search_id "
+                    + "WHERE p.gate_hash=? AND p.id=? AND p.driver_account_id=? AND p.state='sent'",
+                    (rs, n) -> new String[] { rs.getString(1), rs.getString(2) }, gate, proposalId.toString(), actor);
+            if (rows.isEmpty()) return new Out<Stops>(null, RideException.Code.NOT_FOUND);
+            var quote = quotes.forRideLocked(UUID.fromString(rows.getFirst()[1]), UUID.fromString(rows.getFirst()[0]));
+            var car = jdbc.query("SELECT account_id,key_id,position_cipher,destination_cipher FROM driver_presence WHERE gate_hash=? AND account_id=?",
+                    (rs, n) -> candidate(rs.getString(1), rs.getString(2), rs.getBytes(3), rs.getBytes(4)), gate, actor)
+                    .stream().filter(Objects::nonNull).findFirst().orElse(null);
+            if (car == null || car.position() == null) return new Out<Stops>(null, RideException.Code.NOT_FOUND);
+            return new Out<>(new Stops(car.position(), car.destination(), quote.origin(), quote.destination()), null);
+        }));
+        ProposalPaths cached = pathCache.get(proposalId.toString());
+        if (cached != null) return cached;
+        try {
+            String trip = paths.encodedPath(List.of(stops.pickup(), stops.dropoff()));
+            String normal = stops.destination() == null ? null : paths.encodedPath(List.of(stops.position(), stops.destination()));
+            String combined = paths.encodedPath(stops.destination() == null
+                    ? List.of(stops.position(), stops.pickup(), stops.dropoff())
+                    : List.of(stops.position(), stops.pickup(), stops.dropoff(), stops.destination()));
+            ProposalPaths found = new ProposalPaths(normal, trip, combined);
+            pathCache.put(proposalId.toString(), found);
+            return found;
+        } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException unavailable) {
+            throw new RideException(RideException.Code.SERVICE_UNAVAILABLE);
+        }
     }
 
     /**
