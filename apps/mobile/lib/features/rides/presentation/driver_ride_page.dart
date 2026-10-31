@@ -71,8 +71,12 @@ class DriverRidePage extends StatefulWidget {
 
 class _DriverRidePageState extends State<DriverRidePage> {
   DriverRideGateway get _gateway => widget.login.gateway as DriverRideGateway;
-  final _code = TextEditingController();
+  final _code = TextEditingController(), _where = TextEditingController();
   bool _online = false, _busy = false, _gpsMissing = false;
+  /// Where the driver says he is, by name (K35), when there is no GPS or to correct it.
+  List<PlaceSuggestion> _places = const [];
+  String _placeSession = randomLoginId();
+  Timer? _typing;
   RidePoint? _position;
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
@@ -99,6 +103,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
     _poll?.cancel();
     _presence?.cancel();
     _code.dispose();
+    _where.dispose();
+    _typing?.cancel();
     if (_online && _ride == null) {
       // Leaving the screen ends the availability: nobody is proposed a driver who is not looking.
       final session = widget.login.session, client = widget.login.clientInstance;
@@ -150,6 +156,31 @@ class _DriverRidePageState extends State<DriverRidePage> {
       if (!online) _proposals = const [];
     });
   }
+
+  void _typedPlace(String text) {
+    _typing?.cancel();
+    if (text.trim().length < 3) {
+      setState(() => _places = const []);
+      return;
+    }
+    _typing = Timer(const Duration(milliseconds: 400), () => _run(() async {
+      final (session, client) = _context();
+      final list = await (widget.login.gateway as RideGateway).placeSuggestions(session, client, text.trim(), _placeSession);
+      if (mounted) setState(() => _places = list);
+    }, quiet: true));
+  }
+
+  Future<void> _choosePlace(PlaceSuggestion place) => _run(() async {
+    final (session, client) = _context();
+    final point = await (widget.login.gateway as RideGateway).placeLocation(session, client, place.placeId, _placeSession);
+    _placeSession = randomLoginId();
+    if (!mounted) return;
+    setState(() {
+      _position = point;
+      _places = const [];
+      _where.text = place.mainText;
+    });
+  });
 
   Future<void> _goOnline() => _run(() async {
     await _sendPresence(true);
@@ -229,7 +260,11 @@ class _DriverRidePageState extends State<DriverRidePage> {
               height: 240,
               child: widget.mapBuilder(context, ride?.pickup ?? (_proposals.isEmpty ? _position : _proposals.first.pickup),
                   ride?.dropoff ?? (_proposals.isEmpty ? null : _proposals.first.dropoff),
-                  (point) { if (!_online && ride == null) setState(() => _position = point); }),
+                  (point) {
+                    if (!_online && ride == null) {
+                      setState(() { _position = point; _places = const []; _where.text = 'Point choisi sur la carte'; });
+                    }
+                  }),
             ),
           ),
           const SizedBox(height: 12),
@@ -242,8 +277,29 @@ class _DriverRidePageState extends State<DriverRidePage> {
               value: _online,
               onChanged: _busy ? null : (on) => on ? _goOnline() : _goOffline(),
             ),
-            if (!_online && _gpsMissing)
-              const Text('Sans GPS, touche la carte à l’endroit où tu te trouves avant de passer en ligne.'),
+            if (!_online && widget.login.gateway is RideGateway) ...[
+              TextField(
+                controller: _where,
+                enabled: !_busy,
+                onChanged: _typedPlace,
+                decoration: InputDecoration(
+                  labelText: 'Où es-tu ?',
+                  helperText: 'Écris un lieu (quartier, carrefour, marché…), ou touche la carte',
+                  prefixIcon: const Icon(Icons.my_location),
+                  suffixIcon: _position == null ? null : const Icon(Icons.check_circle_outline),
+                ),
+              ),
+              for (final place in _places)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.location_on_outlined),
+                  title: Text(place.mainText),
+                  subtitle: place.secondaryText.isEmpty ? null : Text(place.secondaryText),
+                  onTap: _busy ? null : () => _choosePlace(place),
+                ),
+            ],
+            if (!_online && _gpsMissing && _position == null)
+              const Text('Sans GPS, écris le lieu où tu te trouves ou touche la carte avant de passer en ligne.'),
             if (_online) ...[
               OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
               if (_proposals.isEmpty)
