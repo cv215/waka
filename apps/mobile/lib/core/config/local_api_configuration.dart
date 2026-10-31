@@ -27,14 +27,17 @@ class LocalApiConfiguration {
     bool homeNetwork = false,
   }) {
     final uri = Uri.tryParse(baseUrl);
+    // Test link (web preview only): Cloudflare's temporary https address to this computer.
+    final testLink = homeNetwork && uri != null && uri.scheme == 'https' && isTestLinkHost(uri.host);
     final valid =
         !releaseMode &&
         environment == 'dev' &&
         uri != null &&
-        uri.scheme == 'http' &&
-        (const {'10.0.2.2', '127.0.0.1', 'localhost'}.contains(uri.host) ||
-            (homeNetwork && isPrivateNetworkHost(uri.host))) &&
-        uri.hasPort &&
+        ((uri.scheme == 'http' &&
+                (const {'10.0.2.2', '127.0.0.1', 'localhost'}.contains(uri.host) ||
+                    (homeNetwork && isPrivateNetworkHost(uri.host))) &&
+                uri.hasPort) ||
+            testLink) &&
         uri.port > 0 &&
         uri.port <= 65535 &&
         uri.userInfo.isEmpty &&
@@ -44,6 +47,9 @@ class LocalApiConfiguration {
     return LocalApiConfiguration._(valid ? uri : null);
   }
 }
+
+/// One random name under trycloudflare.com (a temporary test link), nothing else.
+bool isTestLinkHost(String host) => RegExp(r'^[a-z0-9]+(-[a-z0-9]+)*\.trycloudflare\.com$').hasMatch(host);
 
 /// IPv4 addresses of a home network (10/8, 172.16/12, 192.168/16) only; never a public address or a name.
 bool isPrivateNetworkHost(String host) {

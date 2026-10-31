@@ -23,6 +23,8 @@ Le serveur reste fermé au réseau : seul le relais est joignable. La session es
 
 **Premier agent de la base locale** : pour approuver des chauffeurs avec l'administration web, ajouter `-FounderAccount <identifiant>` au démarrage. L'identifiant est l'`accountId` renvoyé par `/api/v1/me` pour votre compte. Cela ne marche qu'une fois par base : les agents suivants sont nommés depuis l'administration (gouvernance).
 
+**Lien de test hors du Wi-Fi** : avec le serveur et l'aperçu web démarrés, lancez `tools\start-test-link.ps1`. Il crée une adresse temporaire `https://…trycloudflare.com`, gratuite et sans compte, vers l'aperçu web. Ne la donnez qu'à vos testeurs, et arrêtez-la avec Ctrl+C après l'essai. Il faut l'outil `cloudflared` 2026.10.1 de Cloudflare dans `%LOCALAPPDATA%\WAKA\tools\cloudflared-2026.10.1\cloudflared.exe` (empreinte SHA-256 vérifiée : `4d2490e7…dc891b6`). L'application accepte cette adresse seulement en https, sous trycloudflare.com, et seulement dans la version de test.
+
 **Administration web sur ce poste** : construire `apps/admin` avec `flutter build web --release --dart-define=WAKA_API_BASE_URL=http://127.0.0.1:8091`, puis lancer `tools\serve-web-preview.py --admin`. Elle s'ouvre sur http://127.0.0.1:8091, sur ce poste seulement, jamais sur le Wi-Fi. Après le code SMS, la page affiche l'identifiant de compte à transmettre à un agent « Habilitations ».
 
 **APK de test avec la carte** : `tools\build-android-preview.ps1` construit l'APK pour l'émulateur avec la clé « waka-carte » enregistrée sur ce poste.

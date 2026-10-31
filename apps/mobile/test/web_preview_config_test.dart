@@ -17,6 +17,16 @@ void main() {
     expect(parse('https://192.168.1.29:8090').isConfigured, isFalse);
   });
 
+  test('lien de test : seulement https sous trycloudflare.com, et seulement pour l apercu web', () {
+    expect(parse('https://calm-river-bright-sun.trycloudflare.com').isConfigured, isTrue);
+    expect(parse('http://calm-river.trycloudflare.com').isConfigured, isFalse);
+    expect(parse('https://trycloudflare.com.evil.example').isConfigured, isFalse);
+    expect(parse('https://evil.example').isConfigured, isFalse);
+    expect(parse('https://calm-river.trycloudflare.com/api').isConfigured, isFalse);
+    expect(parse('https://calm-river.trycloudflare.com', home: false).isConfigured, isFalse);
+    expect(parse('https://calm-river.trycloudflare.com', release: true).isConfigured, isFalse);
+  });
+
   test('hors apercu web ou en version finale, le reseau de la maison reste ferme', () {
     expect(parse('http://192.168.1.29:8090', home: false).isConfigured, isFalse);
     expect(parse('http://192.168.1.29:8090', release: true).isConfigured, isFalse);
