@@ -14,7 +14,7 @@ String driverRideMessage(PhotoFailure failure) => switch (failure) {
   PhotoFailure.denied => 'La session est refusée. Reconnecte-toi.',
   PhotoFailure.driverNotAllowed => 'Seul un chauffeur approuvé, avec un accès actif, peut recevoir des courses.',
   PhotoFailure.expired => 'Cette proposition a expiré.',
-  PhotoFailure.notEditable => 'Une course est déjà en cours avec ta voiture, ou cette étape n’est pas possible maintenant.',
+  PhotoFailure.notEditable => 'Ta voiture n’a plus de place pour ce client, ou cette étape n’est pas possible maintenant.',
   PhotoFailure.notPaid => 'Le client n’a pas encore payé : attends la confirmation du paiement.',
   PhotoFailure.wrongCode => 'Ce code ne correspond pas : demande au client le code affiché sur son téléphone.',
   PhotoFailure.tooEarly => 'Le client peut être déclaré absent seulement après 5 minutes d’attente.',
@@ -37,9 +37,11 @@ String driverStateLabel(String state) => switch (state) {
   _ => state,
 };
 
+enum _Spot { here, there }
 
-/// « Mode chauffeur » (R13): be online with a fresh position, answer proposals within 30 seconds, then take the ride
-/// through its steps. The server alone decides who receives a proposal, the price and the driver's share.
+/// « Mode chauffeur » (R13, R15): be online with a fresh position; with a direction, take several shared clients on the
+/// way; answer proposals within 30 seconds, then take each ride through its steps. The server alone decides who
+/// receives a proposal, the price, the driver's share and the detour allowed.
 class DriverRidePage extends StatefulWidget {
   const DriverRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
       this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20)});
@@ -54,28 +56,31 @@ class DriverRidePage extends StatefulWidget {
 
 class _DriverRidePageState extends State<DriverRidePage> {
   DriverRideGateway get _gateway => widget.login.gateway as DriverRideGateway;
-  final _code = TextEditingController(), _where = TextEditingController();
+  final _where = TextEditingController(), _whereTo = TextEditingController();
+  final Map<String, TextEditingController> _codes = {};
   bool _online = false, _busy = false, _gpsMissing = false;
-  /// Where the driver says he is, by name (K35), when there is no GPS or to correct it.
+  /// Where the driver is and, optionally, where he goes (R15), by name (K35), GPS or the map.
+  _Spot _spot = _Spot.here;
   List<PlaceSuggestion> _places = const [];
   String _placeSession = randomLoginId();
   Timer? _typing;
-  RidePoint? _position;
+  RidePoint? _position, _destination;
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
-  CityRideView? _ride;
+  /// Rides carried now, plus the ones that just ended until the driver closes them.
+  List<CityRideView> _rides = const [];
   String? _message;
   Timer? _poll, _presence;
 
   @override
   void initState() {
     super.initState();
-    // A ride still in progress (the screen or the phone was closed) is found again.
+    // Rides still in progress (the screen or the phone was closed) are found again.
     _run(() async {
       final (session, client) = _context();
-      final ride = await _gateway.activeRide(session, client);
-      if (mounted && ride != null && ride.viewerRole == 'driver') {
-        setState(() => _ride = ride);
+      final rides = await _gateway.driverRides(session, client);
+      if (mounted && rides.isNotEmpty) {
+        setState(() => _rides = rides);
         _startTimers();
       }
     });
@@ -85,10 +90,13 @@ class _DriverRidePageState extends State<DriverRidePage> {
   void dispose() {
     _poll?.cancel();
     _presence?.cancel();
-    _code.dispose();
-    _where.dispose();
     _typing?.cancel();
-    if (_online && _ride == null) {
+    _where.dispose();
+    _whereTo.dispose();
+    for (final c in _codes.values) {
+      c.dispose();
+    }
+    if (_online && !_carrying) {
       // Leaving the screen ends the availability: nobody is proposed a driver who is not looking.
       final session = widget.login.session, client = widget.login.clientInstance;
       if (session != null && client != null) {
@@ -97,6 +105,10 @@ class _DriverRidePageState extends State<DriverRidePage> {
     }
     super.dispose();
   }
+
+  bool get _carrying => _rides.any((r) => r.active);
+  /// R15: a driver with a direction keeps receiving shared clients while he carries others; without one, one ride at a time.
+  bool get _canReceive => _online && (_destination != null || !_carrying);
 
   (LoginSession, String) _context() {
     final session = widget.login.session, client = widget.login.clientInstance;
@@ -117,7 +129,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
     }
   }
 
-  /// Sends the presence with the freshest position available (GPS, else the point touched on the map).
+  /// Sends the presence with the freshest position (GPS, else the place typed or touched) and the direction, if any.
   Future<void> _sendPresence(bool online) async {
     final (session, client) = _context();
     RidePoint? where;
@@ -126,21 +138,22 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _gpsMissing = gps == null;
       where = gps ?? _position;
       if (where == null) {
-        if (mounted) setState(() => _message = 'Ta position est introuvable : touche la carte à l’endroit où tu te trouves.');
+        if (mounted) setState(() => _message = 'Ta position est introuvable : écris où tu es, ou touche la carte.');
         return;
       }
     }
-    final presence = await _gateway.setPresence(session, client, online, where);
+    final presence = await _gateway.setPresence(session, client, online, where, destination: online ? _destination : null);
     if (!mounted) return;
     setState(() {
       _online = presence.online;
-      _position = online ? where : null;
+      _position = online ? where : _position;
       _positionAt = presence.positionAt;
       if (!online) _proposals = const [];
     });
   }
 
-  void _typedPlace(String text) {
+  void _typedPlace(_Spot spot, String text) {
+    _spot = spot;
     _typing?.cancel();
     if (text.trim().length < 3) {
       setState(() => _places = const []);
@@ -149,7 +162,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
     _typing = Timer(const Duration(milliseconds: 400), () => _run(() async {
       final (session, client) = _context();
       final list = await (widget.login.gateway as RideGateway).placeSuggestions(session, client, text.trim(), _placeSession);
-      if (mounted) setState(() => _places = list);
+      if (mounted && spot == _spot) setState(() => _places = list);
     }, quiet: true));
   }
 
@@ -159,9 +172,14 @@ class _DriverRidePageState extends State<DriverRidePage> {
     _placeSession = randomLoginId();
     if (!mounted) return;
     setState(() {
-      _position = point;
+      if (_spot == _Spot.here) {
+        _position = point;
+        _where.text = place.mainText;
+      } else {
+        _destination = point;
+        _whereTo.text = place.mainText;
+      }
       _places = const [];
-      _where.text = place.mainText;
     });
   });
 
@@ -171,7 +189,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
   });
 
   Future<void> _goOffline() => _run(() async {
-    _stopTimers();
+    if (!_carrying) _stopTimers();
     await _sendPresence(false);
   });
 
@@ -192,11 +210,17 @@ class _DriverRidePageState extends State<DriverRidePage> {
 
   Future<void> _refreshNow() async {
     final (session, client) = _context();
-    final ride = _ride;
-    if (ride != null) {
-      final fresh = await _gateway.cityRide(session, client, ride.reservationId);
-      if (mounted) setState(() => _ride = fresh);
-    } else if (_online) {
+    if (_rides.isNotEmpty) {
+      final carried = await _gateway.driverRides(session, client);
+      // Keep the ones that just ended (with their outcome) until the driver closes them.
+      final ended = <CityRideView>[];
+      for (final r in _rides) {
+        if (carried.any((c) => c.reservationId == r.reservationId)) continue;
+        ended.add(r.active ? await _gateway.cityRide(session, client, r.reservationId) : r);
+      }
+      if (mounted) setState(() => _rides = [...carried, ...ended]);
+    }
+    if (_canReceive) {
       final list = await _gateway.driverProposals(session, client);
       if (mounted) setState(() => _proposals = list);
     }
@@ -208,30 +232,97 @@ class _DriverRidePageState extends State<DriverRidePage> {
     if (!mounted) return;
     setState(() {
       _proposals = _proposals.where((p) => p.proposalId != proposal.proposalId).toList();
-      if (ride != null) _ride = ride;
+      if (ride != null) _rides = [..._rides, ride];
     });
   });
 
-  Future<void> _act(String action) => _run(() async {
+  TextEditingController _code(String rideId) => _codes.putIfAbsent(rideId, TextEditingController.new);
+
+  Future<void> _act(CityRideView ride, String action) => _run(() async {
     final (session, client) = _context();
-    final code = action == 'board' ? _code.text.trim() : null;
+    final code = action == 'board' ? _code(ride.reservationId).text.trim() : null;
     if (action == 'board' && !RegExp(r'^[0-9]{6}$').hasMatch(code!)) {
       setState(() => _message = 'Le code du client a 6 chiffres.');
       return;
     }
-    final ride = await _gateway.driverRideAction(session, client, _ride!.reservationId, action, code);
+    final fresh = await _gateway.driverRideAction(session, client, ride.reservationId, action, code);
     if (!mounted) return;
-    setState(() { _ride = ride; if (action == 'board') _code.clear(); });
+    setState(() {
+      _rides = [for (final r in _rides) r.reservationId == fresh.reservationId ? fresh : r];
+      if (action == 'board') _code(ride.reservationId).clear();
+    });
   });
 
-  void _closeRide() => setState(() { _ride = null; _message = null; });
+  void _close(CityRideView ride) => setState(() {
+    _rides = _rides.where((r) => r.reservationId != ride.reservationId).toList();
+    _codes.remove(ride.reservationId)?.dispose();
+    _message = null;
+  });
 
   String _minutes(int seconds) => seconds < 60 ? 'moins d’une minute' : '${(seconds / 60).round()} min';
+
+  Widget _placeField(_Spot spot, TextEditingController controller, String label, String help, IconData icon, RidePoint? chosen) =>
+      TextField(
+        controller: controller,
+        enabled: !_busy && !_online,
+        onTap: () => setState(() { _spot = spot; _places = const []; }),
+        onChanged: (text) => _typedPlace(spot, text),
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: help,
+          prefixIcon: Icon(icon),
+          suffixIcon: chosen == null
+              ? null
+              : spot == _Spot.there
+                  ? IconButton(tooltip: 'Sans direction', icon: const Icon(Icons.clear),
+                      onPressed: _busy ? null : () => setState(() { _destination = null; _whereTo.clear(); }))
+                  : const Icon(Icons.check_circle_outline),
+        ),
+      );
+
+  List<Widget> _suggestions(_Spot spot) => [
+    if (_spot == spot)
+      for (final place in _places)
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.location_on_outlined),
+          title: Text(place.mainText),
+          subtitle: place.secondaryText.isEmpty ? null : Text(place.secondaryText),
+          onTap: _busy ? null : () => _choosePlace(place),
+        ),
+  ];
+
+  Widget _rideCard(ThemeData theme, CityRideView ride) => Card(child: Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text('${ride.mode == 'vip' ? 'VIP' : '${ride.seats} place(s)'} · ${driverStateLabel(ride.state)}', style: theme.textTheme.titleMedium),
+      const SizedBox(height: 4),
+      Text('Prix : ${ride.priceXaf} F · ta part : ${ride.driverXaf} F'),
+      const SizedBox(height: 8),
+      if (ride.state == 'confirmed')
+        FilledButton.icon(onPressed: _busy ? null : () => _act(ride, 'arrive'), icon: const Icon(Icons.flag_outlined),
+            label: const Text('Je suis arrivé au départ')),
+      if (ride.state == 'driver_arrived') ...[
+        TextField(controller: _code(ride.reservationId), keyboardType: TextInputType.number, maxLength: 6,
+            decoration: const InputDecoration(labelText: 'Code du client (6 chiffres)')),
+        FilledButton.icon(onPressed: _busy ? null : () => _act(ride, 'board'), icon: const Icon(Icons.login),
+            label: const Text('Faire monter le client')),
+        TextButton(onPressed: _busy ? null : () => _act(ride, 'client_absent'), child: const Text('Client absent (après 5 min)')),
+      ],
+      if (ride.state == 'boarded')
+        FilledButton.icon(onPressed: _busy ? null : () => _act(ride, 'finish'), icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Terminer la course')),
+      if ({'awaiting_payment', 'confirmed', 'driver_arrived'}.contains(ride.state))
+        TextButton(onPressed: _busy ? null : () => _act(ride, 'cancel'), child: const Text('Annuler cette course (client remboursé)')),
+      if (!ride.active) FilledButton(onPressed: () => _close(ride), child: const Text('Fermer')),
+    ]),
+  ));
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final ride = _ride;
+    final shown = _rides.where((r) => r.active).firstOrNull;
+    final offer = _proposals.firstOrNull;
     return WakaPage(
       title: 'Mode chauffeur',
       child: Column(
@@ -241,97 +332,69 @@ class _DriverRidePageState extends State<DriverRidePage> {
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(
               height: 240,
-              child: widget.mapBuilder(context, ride?.pickup ?? (_proposals.isEmpty ? _position : _proposals.first.pickup),
-                  ride?.dropoff ?? (_proposals.isEmpty ? null : _proposals.first.dropoff),
+              child: widget.mapBuilder(context, offer?.pickup ?? shown?.pickup ?? _position, offer?.dropoff ?? shown?.dropoff ?? _destination,
                   (point) {
-                    if (!_online && ride == null) {
-                      setState(() { _position = point; _places = const []; _where.text = 'Point choisi sur la carte'; });
-                    }
+                    if (_online) return;
+                    setState(() {
+                      if (_spot == _Spot.there) {
+                        _destination = point;
+                        _whereTo.text = 'Point choisi sur la carte';
+                      } else {
+                        _position = point;
+                        _where.text = 'Point choisi sur la carte';
+                      }
+                      _places = const [];
+                    });
                   }),
             ),
           ),
           const SizedBox(height: 12),
-          if (ride == null) ...[
-            SwitchListTile(
-              title: Text(_online ? 'En ligne : tu peux recevoir des courses' : 'Hors ligne'),
-              subtitle: Text(_online
-                  ? (_positionAt == null ? 'Position envoyée' : 'Position envoyée à ${TimeOfDay.fromDateTime(_positionAt!.toLocal()).format(context)}')
-                  : 'Passe en ligne pour recevoir des courses près de toi.'),
-              value: _online,
-              onChanged: _busy ? null : (on) => on ? _goOnline() : _goOffline(),
-            ),
-            if (!_online && widget.login.gateway is RideGateway) ...[
-              TextField(
-                controller: _where,
-                enabled: !_busy,
-                onChanged: _typedPlace,
-                decoration: InputDecoration(
-                  labelText: 'Où es-tu ?',
-                  helperText: 'Écris un lieu (quartier, carrefour, marché…), ou touche la carte',
-                  prefixIcon: const Icon(Icons.my_location),
-                  suffixIcon: _position == null ? null : const Icon(Icons.check_circle_outline),
-                ),
-              ),
-              for (final place in _places)
-                ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.location_on_outlined),
-                  title: Text(place.mainText),
-                  subtitle: place.secondaryText.isEmpty ? null : Text(place.secondaryText),
-                  onTap: _busy ? null : () => _choosePlace(place),
-                ),
-            ],
-            if (!_online && _gpsMissing && _position == null)
-              const Text('Sans GPS, écris le lieu où tu te trouves ou touche la carte avant de passer en ligne.'),
-            if (_online) ...[
-              OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
-              if (_proposals.isEmpty)
-                const Padding(padding: EdgeInsets.only(top: 12), child: Text('En attente d’une course…')),
-              for (final p in _proposals)
-                Card(child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Nouvelle course · ${p.mode == 'vip' ? 'VIP' : '${p.seats} place(s) partagée(s)'}',
-                        style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 4),
-                    Text('Client à ${_minutes(p.pickupSeconds)} de route'),
-                    Text('Prix : ${p.priceXaf} F · ta part : ${p.driverXaf} F'),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: FilledButton(onPressed: _busy ? null : () => _answer(p, true), child: const Text('Accepter'))),
-                      const SizedBox(width: 8),
-                      Expanded(child: OutlinedButton(onPressed: _busy ? null : () => _answer(p, false), child: const Text('Refuser'))),
-                    ]),
-                  ]),
-                )),
-            ],
-          ] else ...[
-            Card(child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(driverStateLabel(ride.state), style: theme.textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Text('Prix : ${ride.priceXaf} F · ta part : ${ride.driverXaf} F'),
-              ]),
-            )),
+          SwitchListTile(
+            title: Text(_online ? 'En ligne' : 'Hors ligne'),
+            subtitle: Text(!_online
+                ? 'Passe en ligne pour recevoir des courses près de toi.'
+                : _destination != null
+                    ? 'En route vers ${_whereTo.text} : tu reçois des clients en partagé sur ton chemin.'
+                    : (_positionAt == null ? 'Position envoyée' : 'Position envoyée à ${TimeOfDay.fromDateTime(_positionAt!.toLocal()).format(context)}')),
+            value: _online,
+            onChanged: _busy ? null : (on) => on ? _goOnline() : _goOffline(),
+          ),
+          if (!_online && widget.login.gateway is RideGateway) ...[
+            _placeField(_Spot.here, _where, 'Où es-tu ?', 'Écris un lieu (quartier, carrefour, marché…), ou touche la carte',
+                Icons.my_location, _position),
+            ..._suggestions(_Spot.here),
             const SizedBox(height: 8),
-            if (ride.state == 'confirmed')
-              FilledButton.icon(onPressed: _busy ? null : () => _act('arrive'), icon: const Icon(Icons.flag_outlined),
-                  label: const Text('Je suis arrivé au départ')),
-            if (ride.state == 'driver_arrived') ...[
-              TextField(controller: _code, keyboardType: TextInputType.number, maxLength: 6,
-                  decoration: const InputDecoration(labelText: 'Code du client (6 chiffres)')),
-              FilledButton.icon(onPressed: _busy ? null : () => _act('board'), icon: const Icon(Icons.login),
-                  label: const Text('Faire monter le client')),
-              TextButton(onPressed: _busy ? null : () => _act('client_absent'), child: const Text('Client absent (après 5 min)')),
-            ],
-            if (ride.state == 'boarded')
-              FilledButton.icon(onPressed: _busy ? null : () => _act('finish'), icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Terminer la course')),
-            if (ride.active) OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
-            if ({'awaiting_payment', 'confirmed', 'driver_arrived'}.contains(ride.state))
-              TextButton(onPressed: _busy ? null : () => _act('cancel'), child: const Text('Annuler la course (client remboursé)')),
-            if (!ride.active) FilledButton(onPressed: _closeRide, child: const Text('Retour aux courses')),
+            _placeField(_Spot.there, _whereTo, 'Où vas-tu ? (facultatif)',
+                'Avec une direction, tu prends plusieurs clients en partagé sur ton chemin (détour de 5 min au plus)',
+                Icons.flag_outlined, _destination),
+            ..._suggestions(_Spot.there),
+          ],
+          if (!_online && _gpsMissing && _position == null)
+            const Text('Sans GPS, écris le lieu où tu te trouves ou touche la carte avant de passer en ligne.'),
+          for (final ride in _rides) _rideCard(theme, ride),
+          if (_online || _carrying)
+            OutlinedButton(onPressed: _busy ? null : () => _run(_refreshNow), child: const Text('Actualiser')),
+          if (_canReceive) ...[
+            if (_proposals.isEmpty)
+              Padding(padding: const EdgeInsets.only(top: 12),
+                  child: Text(_carrying ? 'En attente d’un autre client sur ton chemin…' : 'En attente d’une course…')),
+            for (final p in _proposals)
+              Card(child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Nouvelle course · ${p.mode == 'vip' ? 'VIP' : '${p.seats} place(s) partagée(s)'}', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text('Client à ${_minutes(p.pickupSeconds)} de route'),
+                  if (_destination != null) Text('Détour sur ton chemin : ${_minutes(p.detourSeconds)}'),
+                  Text('Prix : ${p.priceXaf} F · ta part : ${p.driverXaf} F'),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(child: FilledButton(onPressed: _busy ? null : () => _answer(p, true), child: const Text('Accepter'))),
+                    const SizedBox(width: 8),
+                    Expanded(child: OutlinedButton(onPressed: _busy ? null : () => _answer(p, false), child: const Text('Refuser'))),
+                  ]),
+                ]),
+              )),
           ],
           if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
           if (_message != null) Padding(

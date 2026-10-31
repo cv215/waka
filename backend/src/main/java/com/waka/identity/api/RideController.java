@@ -41,18 +41,27 @@ public final class RideController {
     private final ObjectProvider<PersistentRideService> services;
     public RideController(ObjectProvider<PersistentRideService> services) { this.services = services; }
 
-    /** Body {online, latitude?, longitude?}: the position time is the server's. */
+    /** Body {online, latitude?, longitude?, destinationLatitude?, destinationLongitude?}: the position time is the server's (R15 direction). */
     @PutMapping(path = "/api/v1/driver/presence", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<PersistentRideService.PresenceView> presence(HttpServletRequest request) throws IOException {
-        Map<String, Object> body = read(request, Set.of("online"), Set.of("latitude", "longitude"));
+        Map<String, Object> body = read(request, Set.of("online"), Set.of("latitude", "longitude", "destinationLatitude", "destinationLongitude"));
         boolean online = (Boolean) body.get("online");
-        GeoPoint position = null;
-        if (body.containsKey("latitude") || body.containsKey("longitude")) {
-            if (!(body.get("latitude") instanceof BigDecimal lat) || !(body.get("longitude") instanceof BigDecimal lon)) throw LoginRequestReader.invalid();
-            try { position = new GeoPoint(lat, lon); } catch (IllegalArgumentException hidden) { throw LoginRequestReader.invalid(); }
-        }
-        GeoPoint where = position;
-        return call(request, (token, client) -> service().presence(token, client, online, where), HttpStatus.OK);
+        GeoPoint where = point(body, "latitude", "longitude"), towards = point(body, "destinationLatitude", "destinationLongitude");
+        if (towards != null && where == null) throw LoginRequestReader.invalid();
+        return call(request, (token, client) -> service().presence(token, client, online, where, towards), HttpStatus.OK);
+    }
+
+    /** R15: the rides the driver carries now. */
+    @GetMapping(path = "/api/v1/driver/rides", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentRideService.RideView>> driverRides(HttpServletRequest request) throws IOException {
+        MeRequestReader.emptyGet(request);
+        return call(request, (token, client) -> service().driverRides(token, client), HttpStatus.OK);
+    }
+
+    private static GeoPoint point(Map<String, Object> body, String latitude, String longitude) {
+        if (!body.containsKey(latitude) && !body.containsKey(longitude)) return null;
+        if (!(body.get(latitude) instanceof BigDecimal lat) || !(body.get(longitude) instanceof BigDecimal lon)) throw LoginRequestReader.invalid();
+        try { return new GeoPoint(lat, lon); } catch (IllegalArgumentException hidden) { throw LoginRequestReader.invalid(); }
     }
 
     /** Body {quoteId}; Idempotency-Key. */
@@ -161,7 +170,7 @@ public final class RideController {
                     String name = parser.getString();
                     JsonToken value = parser.nextToken();
                     if (!(required.contains(name) || optional.contains(name)) || fields.containsKey(name)) throw LoginRequestReader.invalid();
-                    if ("latitude".equals(name) || "longitude".equals(name)) {
+                    if (name.endsWith("atitude") || name.endsWith("ongitude")) {
                         if ((value != JsonToken.VALUE_NUMBER_FLOAT && value != JsonToken.VALUE_NUMBER_INT)
                                 || !parser.getText().matches("-?(0|[1-9][0-9]{0,2})(\\.[0-9]{1,6})?")) throw LoginRequestReader.invalid();
                         fields.put(name, new BigDecimal(parser.getText()));

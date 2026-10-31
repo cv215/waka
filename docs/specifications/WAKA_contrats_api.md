@@ -698,6 +698,13 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 
 Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
 
+### K37 — Partagé par direction (R15)
+
+- **`PUT /api/v1/driver/presence`** accepte aussi `destinationLatitude` et `destinationLongitude`, c'est-à-dire la direction du chauffeur. Elle exige la position et doit être redonnée à chaque mise à jour : l'omettre retire la direction. La réponse ajoute `destination`, qui vaut `null` sans direction.
+- **Propositions** (`GET /api/v1/driver/proposals`) : chacune ajoute `detourSeconds`. C'est le détour que ce client ajoute à la direction du chauffeur, de 0 à 300 secondes ; il vaut 0 pour un chauffeur sans direction.
+- **Avec une direction** : le chauffeur ne reçoit que des demandes partagées. Il peut en accepter plusieurs tant que les places et le détour total (5 minutes depuis le premier client) le permettent. Une acceptation qui ne tient plus répond 409 `CAR_BUSY`.
+- **`GET /api/v1/driver/rides`** : les courses que le chauffeur porte en ce moment, 10 au plus, les plus anciennes d'abord.
+
 ### K36 — Suivre le chauffeur et retrouver sa course (R13)
 
 - **Course vue par le client** (`GET /api/v1/rides/{id}` et les autres réponses de course) : deux champs s'ajoutent, `driverPosition {latitude, longitude}` et `driverPositionAt`. Ils sont remplis seulement pour le client, de l'acceptation jusqu'à l'embarquement (`awaiting_payment`, `confirmed`, `driver_arrived`), et seulement si la position du chauffeur date de moins d'une minute. Sinon ils valent `null`, et toujours pour le chauffeur.

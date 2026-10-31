@@ -102,7 +102,11 @@ abstract interface class RideGateway {
 
 /// Driver side of city rides (K31): presence with position, proposals, and the ride's steps.
 abstract interface class DriverRideGateway {
-  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position);
+  /// R15: with a [destination], only shared clients on the way are proposed.
+  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position,
+      {RidePoint? destination});
+  /// Every ride the driver carries now (several shared clients with a direction).
+  Future<List<CityRideView>> driverRides(LoginSession session, String client);
   Future<List<DriverProposalView>> driverProposals(LoginSession session, String client);
   /// The ride on acceptance; null on refusal.
   Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept);
@@ -141,9 +145,20 @@ class LoginClient
   LoginClient(this.configuration);
 
   @override
-  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position) async =>
-      DriverPresenceView.parse(await _photoSend(session, client, 'PUT', '/api/v1/driver/presence', 200,
-          contentType: 'application/json', bytes: _json({'online': online, ...?position?.toJson()})));
+  Future<DriverPresenceView> setPresence(LoginSession session, String client, bool online, RidePoint? position,
+      {RidePoint? destination}) async {
+    final towards = destination?.toJson();
+    return DriverPresenceView.parse(await _photoSend(session, client, 'PUT', '/api/v1/driver/presence', 200,
+        contentType: 'application/json', bytes: _json({'online': online, ...?position?.toJson(),
+          if (towards != null) ...{'destinationLatitude': towards['latitude'], 'destinationLongitude': towards['longitude']}})));
+  }
+
+  @override
+  Future<List<CityRideView>> driverRides(LoginSession session, String client) async {
+    final body = await _photoSend(session, client, 'GET', '/api/v1/driver/rides', 200, maxBytes: 65536);
+    if (body is! List || body.length > 10) throw const PhotoProblem(PhotoFailure.invalidResponse);
+    return List.unmodifiable(body.map(CityRideView.parse));
+  }
 
   @override
   Future<List<DriverProposalView>> driverProposals(LoginSession session, String client) async =>
