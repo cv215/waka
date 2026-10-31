@@ -462,6 +462,17 @@ class AdmissionReviewMySqlVerificationTest {
         String boardingCode = rides.readSearch(rider.token, client, search.searchId()).ride().boardingCode();
         assertTrue(boardingCode.matches("[0-9]{6}"));
         assertNull(rides.ride(driver.token, client, ride.reservationId()).boardingCode(), "the driver never sees the code");
+        // K36: the client follows the driver coming; the driver's own view carries no position; both find the ride again.
+        var followed = rides.ride(rider.token, client, ride.reservationId());
+        assertEquals(centre, followed.driverPosition());
+        assertNotNull(followed.driverPositionAt());
+        assertNull(rides.ride(driver.token, client, ride.reservationId()).driverPosition());
+        assertEquals(ride.reservationId(), rides.activeRide(rider.token, client).reservationId());
+        assertEquals("driver", rides.activeRide(driver.token, client).viewerRole());
+        assertNull(rides.activeRide(agent.token, client), "nothing in progress for a third account");
+        clock.advance(61);
+        assertNull(rides.ride(rider.token, client, ride.reservationId()).driverPosition(), "a position older than a minute is not shown");
+        rides.presence(driver.token, client, true, centre);
 
         // One active ride per car: a second quote finds no free car.
         var second = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.VIP, 1, centre, there);
@@ -478,9 +489,11 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals("boarded", rides.driverAction(driver.token, client, ride.reservationId(), "board", boardingCode).state());
         assertEquals(com.waka.mobility.ride.RideException.Code.ALREADY_BOARDED,
                 code.apply(() -> rides.cancelByClient(rider.token, client, ride.reservationId())));
+        assertNull(rides.ride(rider.token, client, ride.reservationId()).driverPosition(), "on board: no more following");
         var finished = rides.driverAction(driver.token, client, ride.reservationId(), "finish", null);
         assertEquals("finished", finished.state());
         assertEquals(1080, finished.driverXaf());
+        assertNull(rides.activeRide(rider.token, client), "a finished ride is no longer in progress");
 
         // The car is free again; a client cancellation before boarding is fully refunded (R08).
         var third = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.VIP, 1, centre, there);

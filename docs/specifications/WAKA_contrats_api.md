@@ -698,6 +698,11 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 
 Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
 
+### K36 — Suivre le chauffeur et retrouver sa course (R13)
+
+- **Course vue par le client** (`GET /api/v1/rides/{id}` et les autres réponses de course) : deux champs s'ajoutent, `driverPosition {latitude, longitude}` et `driverPositionAt`. Ils sont remplis seulement pour le client, de l'acceptation jusqu'à l'embarquement (`awaiting_payment`, `confirmed`, `driver_arrived`), et seulement si la position du chauffeur date de moins d'une minute. Sinon ils valent `null`, et toujours pour le chauffeur.
+- **`GET /api/v1/me/active-ride`** : la course encore en cours du compte, comme client ou comme chauffeur (la plus récente), pour la retrouver après avoir fermé l'application. Répond 404 `RESOURCE_NOT_FOUND` s'il n'y en a pas.
+
 ### K35 — Recherche d'adresse pour une course en ville (R13)
 
 Réalisées côté serveur, assemblées seulement quand la clé serveur Google est fournie par l'environnement (sinon 503). Réservées à une session valide. Ce qui est tapé passe dans le corps, jamais dans l'adresse.

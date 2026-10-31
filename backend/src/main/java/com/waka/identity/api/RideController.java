@@ -104,6 +104,15 @@ public final class RideController {
         } finally { Arrays.fill(token, '\0'); }
     }
 
+    /** The account's ride in progress (as client or driver); 404 when there is none. */
+    @GetMapping(path = "/api/v1/me/active-ride", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentRideService.RideView> activeRide(HttpServletRequest request) throws IOException {
+        MeRequestReader.emptyGet(request);
+        var response = call(request, (token, client) -> service().activeRide(token, client), HttpStatus.OK);
+        if (response.getBody() == null) throw new ProfileHttpException(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND");
+        return response;
+    }
+
     @GetMapping(path = "/api/v1/rides/{rideId}", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<PersistentRideService.RideView> ride(@PathVariable String rideId, HttpServletRequest request) throws IOException {
         UUID id = LoginRequestReader.uuid(rideId);

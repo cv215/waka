@@ -20,7 +20,11 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
   final driverCalls = <String>[];
   bool offered = true, allowed = true;
 
-  Map<String, Object?> driverRide() => {...rideJson(), 'viewerRole': 'driver', 'boardingCode': null};
+  Map<String, Object?> driverRide() => {...rideJson(), 'viewerRole': 'driver', 'boardingCode': null, 'driverPosition': null,
+    'driverPositionAt': null};
+
+  @override
+  Future<CityRideView?> activeRide(LoginSession s, String c) async => inProgress ? CityRideView.parse(driverRide()) : null;
 
   @override
   Future<DriverPresenceView> setPresence(LoginSession s, String c, bool online, RidePoint? at) async {
@@ -54,7 +58,8 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
   Future<CityRideView> cityRide(LoginSession s, String c, String id) async => CityRideView.parse(driverRide());
 }
 
-Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap) => GestureDetector(
+Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap, {RidePoint? driver}) =>
+    GestureDetector(
   key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)), child: const ColoredBox(color: Colors.green));
 
 Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202)}) async {

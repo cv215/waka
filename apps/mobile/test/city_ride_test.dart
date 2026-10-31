@@ -22,14 +22,19 @@ class RideFixture extends PayFixture implements RideGateway {
   final rideCalls = <String>[];
   String rideState = 'awaiting_payment';
   String searchState = 'searching';
-  bool outside = false;
+  bool outside = false, inProgress = false;
 
   Map<String, Object?> rideJson() => {
     'reservationId': _ride, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333, 'state': rideState,
     'holdExpiresAt': iso(departure), 'arrivedAt': null, 'viewerRole': 'client',
     'boardingCode': rideState == 'awaiting_payment' ? null : '048213', 'refundXaf': rideState == 'cancelled_by_client' ? 370 : null,
     'pickup': {'latitude': 3.8667, 'longitude': 11.5167}, 'dropoff': {'latitude': 3.8935, 'longitude': 11.509},
+    'driverPosition': rideState == 'confirmed' ? {'latitude': 3.87, 'longitude': 11.52} : null,
+    'driverPositionAt': rideState == 'confirmed' ? iso(departure) : null,
   };
+
+  @override
+  Future<CityRideView?> activeRide(LoginSession s, String c) async => inProgress ? CityRideView.parse(rideJson()) : null;
 
   Map<String, Object?> searchJson() => {
     'searchId': _search, 'state': searchState, 'expiresAt': iso(departure), 'proposalPending': searchState == 'searching',
@@ -84,14 +89,16 @@ class RideFixture extends PayFixture implements RideGateway {
   }
 }
 
-Widget _fakeMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint) onTap) =>
+Widget _fakeMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint) onTap,
+        {RidePoint? driver}) =>
     GestureDetector(
       key: const Key('carte'),
       onTap: () => onTap(const RidePoint(3.86, 11.52)),
-      child: ColoredBox(color: Colors.green, child: Text('carte ${origin != null ? 'D' : '-'}${destination != null ? 'A' : '-'}')),
+      child: ColoredBox(color: Colors.green,
+          child: Text('carte ${origin != null ? 'D' : '-'}${destination != null ? 'A' : '-'}${driver != null ? 'C' : ''}')),
     );
 
-Future<(LoginFlow, RideFixture)> _open(WidgetTester tester) async {
+Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideFixture)? before}) async {
   tester.view.physicalSize = const Size(900, 2600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -100,6 +107,7 @@ Future<(LoginFlow, RideFixture)> _open(WidgetTester tester) async {
     final store = fixture.MemoryStore();
     await store.write(LoginSnapshot(randomLoginId(), session: session));
     final gateway = RideFixture(session);
+    before?.call(gateway);
     final login = LoginFlow(gateway, store);
     await login.initialize();
     return (login, gateway);
@@ -173,6 +181,14 @@ void main() {
     await tester.tap(find.text('Voir le prix'));
     await settle(tester);
     expect(find.textContaining('Yaoundé seulement'), findsOneWidget);
+  });
+
+  testWidgets('une course en cours est retrouvée à l’ouverture, avec le chauffeur sur la carte', (tester) async {
+    await _open(tester, before: (server) { server.inProgress = true; server.rideState = 'confirmed'; });
+    expect(find.text('Course payée : le chauffeur arrive.'), findsOneWidget);
+    expect(find.text('carte DAC'), findsOneWidget, reason: 'pickup, drop-off and the driver');
+    expect(find.text('048213'), findsOneWidget);
+    expect(find.text('Voir le prix'), findsNothing);
   });
 
   testWidgets('une course payée montre le code et peut être annulée avec remboursement', (tester) async {

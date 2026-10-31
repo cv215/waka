@@ -117,8 +117,12 @@ class RideQuoteView {
 
 class CityRideView {
   const CityRideView(this.reservationId, this.mode, this.seats, this.priceXaf, this.state, this.holdExpiresAt, this.arrivedAt,
-      this.boardingCode, this.refundXaf, this.pickup, this.dropoff, {this.driverXaf = 0, this.viewerRole = 'client'});
+      this.boardingCode, this.refundXaf, this.pickup, this.dropoff, {this.driverXaf = 0, this.viewerRole = 'client',
+      this.driverPosition, this.driverPositionAt});
   final String reservationId, mode, state;
+  /// The driver coming, for the client only, when the server has a position less than a minute old.
+  final RidePoint? driverPosition;
+  final DateTime? driverPositionAt;
   /// 'client' (sees the boarding code) or 'driver' (sees his share, never the code).
   final String viewerRole;
   final int seats, priceXaf, driverXaf;
@@ -130,16 +134,19 @@ class CityRideView {
   static CityRideView parse(Object? value) {
     try {
       final m = _exact(value, {'reservationId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'state', 'holdExpiresAt', 'arrivedAt',
-        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff'});
+        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff', 'driverPosition', 'driverPositionAt'});
       final code = m['boardingCode'], refund = m['refundXaf'], role = m['viewerRole'];
+      final seen = m['driverPosition'], seenAt = m['driverPositionAt'];
       if (!{'shared', 'vip'}.contains(m['mode']) || !rideStates.contains(m['state']) || !{'client', 'driver'}.contains(role) ||
-          (code != null && (role != 'client' || code is! String || !RegExp(r'^[0-9]{4,8}$').hasMatch(code)))) {
+          (code != null && (role != 'client' || code is! String || !RegExp(r'^[0-9]{4,8}$').hasMatch(code))) ||
+          ((seen == null) != (seenAt == null)) || (seen != null && role != 'client')) {
         throw const FormatException();
       }
       return CityRideView(_id(m['reservationId']), m['mode'] as String, _amount(m['seats'], min: 1, max: 5),
           _amount(m['priceXaf'], min: 1), m['state'] as String, _instantOrNull(m['holdExpiresAt']), _instantOrNull(m['arrivedAt']),
           code as String?, refund == null ? null : _amount(refund), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']),
-          driverXaf: _amount(m['driverXaf']), viewerRole: role as String);
+          driverXaf: _amount(m['driverXaf']), viewerRole: role as String,
+          driverPosition: seen == null ? null : RidePoint.parse(seen), driverPositionAt: _instantOrNull(seenAt));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

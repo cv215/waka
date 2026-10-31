@@ -41,10 +41,16 @@ public final class PersistentRideService {
             POSITION_FRESHNESS = Duration.ofSeconds(60), PAYMENT_WINDOW = Duration.ofMinutes(3), WAIT = Duration.ofMinutes(5);
     public static final int MAX_PICKUP_SECONDS = 600;
     private static final Set<String> ACTIVE = Set.of("awaiting_payment", "confirmed", "driver_arrived", "boarded");
+    /** States in which the client follows the driver coming to the pickup point. */
+    private static final Set<String> COMING = Set.of("awaiting_payment", "confirmed", "driver_arrived");
 
+    /**
+     * {@code driverPosition}/{@code driverPositionAt}: for the client only, while the driver comes (from acceptance until
+     * boarding), and only when the driver's position is less than a minute old; otherwise null.
+     */
     public record RideView(UUID reservationId, String mode, int seats, long priceXaf, long driverXaf, String state,
             Instant holdExpiresAt, Instant arrivedAt, String viewerRole, String boardingCode, Long refundXaf,
-            GeoPoint pickup, GeoPoint dropoff) {
+            GeoPoint pickup, GeoPoint dropoff, GeoPoint driverPosition, Instant driverPositionAt) {
         @Override public String toString() { return "RideView[REDACTED]"; }
     }
     public record SearchView(UUID searchId, String state, Instant expiresAt, boolean proposalPending, RideView ride,
@@ -66,6 +72,7 @@ public final class PersistentRideService {
     private final ProfileCrypto crypto;
     private final PricingEngine engine = new PricingEngine();
     private final SecureRandom random = new SecureRandom();
+    private final Clock clock;
     private final String gate;
 
     public PersistentRideService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
@@ -81,6 +88,7 @@ public final class PersistentRideService {
             throw new IllegalArgumentException("RIDE_DEPENDENCIES_MISMATCH");
         }
         if (crypto.reusesSessionKey(sessions)) throw new IllegalArgumentException("RIDE_SESSION_KEY_REUSE");
+        this.clock = clock;
         gate = sessions.identityGateHash();
     }
 
@@ -298,6 +306,21 @@ public final class PersistentRideService {
         }));
     }
 
+    /**
+     * The account's ride still in progress, as client or as driver (the most recent one), or null: lets a phone that was
+     * closed find its ride again.
+     */
+    public RideView activeRide(char[] token, String client) {
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            expireHolds(micros(session.serverTime()));
+            String actor = session.accountId().toString();
+            var ids = jdbc.queryForList("SELECT id FROM ride_reservation WHERE gate_hash=? AND (client_account_id=? OR driver_account_id=?) "
+                    + "AND state IN ('awaiting_payment','confirmed','driver_arrived','boarded') ORDER BY created_at DESC LIMIT 1",
+                    String.class, gate, actor, actor);
+            return new Out<>(ids.isEmpty() ? null : ride(ids.getFirst(), actor), null);
+        }));
+    }
+
     /** The driver at the agreed point: arrive, board (client code), finish, or declare the client absent after five minutes. */
     public RideView driverAction(char[] token, String client, UUID rideId, String action, String code) {
         if (rideId == null || !Set.of("arrive", "board", "finish", "client_absent", "cancel").contains(action)) throw invalid();
@@ -397,6 +420,17 @@ public final class PersistentRideService {
                     return new Candidate(rs.getString(1), new GeoPoint(new BigDecimal(p[0]), new BigDecimal(p[1])));
                 }, gate, sql(now.minus(POSITION_FRESHNESS))).stream().filter(Objects::nonNull).toList();
     }
+    private record Seen(GeoPoint position, Instant at) { }
+    /** The driver's own fresh position (online, less than a minute old) with its server time, or null. */
+    private Seen driverPosition(String driver) {
+        Instant since = micros(clock.instant()).minus(POSITION_FRESHNESS);
+        return jdbc.query("SELECT account_id,key_id,position_cipher,position_at FROM driver_presence WHERE gate_hash=? AND account_id=? AND online=1 AND position_at>=?",
+                (rs, n) -> {
+                    if (!crypto.keyId().equals(rs.getString(2))) return null;
+                    String[] p = new String(crypto.decrypt(rs.getBytes(3), positionAad(rs.getString(1), rs.getString(2))), StandardCharsets.US_ASCII).split(",");
+                    return new Seen(new GeoPoint(new BigDecimal(p[0]), new BigDecimal(p[1])), instant(rs.getObject(4, LocalDateTime.class)));
+                }, gate, driver, sql(since)).stream().filter(Objects::nonNull).findFirst().orElse(null);
+    }
     private boolean liveProposal(UUID searchId, Instant now) {
         Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM ride_proposal WHERE gate_hash=? AND search_id=? AND state='sent' AND expires_at>?",
                 Integer.class, gate, searchId.toString(), sql(now));
@@ -443,9 +477,11 @@ public final class PersistentRideService {
             }
             var quote = quotes.forRideLocked(UUID.fromString(clientId), UUID.fromString(rs.getString("quote_id")));
             LocalDateTime arrived = rs.getObject("arrived_at", LocalDateTime.class);
+            Seen driver = isClient && COMING.contains(state) ? driverPosition(rs.getString("driver_account_id")) : null;
             return new RideView(UUID.fromString(id), rs.getString("mode"), rs.getInt("seats"), rs.getLong("price_xaf"), rs.getLong("driver_xaf"),
                     state, instant(rs.getObject("hold_expires_at", LocalDateTime.class)), arrived == null ? null : instant(arrived),
-                    isClient ? "client" : "driver", code, (Long) rs.getObject("refund_xaf", Long.class), quote.origin(), quote.destination());
+                    isClient ? "client" : "driver", code, (Long) rs.getObject("refund_xaf", Long.class), quote.origin(), quote.destination(),
+                    driver == null ? null : driver.position(), driver == null ? null : driver.at());
         }, gate, id).getFirst();
     }
     private String codeMac(String rideId, String code) { return crypto.requestMac(rideId, "ride-boarding-code-v1", code); }

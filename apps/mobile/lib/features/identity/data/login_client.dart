@@ -95,6 +95,8 @@ abstract interface class RideGateway {
   Future<RideSearchView> cancelRideSearch(LoginSession session, String client, String searchId);
   Future<CityRideView> cityRide(LoginSession session, String client, String rideId);
   Future<CityRideView> cancelCityRide(LoginSession session, String client, String rideId);
+  /// The account's ride in progress (as client or driver), or null.
+  Future<CityRideView?> activeRide(LoginSession session, String client);
   void dispose();
 }
 
@@ -106,6 +108,7 @@ abstract interface class DriverRideGateway {
   Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept);
   Future<CityRideView> driverRideAction(LoginSession session, String client, String rideId, String action, String? boardingCode);
   Future<CityRideView> cityRide(LoginSession session, String client, String rideId);
+  Future<CityRideView?> activeRide(LoginSession session, String client);
   void dispose();
 }
 
@@ -210,6 +213,16 @@ class LoginClient
   Future<CityRideView> cityRide(LoginSession session, String client, String rideId) async {
     if (!isLoginUuid(rideId)) throw const PhotoProblem(PhotoFailure.invalid);
     return CityRideView.parse(await _photoSend(session, client, 'GET', '/api/v1/rides/$rideId', 200));
+  }
+
+  @override
+  Future<CityRideView?> activeRide(LoginSession session, String client) async {
+    try {
+      return CityRideView.parse(await _photoSend(session, client, 'GET', '/api/v1/me/active-ride', 200));
+    } on PhotoProblem catch (problem) {
+      if (problem.failure == PhotoFailure.notFound) return null; // nothing in progress
+      rethrow;
+    }
   }
 
   @override
