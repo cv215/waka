@@ -60,6 +60,13 @@ public final class RideController {
     }
 
     /** R15: the rides the driver carries now. */
+    /** The client's latest ended city rides, newest first (history). */
+    @GetMapping(path = "/api/v1/me/rides", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentRideService.PastRide>> pastRides(HttpServletRequest request) throws IOException {
+        MeRequestReader.emptyGet(request);
+        return call(request, (token, client) -> service().pastRides(token, client), HttpStatus.OK);
+    }
+
     @GetMapping(path = "/api/v1/driver/rides", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<List<PersistentRideService.RideView>> driverRides(HttpServletRequest request) throws IOException {
         MeRequestReader.emptyGet(request);

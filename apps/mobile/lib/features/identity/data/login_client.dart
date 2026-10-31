@@ -97,6 +97,8 @@ abstract interface class RideGateway {
   Future<CityRideView> cancelCityRide(LoginSession session, String client, String rideId);
   /// The account's ride in progress (as client or driver), or null.
   Future<CityRideView?> activeRide(LoginSession session, String client);
+  /// The client's latest ended rides, newest first (history).
+  Future<List<PastRideView>> pastRides(LoginSession session, String client);
   void dispose();
 }
 
@@ -237,6 +239,10 @@ class LoginClient
     if (!isLoginUuid(rideId)) throw const PhotoProblem(PhotoFailure.invalid);
     return CityRideView.parse(await _photoSend(session, client, 'GET', '/api/v1/rides/$rideId', 200));
   }
+
+  @override
+  Future<List<PastRideView>> pastRides(LoginSession session, String client) async =>
+      PastRideView.parseList(await _photoSend(session, client, 'GET', '/api/v1/me/rides', 200, maxBytes: 65536));
 
   @override
   Future<CityRideView?> activeRide(LoginSession session, String client) async {

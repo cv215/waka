@@ -477,6 +477,8 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals(quote.route(), followed.route(), "the client keeps seeing his trip in blue, without a new maps call");
         assertNull(followed.driver(), "no driver card before payment");
         assertEquals(ride.reservationId(), rides.activeRide(rider.token, client).reservationId());
+        assertTrue(rides.pastRides(rider.token, client).stream().noneMatch(p -> p.reservationId().equals(ride.reservationId())),
+                "a ride in progress is not history yet");
         assertEquals("driver", rides.activeRide(driver.token, client).viewerRole());
         assertNull(rides.activeRide(agent.token, client), "nothing in progress for a third account");
         clock.advance(61);
@@ -510,6 +512,12 @@ class AdmissionReviewMySqlVerificationTest {
         assertEquals("finished", finished.state());
         assertEquals(1080, finished.driverXaf());
         assertNull(rides.activeRide(rider.token, client), "a finished ride is no longer in progress");
+        var history = rides.pastRides(rider.token, client);
+        assertEquals(ride.reservationId(), history.getFirst().reservationId(), "the finished ride heads the client's history");
+        assertEquals("finished", history.getFirst().state());
+        assertEquals(1200, history.getFirst().priceXaf());
+        assertEquals(there, history.getFirst().dropoff());
+        assertTrue(rides.pastRides(driver.token, client).isEmpty(), "the history lists rides as client only");
 
         // The car is free again; a client cancellation before boarding is fully refunded (R08).
         var third = quotes.create(rider.token, client, UUID.randomUUID(), com.waka.mobility.quote.PersistentQuoteService.Mode.VIP, 1, centre, there);

@@ -40,6 +40,10 @@ class RideFixture extends PayFixture implements RideGateway {
   @override
   Future<CityRideView?> activeRide(LoginSession s, String c) async => inProgress ? CityRideView.parse(rideJson()) : null;
 
+  List<Map<String, Object?>> past = [];
+  @override
+  Future<List<PastRideView>> pastRides(LoginSession s, String c) async => PastRideView.parseList(past);
+
   Map<String, Object?> searchJson() => {
     'searchId': _search, 'state': searchState, 'expiresAt': iso(departure), 'proposalPending': searchState == 'searching',
     'ride': searchState == 'matched' ? rideJson() : null, 'idempotentReplay': false,

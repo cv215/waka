@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -8,7 +7,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
-import '../../../core/presentation/preference_store.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/login_models.dart';
@@ -16,6 +14,7 @@ import '../../identity/data/payment_models.dart';
 import '../../identity/data/ride_models.dart';
 import '../../identity/data/vehicle_photo_models.dart';
 import '../../payments/presentation/pay_dialog.dart';
+import '../data/recent_places.dart';
 
 /// Launch city (R11): Yaoundé. The server alone decides whether a point is inside the area.
 const yaoundeCentre = RidePoint(3.848, 11.502);
@@ -192,25 +191,6 @@ class CityRidePage extends StatefulWidget {
 
 enum _Field { origin, destination }
 
-/// A destination chosen before, kept on this device only (three at most) to choose it again in one touch.
-class _Recent {
-  const _Recent(this.label, this.point);
-  final String label;
-  final RidePoint point;
-  Map<String, Object> toJson() => {'label': label, 'lat': point.latitude, 'lon': point.longitude};
-  static List<_Recent> parse(String? raw) {
-    try {
-      final list = jsonDecode(raw ?? '[]') as List;
-      return [
-        for (final e in list.take(3))
-          _Recent((e as Map)['label'] as String, RidePoint((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())),
-      ];
-    } catch (_) {
-      return const [];
-    }
-  }
-}
-
 class _CityRidePageState extends State<CityRidePage> {
   RideGateway get _gateway => widget.login.gateway as RideGateway;
   final _originText = TextEditingController(), _destinationText = TextEditingController();
@@ -218,7 +198,7 @@ class _CityRidePageState extends State<CityRidePage> {
   /// Which point the field and a touch on the map set: the destination, unless the client changes the pickup.
   _Field _active = _Field.destination;
   List<PlaceSuggestion> _suggestions = const [];
-  List<_Recent> _recents = const [];
+  List<RecentPlace> _recents = const [];
   String _placeSession = randomLoginId();
   Timer? _typing, _poll;
   String _mode = 'shared';
@@ -235,7 +215,7 @@ class _CityRidePageState extends State<CityRidePage> {
   @override
   void initState() {
     super.initState();
-    readPreference(_recentKey).then((raw) { if (mounted) setState(() => _recents = _Recent.parse(raw)); });
+    loadRecentPlaces().then((list) { if (mounted) setState(() => _recents = list); });
     _run(() async {
       final (session, client) = _context();
       // A ride still in progress (the screen or the phone was closed) is found again.
@@ -250,8 +230,6 @@ class _CityRidePageState extends State<CityRidePage> {
       if (mounted && here != null && _origin == null) setState(() { _origin = here; _originText.text = 'Ma position'; });
     });
   }
-
-  static const _recentKey = 'waka_recent_places';
 
   @override
   void dispose() {
@@ -329,14 +307,13 @@ class _CityRidePageState extends State<CityRidePage> {
       // Without a pickup yet (no GPS), the panel asks for it next.
       _active = _origin == null ? _Field.origin : _Field.destination;
     });
-    if (field == _Field.destination && label != 'Point choisi sur la carte') _remember(_Recent(label, point));
+    if (field == _Field.destination && label != 'Point choisi sur la carte') _remember(RecentPlace(label, point));
     return _origin != null && _destination != null;
   }
 
-  void _remember(_Recent place) {
-    final kept = [place, ..._recents.where((r) => r.label != place.label)].take(3).toList();
-    setState(() => _recents = kept);
-    writePreference(_recentKey, jsonEncode([for (final r in kept) r.toJson()]));
+  Future<void> _remember(RecentPlace place) async {
+    final kept = await rememberPlace(_recents, place);
+    if (mounted) setState(() => _recents = kept);
   }
 
   /// Partagé and VIP for the same trip and number of people, one after the other (the second reuses the road).

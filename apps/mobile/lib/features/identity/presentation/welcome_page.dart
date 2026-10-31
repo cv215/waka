@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/config/local_api_configuration.dart';
 import '../../../core/presentation/waka_logo.dart';
-import '../../rides/presentation/city_ride_page.dart';
+import '../../home/presentation/home_shell.dart';
 import '../application/login_flow.dart';
 import '../data/login_client.dart';
 import '../data/login_models.dart';
@@ -18,7 +18,7 @@ import 'sign_in_page.dart';
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key, this.flow, this.home});
   final LoginFlow? flow;
-  /// What a signed-in client with a name sees; by default the city ride map. Tests replace it.
+  /// What a signed-in client with a name sees; by default the four tabs (the map first). Tests replace it.
   final Widget Function(BuildContext context, LoginFlow flow)? home;
   @override
   State<WelcomePage> createState() => _WelcomePageState();
@@ -116,8 +116,6 @@ class _WelcomePageState extends State<WelcomePage> {
     if (mounted && _flow.profileFailure != null) setState(() => _nameError = 'Le nom n’a pas été enregistré. Réessaie.');
   }
 
-  void _openAccount() => Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) => SignInPage(flow: _flow)));
-
   @override
   Widget build(BuildContext context) => AnimatedBuilder(animation: _flow, builder: (context, _) {
     final f = _flow;
@@ -132,9 +130,7 @@ class _WelcomePageState extends State<WelcomePage> {
       final profile = f.profile;
       if (f.confirmedNow && profile != null && f.pendingProfile == null) {
         if (profile.displayName == null) return _nameStep(f);
-        return widget.home?.call(context, f) ?? CityRidePage(login: f, actions: [
-          IconButton(tooltip: 'Mon compte', onPressed: _openAccount, icon: const Icon(Icons.person_outline)),
-        ]);
+        return widget.home?.call(context, f) ?? HomeShell(login: f);
       }
       if (f.busy) return const _Splash();
       return SignInPage(flow: f);
