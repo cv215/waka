@@ -497,7 +497,7 @@ Calcul côté serveur, dans cet ordre :
 4. Prix tiré de la version de grille **configurée explicitement** (aucune version « active » implicite).
 5. Arrondi au franc seulement à la fin.
 
-Réponse 201 : `quoteId, mode, passengerCount, distanceMetres, fareVersion, bandCode, placePriceXaf, totalXaf, currency, createdAt, expiresAt (+300 s), idempotentReplay`. Les points ne sont jamais renvoyés ; ils sont stockés chiffrés.
+Réponse 201 : `quoteId, mode, passengerCount, distanceMetres, fareVersion, bandCode, placePriceXaf, totalXaf, currency, createdAt, expiresAt (+300 s), idempotentReplay, route`. Les points ne sont jamais renvoyés ; ils sont stockés chiffrés. `route` est le trajet routier du client (polyligne encodé, forme simplifiée, tracé en bleu), obtenu dans le même appel Google que la distance, sans coût en plus. Il sert seulement à l'affichage et n'est gardé qu'en mémoire : il peut valoir `null` (fournisseur sans tracé, tracé illisible, ou réponse rejouée après un redémarrage).
 
 Même clé, même demande : le même devis est rendu en 200, même s'il a expiré. Son prix et son échéance ne changent pas, et le fournisseur n'est pas rappelé. Même clé avec une autre demande : 409 `IDEMPOTENCY_KEY_REUSED`.
 
@@ -709,12 +709,13 @@ Une proposition part au chauffeur recevable le plus proche **en temps de route**
   - `client` : le trajet du client ;
   - `combined` : le trajet du chauffeur avec ce client.
 
-  Le serveur interroge Google au plus une fois par proposition (3 appels, comptés dans le plafond journalier), puis réutilise les tracés.
+  Le serveur interroge Google au plus une fois par proposition (3 appels au plus, comptés dans le plafond journalier), puis réutilise les tracés. Le trajet du client reprend celui du devis quand il est encore en mémoire, ce qui économise un appel.
 - **Navigation** : l'application ouvre Google Maps ou Waze avec le point à rejoindre déjà rempli. C'est gratuit, et WAKA ne fait aucun appel de navigation.
 
 ### K36 — Suivre le chauffeur et retrouver sa course (R13)
 
 - **Course vue par le client** (`GET /api/v1/rides/{id}` et les autres réponses de course) : deux champs s'ajoutent, `driverPosition {latitude, longitude}` et `driverPositionAt`. Ils sont remplis seulement pour le client, de l'acceptation jusqu'à l'embarquement (`awaiting_payment`, `confirmed`, `driver_arrived`), et seulement si la position du chauffeur date de moins d'une minute. Sinon ils valent `null`, et toujours pour le chauffeur.
+- **Trajet en bleu** : chaque course ajoute aussi `route`, le trajet routier du devis (polyligne encodé, affichage seulement), pour les deux parties. Il ne coûte aucun appel Google : il vaut `null` si le serveur ne l'a plus en mémoire.
 - **`GET /api/v1/me/active-ride`** : la course encore en cours du compte, comme client ou comme chauffeur (la plus récente), pour la retrouver après avoir fermé l'application. Répond 404 `RESOURCE_NOT_FOUND` s'il n'y en a pas.
 
 ### K35 — Recherche d'adresse pour une course en ville (R13)

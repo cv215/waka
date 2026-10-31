@@ -32,9 +32,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public final class PersistentQuoteService {
     public static final Duration VALIDITY = Duration.ofMinutes(5);
     public enum Mode { SHARED, VIP }
+    /**
+     * {@code route}: the trip's road shape (encoded polyline, display only) from the same maps call as the distance;
+     * kept in memory only, so it may be null (provider without shape, or a replay after a restart).
+     */
     public record QuoteView(UUID quoteId, String mode, int passengerCount, int distanceMetres, String fareVersion,
             String bandCode, long placePriceXaf, long totalXaf, String currency, Instant createdAt, Instant expiresAt,
-            boolean idempotentReplay) { }
+            boolean idempotentReplay, String route) { }
     private record Lookup(QuoteView view, QuoteException.Code refusal) { }
 
     private final PersistentSessionService sessions;
@@ -47,6 +51,10 @@ public final class PersistentQuoteService {
     private final Clock clock;
     private final PricingEngine engine = new PricingEngine();
     private final String gate;
+    /** Trip shapes by quote, reused for the ride (client's map) and the driver's proposal: never asked twice. */
+    private final java.util.Map<String, String> routeCache = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, String> eldest) { return size() > 1000; }
+    });
 
     public PersistentQuoteService(PersistentSessionService sessions, JdbcTemplate jdbc, ProfileCrypto crypto,
             JdbcFareScheduleRepository fares, String fareVersion, RouteDistanceProvider routes, ServiceArea area, Clock clock) {
@@ -84,12 +92,13 @@ public final class PersistentQuoteService {
         Lookup first = sessions.withAuthenticatedSession(token, client, session -> lookup(session.accountId(), key, payloadFields));
         if (first != null) return unwrap(first);
         if (!area.covers(origin) || !area.covers(destination)) throw new QuoteException(QuoteException.Code.OUTSIDE_SERVICE_AREA);
-        BigDecimal distance;
-        try { distance = routes.roadDistanceMetres(origin, destination); }
+        RouteDistanceProvider.RoadRoute road;
+        try { road = routes.roadRoute(origin, destination); }
         catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException hidden) {
             throw new QuoteException(QuoteException.Code.ROUTE_UNAVAILABLE);
         }
-        if (distance == null) throw new QuoteException(QuoteException.Code.NO_ROUTE);
+        if (road == null || road.metres() == null) throw new QuoteException(QuoteException.Code.NO_ROUTE);
+        BigDecimal distance = road.metres();
         FareCalculation calculation;
         try {
             FareSchedule schedule = fares.findByVersion(fareVersion);
@@ -104,7 +113,7 @@ public final class PersistentQuoteService {
         } catch (RuntimeException hidden) {
             throw new QuoteException(QuoteException.Code.SERVICE_UNAVAILABLE);
         }
-        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+        QuoteView created = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             // A concurrent identical command may have won meanwhile: it keeps the single effect.
             Lookup again = lookup(session.accountId(), key, payloadFields);
             if (again != null) return again;
@@ -120,8 +129,15 @@ public final class PersistentQuoteService {
                     calculation.band().unitPriceXaf(), calculation.priceXaf(), crypto.keyId(), cipher, sql(now), sql(expires));
             return new Lookup(new QuoteView(id, mode.name().toLowerCase(), passengerCount, calculation.distanceMetres(),
                     calculation.fareVersion(), calculation.band().id(), calculation.band().unitPriceXaf(), calculation.priceXaf(),
-                    calculation.currency(), now, expires, false), null);
+                    calculation.currency(), now, expires, false, road.path()), null);
         }));
+        if (!created.idempotentReplay() && created.route() != null) routeCache.put(created.quoteId().toString(), created.route());
+        return created;
+    }
+
+    /** The trip shape kept for this quote, or null (none given, or forgotten since). Display only. */
+    public String route(UUID quoteId) {
+        return quoteId == null ? null : routeCache.get(quoteId.toString());
     }
 
     /** {@code null} when the key is new for this account. */
@@ -132,7 +148,7 @@ public final class PersistentQuoteService {
                         rs.getInt("passenger_count"), rs.getInt("distance_metres"), rs.getString("fare_version"),
                         rs.getString("band_code"), rs.getLong("place_price_xaf"), rs.getLong("total_xaf"), "XAF",
                         instant(rs.getObject("created_at", LocalDateTime.class)),
-                        instant(rs.getObject("expires_at", LocalDateTime.class)), true) },
+                        instant(rs.getObject("expires_at", LocalDateTime.class)), true, routeCache.get(rs.getString("id"))) },
                 gate, requestMac(actor, key));
         if (rows.isEmpty()) return null;
         if (!MessageDigest.isEqual(((String) rows.getFirst()[0]).getBytes(StandardCharsets.US_ASCII),

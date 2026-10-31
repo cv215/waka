@@ -92,16 +92,29 @@ RidePoint parsePlaceLocation(Object? value, String placeId) {
   }
 }
 
+/// The client's trip shape (drawn in blue), display only: an unreadable one is dropped, never the price or the ride.
+List<RidePoint>? _tripShape(Object? value) {
+  if (value == null) return null;
+  if (value is! String) throw const FormatException();
+  try {
+    return List.unmodifiable(decodePolyline(value).map((p) => RidePoint(p.$1, p.$2)));
+  } on FormatException {
+    return null;
+  }
+}
+
 class RideQuoteView {
   const RideQuoteView(this.quoteId, this.mode, this.passengerCount, this.distanceMetres, this.placePriceXaf, this.totalXaf,
-      this.expiresAt);
+      this.expiresAt, [this.route]);
   final String quoteId, mode;
   final int passengerCount, distanceMetres, placePriceXaf, totalXaf;
   final DateTime expiresAt;
+  /// The trip by road, from the same maps call as the price, or null.
+  final List<RidePoint>? route;
   static RideQuoteView parse(Object? value) {
     try {
       final m = _exact(value, {'quoteId', 'mode', 'passengerCount', 'distanceMetres', 'fareVersion', 'bandCode', 'placePriceXaf',
-        'totalXaf', 'currency', 'createdAt', 'expiresAt', 'idempotentReplay'});
+        'totalXaf', 'currency', 'createdAt', 'expiresAt', 'idempotentReplay', 'route'});
       if (!{'shared', 'vip'}.contains(m['mode']) || m['currency'] != 'XAF' || m['fareVersion'] is! String ||
           m['bandCode'] is! String || m['idempotentReplay'] is! bool) {
         throw const FormatException();
@@ -109,7 +122,7 @@ class RideQuoteView {
       _instant(m['createdAt']);
       return RideQuoteView(_id(m['quoteId']), m['mode'] as String, _amount(m['passengerCount'], min: 1, max: 5),
           _amount(m['distanceMetres'], max: 200000), _amount(m['placePriceXaf'], min: 1), _amount(m['totalXaf'], min: 1),
-          _instant(m['expiresAt']));
+          _instant(m['expiresAt']), _tripShape(m['route']));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }
@@ -119,8 +132,10 @@ class RideQuoteView {
 class CityRideView {
   const CityRideView(this.reservationId, this.mode, this.seats, this.priceXaf, this.state, this.holdExpiresAt, this.arrivedAt,
       this.boardingCode, this.refundXaf, this.pickup, this.dropoff, {this.driverXaf = 0, this.viewerRole = 'client',
-      this.driverPosition, this.driverPositionAt});
+      this.driverPosition, this.driverPositionAt, this.route});
   final String reservationId, mode, state;
+  /// The trip by road kept from the quote (blue), or null.
+  final List<RidePoint>? route;
   /// The driver coming, for the client only, when the server has a position less than a minute old.
   final RidePoint? driverPosition;
   final DateTime? driverPositionAt;
@@ -135,7 +150,7 @@ class CityRideView {
   static CityRideView parse(Object? value) {
     try {
       final m = _exact(value, {'reservationId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'state', 'holdExpiresAt', 'arrivedAt',
-        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff', 'driverPosition', 'driverPositionAt'});
+        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff', 'driverPosition', 'driverPositionAt', 'route'});
       final code = m['boardingCode'], refund = m['refundXaf'], role = m['viewerRole'];
       final seen = m['driverPosition'], seenAt = m['driverPositionAt'];
       if (!{'shared', 'vip'}.contains(m['mode']) || !rideStates.contains(m['state']) || !{'client', 'driver'}.contains(role) ||
@@ -147,7 +162,8 @@ class CityRideView {
           _amount(m['priceXaf'], min: 1), m['state'] as String, _instantOrNull(m['holdExpiresAt']), _instantOrNull(m['arrivedAt']),
           code as String?, refund == null ? null : _amount(refund), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']),
           driverXaf: _amount(m['driverXaf']), viewerRole: role as String,
-          driverPosition: seen == null ? null : RidePoint.parse(seen), driverPositionAt: _instantOrNull(seenAt));
+          driverPosition: seen == null ? null : RidePoint.parse(seen), driverPositionAt: _instantOrNull(seenAt),
+          route: _tripShape(m['route']));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

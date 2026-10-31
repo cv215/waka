@@ -19,7 +19,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Road distance (R04) and road time to the pickup (R13) from the Google Routes API, {@code POST
  * /directions/v2:computeRoutes}, driving, without live traffic so the call stays in the Essentials tier.
- * Only {@code routes.distanceMeters} and {@code routes.duration} are asked (field mask). An answer without
+ * Only {@code routes.distanceMeters} and {@code routes.duration} are asked (field mask), plus the overview polyline
+ * for a quote, which stays in the same tier and the same call. An answer without
  * any route means no road exists; anything else unreadable is "unavailable", never a guess from the points.
  * The key comes from the environment, never from Git; points are never logged.
  */
@@ -57,17 +58,24 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
-    private record Route(long metres, long seconds) {}
+    private record Route(long metres, long seconds, String path) {}
 
     @Override
     public BigDecimal roadDistanceMetres(GeoPoint origin, GeoPoint destination) throws RouteUnavailableException {
-        Route route = route(origin, destination);
+        Route route = route(origin, destination, false);
         return route == null ? null : BigDecimal.valueOf(route.metres());
+    }
+
+    /** One call: the distance and the overview shape of the same route. */
+    @Override
+    public RoadRoute roadRoute(GeoPoint origin, GeoPoint destination) throws RouteUnavailableException {
+        Route route = route(origin, destination, true);
+        return route == null ? null : new RoadRoute(BigDecimal.valueOf(route.metres()), route.path());
     }
 
     @Override
     public Integer pickupSeconds(GeoPoint driver, GeoPoint pickup) throws RouteUnavailableException {
-        Route route = route(driver, pickup);
+        Route route = route(driver, pickup, false);
         return route == null ? null : Math.toIntExact(route.seconds());
     }
 
@@ -106,15 +114,20 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
         return line.asString();
     }
 
-    private Route route(GeoPoint from, GeoPoint to) throws RouteUnavailableException {
+    private Route route(GeoPoint from, GeoPoint to, boolean withPath) throws RouteUnavailableException {
         if (from == null || to == null) throw new IllegalArgumentException("INVALID_POINT");
-        Map<String, Object> body = Map.of(
-                "origin", waypoint(from),
-                "destination", waypoint(to),
-                "travelMode", "DRIVE",
-                "routingPreference", "TRAFFIC_UNAWARE",
-                "units", "METRIC");
-        JsonNode first = firstRoute(body, "routes.distanceMeters,routes.duration");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("origin", waypoint(from));
+        body.put("destination", waypoint(to));
+        body.put("travelMode", "DRIVE");
+        body.put("routingPreference", "TRAFFIC_UNAWARE");
+        body.put("units", "METRIC");
+        if (withPath) {
+            body.put("polylineQuality", "OVERVIEW");
+            body.put("polylineEncoding", "ENCODED_POLYLINE");
+        }
+        JsonNode first = firstRoute(body, withPath ? "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline"
+                : "routes.distanceMeters,routes.duration");
         if (first == null) return null;
         JsonNode metres = first.get("distanceMeters"), duration = first.get("duration");
         // Google leaves out a zero distance (same point); the duration is always present.
@@ -124,7 +137,10 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
         }
         String text = duration.asString();
         long seconds = new BigDecimal(text.substring(0, text.length() - 1)).setScale(0, java.math.RoundingMode.CEILING).longValueExact();
-        return new Route(metres == null ? 0 : metres.asLong(), seconds);
+        // The shape is only drawn: a missing or unreadable one leaves the distance (and the price) untouched.
+        JsonNode line = withPath ? first.path("polyline").get("encodedPolyline") : null;
+        String path = line != null && line.isString() && Polylines.valid(line.asString()) ? line.asString() : null;
+        return new Route(metres == null ? 0 : metres.asLong(), seconds, path);
     }
 
     /** One call: the first route of the answer, or null when Google finds none ({} or an empty list). */
