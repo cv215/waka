@@ -112,6 +112,21 @@ public final class RideController {
         return call(request, (token, client) -> service().proposals(token, client), HttpStatus.OK);
     }
 
+    /** R15: nearby clients off the driver's way, approximate points (red, faint on his map). */
+    @GetMapping(path = "/api/v1/driver/nearby", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<List<PersistentRideService.NearbyView>> nearby(HttpServletRequest request) throws IOException {
+        MeRequestReader.emptyGet(request);
+        return call(request, (token, client) -> service().nearby(token, client), HttpStatus.OK);
+    }
+
+    /** The driver takes one of them: 201 with the ride, as an accepted proposal. */
+    @PostMapping(path = "/api/v1/driver/nearby/{searchId}/takes", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PersistentRideService.RideView> take(@PathVariable String searchId, HttpServletRequest request) throws IOException {
+        UUID id = LoginRequestReader.uuid(searchId);
+        LoginRequestReader.emptyBody(request);
+        return call(request, (token, client) -> service().take(token, client, id), HttpStatus.CREATED);
+    }
+
     /** Body {action: accept|refuse}; 201 with the ride on acceptance, 204 on refusal. */
     @PostMapping(path = "/api/v1/proposals/{proposalId}/responses", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
@@ -221,7 +236,7 @@ public final class RideController {
                 case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
                 case NOT_FOUND -> HttpStatus.NOT_FOUND;
                 case DRIVER_NOT_ALLOWED -> HttpStatus.FORBIDDEN;
-                case QUOTE_EXPIRED, PROPOSAL_EXPIRED, CAR_BUSY, NOT_PAID, NOT_BOARDED, NOT_ARRIVED, ALREADY_BOARDED -> HttpStatus.CONFLICT;
+                case QUOTE_EXPIRED, PROPOSAL_EXPIRED, CAR_BUSY, NOT_PAID, NOT_BOARDED, NOT_ARRIVED, ALREADY_BOARDED, TOO_FAR -> HttpStatus.CONFLICT;
                 case WRONG_CODE, TOO_EARLY -> HttpStatus.UNPROCESSABLE_CONTENT;
                 case SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             };

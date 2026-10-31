@@ -513,6 +513,111 @@ public final class PersistentRideService {
         }));
     }
 
+    // ---- Nearby clients off the driver's way (R15, founder, 31 October 2026) ----
+
+    /**
+     * A client looking for a car near a driver who gave a direction, not proposed to him (his trip does not go that way):
+     * drawn faint red, points rounded to about 300 m, no name, no price. The driver may still take him ({@link #take}).
+     */
+    public record NearbyView(UUID searchId, int seats, GeoPoint pickup, GeoPoint dropoff) {
+        @Override public String toString() { return "NearbyView[REDACTED]"; }
+    }
+    /** Straight-line radius of the nearby clients shown (a pickup further away is beyond 10 minutes of road anyway). */
+    private static final double NEARBY_METRES = 4000;
+    private static final BigDecimal ROUNDING = new BigDecimal("0.003");
+
+    /** At most 10 nearby searches the driver could take, for a fresh driver online with a direction; none otherwise. */
+    public List<NearbyView> nearby(char[] token, String client) {
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            Instant now = micros(session.serverTime());
+            String actor = session.accountId().toString();
+            var me = online(now).stream().filter(c -> c.driver.equals(actor)).findFirst().orElse(null);
+            Integer seats = me == null || me.destination == null ? null : offeredSeats(actor, now);
+            if (seats == null) return new Out<List<NearbyView>>(List.of(), null);
+            var searches = jdbc.query("SELECT id,quote_id,client_account_id FROM ride_search WHERE gate_hash=? AND state='searching' "
+                    + "AND expires_at>? AND client_account_id<>? ORDER BY created_at DESC LIMIT 50",
+                    (rs, n) -> new String[] { rs.getString(1), rs.getString(2), rs.getString(3) }, gate, sql(now), actor);
+            List<NearbyView> found = new ArrayList<>();
+            for (String[] s : searches) {
+                UUID search = UUID.fromString(s[0]);
+                if (found.size() == 10 || liveProposal(search, now) || proposedBefore(search, actor)) continue;
+                var quote = quotes.forRideLocked(UUID.fromString(s[2]), UUID.fromString(s[1]));
+                if (quote == null || !now.isBefore(quote.expiresAt()) || !fits(me, quote.mode(), quote.passengerCount(), seats)) continue;
+                if (metres(me.position, quote.origin()) > NEARBY_METRES) continue;
+                found.add(new NearbyView(search, quote.passengerCount(), rounded(quote.origin()), rounded(quote.destination())));
+            }
+            return new Out<>(List.copyOf(found), null);
+        }));
+    }
+
+    /**
+     * The driver takes a nearby client off his way: within 10 minutes of road, still searching and proposed to nobody,
+     * room in the car. A proposal is recorded for him, then accepted like any other (same price, payment, code).
+     */
+    public RideView take(char[] token, String client, UUID searchId) {
+        if (searchId == null) throw invalid();
+        record Trip(GeoPoint position, GeoPoint destination, GeoPoint pickup, GeoPoint dropoff) { }
+        Trip trip = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            Instant now = micros(session.serverTime());
+            String actor = session.accountId().toString();
+            var me = online(now).stream().filter(c -> c.driver.equals(actor)).findFirst().orElse(null);
+            if (me == null || me.destination == null) return new Out<Trip>(null, RideException.Code.DRIVER_NOT_ALLOWED);
+            var rows = jdbc.query("SELECT quote_id,client_account_id,state,expires_at FROM ride_search WHERE gate_hash=? AND id=?",
+                    (rs, n) -> new Object[] { rs.getString(1), rs.getString(2), rs.getString(3), instant(rs.getObject(4, LocalDateTime.class)) },
+                    gate, searchId.toString());
+            if (rows.isEmpty() || actor.equals(rows.getFirst()[1])) return new Out<Trip>(null, RideException.Code.NOT_FOUND);
+            if (!"searching".equals(rows.getFirst()[2]) || !now.isBefore((Instant) rows.getFirst()[3]) || liveProposal(searchId, now)) {
+                return new Out<Trip>(null, RideException.Code.PROPOSAL_EXPIRED);
+            }
+            var quote = quotes.forRideLocked(UUID.fromString((String) rows.getFirst()[1]), UUID.fromString((String) rows.getFirst()[0]));
+            return new Out<>(new Trip(me.position, me.destination, quote.origin(), quote.destination()), null);
+        }));
+        // Road times outside any transaction, like every maps call.
+        int seconds, detour;
+        try {
+            Integer pickup = pickupTimes.pickupSeconds(trip.position(), trip.pickup());
+            if (pickup == null || pickup > MAX_PICKUP_SECONDS) throw new RideException(RideException.Code.TOO_FAR);
+            Integer ride = pickupTimes.pickupSeconds(trip.pickup(), trip.dropoff());
+            Integer onward = pickupTimes.pickupSeconds(trip.dropoff(), trip.destination());
+            Integer direct = pickupTimes.pickupSeconds(trip.position(), trip.destination());
+            seconds = pickup;
+            detour = ride == null || onward == null || direct == null ? 0
+                    : Math.min(DETOUR_RECORD_LIMIT, Math.max(0, pickup + ride + onward - direct));
+        } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException unavailable) {
+            if (unavailable instanceof RideException known) throw known;
+            throw new RideException(RideException.Code.SERVICE_UNAVAILABLE);
+        }
+        String proposal = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            Instant now = micros(session.serverTime());
+            String actor = session.accountId().toString();
+            var search = jdbc.query("SELECT state,expires_at,quote_id FROM ride_search WHERE gate_hash=? AND id=? FOR UPDATE",
+                    (rs, n) -> new Object[] { rs.getString(1), instant(rs.getObject(2, LocalDateTime.class)), rs.getString(3) },
+                    gate, searchId.toString());
+            if (search.isEmpty() || !"searching".equals(search.getFirst()[0]) || !now.isBefore((Instant) search.getFirst()[1])
+                    || liveProposal(searchId, now) || proposedBefore(searchId, actor)) {
+                return new Out<String>(null, RideException.Code.PROPOSAL_EXPIRED);
+            }
+            String id = UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO ride_proposal (gate_hash,id,search_id,driver_account_id,pickup_seconds,detour_seconds,state,sent_at,expires_at) VALUES (?,?,?,?,?,?,'sent',?,?)",
+                    gate, id, searchId.toString(), actor, seconds, detour, sql(now), sql(earliest(now.plus(PROPOSAL), (Instant) search.getFirst()[1])));
+            return new Out<>(id, null);
+        }));
+        return respond(token, client, UUID.fromString(proposal), true);
+    }
+
+    /** About 300 m: shows where demand is without giving a stranger's exact address. */
+    private static GeoPoint rounded(GeoPoint p) {
+        return new GeoPoint(snap(p.latitude()), snap(p.longitude()));
+    }
+    private static BigDecimal snap(BigDecimal v) {
+        return v.divide(ROUNDING, 0, java.math.RoundingMode.HALF_UP).multiply(ROUNDING).setScale(6, java.math.RoundingMode.HALF_UP);
+    }
+    private static double metres(GeoPoint a, GeoPoint b) {
+        double dLat = (a.latitude().doubleValue() - b.latitude().doubleValue()) * 111_000;
+        double dLon = (a.longitude().doubleValue() - b.longitude().doubleValue()) * 111_000 * Math.cos(Math.toRadians(a.latitude().doubleValue()));
+        return Math.sqrt(dLat * dLat + dLon * dLon);
+    }
+
     // ---- The ride (A18, A21, A22) ----
 
     public RideView ride(char[] token, String client, UUID rideId) {

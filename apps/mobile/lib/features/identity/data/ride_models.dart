@@ -223,6 +223,27 @@ class DriverProposalView {
   }
 }
 
+/// A client near the driver whose trip does not go his way (R15): points rounded to about 300 m by the server, drawn
+/// faint red; the driver may still take him.
+class NearbyClientView {
+  const NearbyClientView(this.searchId, this.seats, this.pickup, this.dropoff);
+  final String searchId;
+  final int seats;
+  final RidePoint pickup, dropoff;
+  static List<NearbyClientView> parseList(Object? value) {
+    try {
+      if (value is! List || value.length > 10) throw const FormatException();
+      return List.unmodifiable(value.map((v) {
+        final m = _exact(v, {'searchId', 'seats', 'pickup', 'dropoff'});
+        return NearbyClientView(_id(m['searchId']), _amount(m['seats'], min: 1, max: 5), RidePoint.parse(m['pickup']),
+            RidePoint.parse(m['dropoff']));
+      }));
+    } on FormatException {
+      throw const PhotoProblem(PhotoFailure.invalidResponse);
+    }
+  }
+}
+
 /// The three route shapes of a proposal (display only): the driver's own route to his direction (null without one),
 /// the client's trip, and the driver's route with this client.
 class ProposalPathsView {

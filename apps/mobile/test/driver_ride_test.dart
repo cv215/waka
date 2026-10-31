@@ -64,6 +64,22 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
       'dropoff': {'latitude': 3.8935, 'longitude': 11.509}, 'detourSeconds': 120, 'route': '_p~iF~ps|U_ulLnnqC'},
   ]);
 
+  /// R15: clients near him off his way, approximate; taking one makes a ride like an accepted proposal.
+  final nearby = <Map<String, Object?>>[];
+  @override
+  Future<List<NearbyClientView>> nearbyClients(LoginSession s, String c) async {
+    driverCalls.add('nearby');
+    return NearbyClientView.parseList(nearby);
+  }
+  @override
+  Future<CityRideView> takeNearby(LoginSession s, String c, String searchId) async {
+    driverCalls.add('take:$searchId');
+    nearby.removeWhere((n) => n['searchId'] == searchId);
+    final ride = _rideIds[accepted.length];
+    accepted.add(ride);
+    return CityRideView.parse(driverRide(ride));
+  }
+
   @override
   Future<CityRideView?> answerProposal(LoginSession s, String c, String id, bool accept) async {
     driverCalls.add('answer:$accept');
@@ -95,7 +111,7 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
 }
 
 Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap,
-        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false}) =>
+        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false, double? heading}) =>
     GestureDetector(
   key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)),
   child: ColoredBox(color: Colors.green, child: Text('tracés ${(paths ?? const []).map((p) => p.name).join('+')}'
@@ -213,14 +229,13 @@ void main() {
     expect(find.text('Client qui attend ta réponse'), findsOneWidget);
     expect(server.driverCalls.where((c) => c.startsWith('paths:')), isEmpty, reason: 'the blue trip comes with the proposal');
 
-    await tester.tap(find.text('Accepter'));
+    // Swiped to the right: accepted.
+    await tester.drag(find.text('Client à 4 min de route'), const Offset(600, 0));
     await settle(tester);
-    expect(find.text('tracés normal+combine clients:1'), findsOneWidget, reason: 'accepted: his trip is now in the yellow tour');
+    expect(server.driverCalls, contains('answer:true'));
+    expect(find.text('tracés normal+combine clients:1 suivi'), findsOneWidget,
+        reason: 'accepted: his trip is in the yellow tour, and the map switches to navigation by itself');
     expect(find.text('Ton trajet avec tes clients'), findsOneWidget);
-
-    await tester.tap(find.text('Démarrer le trajet'));
-    await settle(tester);
-    expect(find.text('tracés normal+combine clients:1 suivi'), findsOneWidget, reason: 'the map follows the car');
     expect(find.text('Arrêter le suivi'), findsOneWidget);
 
     await tester.tap(find.text('Tout le trajet · Google Maps'));
@@ -239,6 +254,44 @@ void main() {
     await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('tracés normal suivi'), findsOneWidget, reason: 'the cancelled client leaves the yellow tour at once');
+  });
+
+  testWidgets('glisser à gauche refuse ; un client hors du chemin, en rouge léger, se prend en glissant à droite', (tester) async {
+    final server = await _open(tester);
+    server.nearby.addAll([
+      {'searchId': '51111111-2222-4333-8444-555555555555', 'seats': 1, 'pickup': {'latitude': 3.861, 'longitude': 11.52},
+        'dropoff': {'latitude': 3.83, 'longitude': 11.5}},
+      {'searchId': '52111111-2222-4333-8444-555555555555', 'seats': 2, 'pickup': {'latitude': 3.862, 'longitude': 11.52},
+        'dropoff': {'latitude': 3.82, 'longitude': 11.49}},
+    ]);
+    await tester.enterText(find.widgetWithText(TextField, 'Où vas-tu ? (facultatif)'), 'Bast');
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('en-ligne')));
+    await settle(tester);
+    await tester.tap(find.byTooltip('Actualiser'));
+    await settle(tester);
+    expect(find.text('tracés nearby+nearby+normal+client clients:1'), findsOneWidget,
+        reason: 'red underneath, then green, then the blue client');
+    expect(find.text('Client hors de ton chemin'), findsOneWidget, reason: 'the legend');
+    expect(find.textContaining('Client hors de ton chemin · 1 place(s)'), findsOneWidget);
+
+    // Swiped to the left: the proposal is refused.
+    await tester.drag(find.text('Client à 4 min de route'), const Offset(-600, 0));
+    await settle(tester);
+    expect(server.driverCalls, contains('answer:false'));
+    // Left on a red one: hidden; right on the other: taken, and the map switches to navigation.
+    await tester.drag(find.textContaining('Client hors de ton chemin · 2 place(s)'), const Offset(-600, 0));
+    await settle(tester);
+    expect(find.textContaining('· 2 place(s)'), findsNothing);
+    await tester.drag(find.textContaining('Client hors de ton chemin · 1 place(s)'), const Offset(600, 0));
+    await settle(tester);
+    expect(server.driverCalls, contains('take:51111111-2222-4333-8444-555555555555'));
+    expect(find.textContaining('Course acceptée'), findsOneWidget);
+    expect(find.text('Arrêter le suivi'), findsOneWidget);
   });
 
   testWidgets('avec une direction, le chauffeur prend deux clients en partagé et mène chaque course', (tester) async {
