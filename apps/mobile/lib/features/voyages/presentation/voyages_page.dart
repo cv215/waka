@@ -59,6 +59,10 @@ class _VoyagesPageState extends State<VoyagesPage> {
   bool _busy = false;
   /// Same request after a lost answer: same key, so the server never records it twice.
   final Map<String, String> _keys = {};
+  /// Publishing a trip needs an approved driver account (the server refuses anyone else): only then the « Mes voyages »
+  /// tab appears. A private driver whose subscription is due still publishes trips (R12: no subscription for them).
+  bool _driver = false;
+  static const _publishing = {'active', 'provisional', 'subscription_required'};
 
   @override
   void initState() {
@@ -91,9 +95,20 @@ class _VoyagesPageState extends State<VoyagesPage> {
     final (session, client) = _context();
     final upcoming = await _gateway.upcomingVoyages(session, client);
     final reservations = await _gateway.myVoyageReservations(session, client);
-    final mine = await _gateway.myVoyages(session, client);
+    var driver = false;
+    final access = widget.login.gateway;
+    if (access is DriverAccessGateway) {
+      try {
+        driver = _publishing.contains((await (access as DriverAccessGateway).driverAccess(session, client)).access);
+      } on PhotoProblem {
+        driver = false; // unknown access: nothing to publish rather than a refused form
+      }
+    }
+    final mine = driver ? await _gateway.myVoyages(session, client) : const <VoyageView>[];
     final incidents = await _gateway.myIncidents(session, client);
-    if (mounted) setState(() { _upcoming = upcoming; _reservations = reservations; _mine = mine; _incidents = incidents; });
+    if (mounted) {
+      setState(() { _upcoming = upcoming; _reservations = reservations; _mine = mine; _incidents = incidents; _driver = driver; });
+    }
   }
 
   String _key(String request) => _keys.putIfAbsent(request, randomLoginId);
@@ -154,18 +169,23 @@ class _VoyagesPageState extends State<VoyagesPage> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: 4,
+    key: ValueKey(_driver),
+    length: _driver ? 4 : 3,
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Voyage'),
         actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : _refresh, icon: const Icon(Icons.refresh))],
-        bottom: const TabBar(isScrollable: true,
-            tabs: [Tab(text: 'Trouver'), Tab(text: 'Mes réservations'), Tab(text: 'Mes voyages'), Tab(text: 'Incidents')]),
+        bottom: TabBar(isScrollable: true, tabs: [
+          const Tab(text: 'Trouver'),
+          const Tab(text: 'Mes réservations'),
+          if (_driver) const Tab(text: 'Mes voyages'),
+          const Tab(text: 'Incidents'),
+        ]),
       ),
       body: Column(children: [
         if (_message != null)
           Padding(padding: const EdgeInsets.all(12), child: Semantics(liveRegion: true, child: Text(_message!))),
-        Expanded(child: TabBarView(children: [_find(), _myReservations(), _myVoyages(), _myIncidents()])),
+        Expanded(child: TabBarView(children: [_find(), _myReservations(), if (_driver) _myVoyages(), _myIncidents()])),
       ]),
     ),
   );

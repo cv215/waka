@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:waka_mobile/features/identity/application/login_flow.dart';
+import 'package:waka_mobile/features/identity/data/driver_access_models.dart';
 import 'package:waka_mobile/features/identity/data/login_client.dart';
 import 'package:waka_mobile/features/identity/data/login_models.dart';
 import 'package:waka_mobile/features/identity/data/login_store.dart';
@@ -33,8 +34,16 @@ Map<String, Object?> reservationJson(String voyage, {String state = 'awaiting_pa
   'boardingCode': {'awaiting_payment', 'confirmed'}.contains(state) ? '482913' : null, 'idempotentReplay': false,
 };
 
-class VoyageFixture extends fixture.Gateway implements VoyageGateway {
+class VoyageFixture extends fixture.Gateway implements VoyageGateway, DriverAccessGateway {
   VoyageFixture(LoginSession session) : super(session, 'private', 'holder');
+  /// The account's driver access; 'none' for a client who is not a driver.
+  String access = 'active';
+  @override
+  Future<DriverAccessView> driverAccess(LoginSession s, String client) async => DriverAccessView.parse({
+    'access': access, 'basis': access == 'active' ? 'paid_period' : null, 'applicationId': access == 'none' ? null : randomLoginId(),
+    'category': access == 'none' ? null : 'private', 'admissionState': access == 'none' ? null : 'approved', 'reasons': <String>[],
+    'documentsToRenew': <String>[], 'trial': null, 'serverTime': iso(departure),
+  });
   final voyageId = randomLoginId();
   final reserved = <String>[];
   final published = <(List<VoyageStop>, int, Map<String, int>)>[];
@@ -121,7 +130,7 @@ class VoyageFixture extends fixture.Gateway implements VoyageGateway {
   }
 }
 
-Future<(LoginFlow, VoyageFixture)> show(WidgetTester tester, {PickDateTime? pick}) async {
+Future<(LoginFlow, VoyageFixture)> show(WidgetTester tester, {PickDateTime? pick, String access = 'active'}) async {
   tester.view.physicalSize = const Size(900, 2400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -129,7 +138,7 @@ Future<(LoginFlow, VoyageFixture)> show(WidgetTester tester, {PickDateTime? pick
     final session = fixture.grant();
     final store = fixture.MemoryStore();
     await store.write(LoginSnapshot(randomLoginId(), session: session));
-    final gateway = VoyageFixture(session);
+    final gateway = VoyageFixture(session)..access = access;
     final login = LoginFlow(gateway, store);
     await login.initialize();
     return (login, gateway);
@@ -153,6 +162,16 @@ void main() {
         throwsA(isA<PhotoProblem>()));
     expect(() => VoyageView.parse({...voyageJson(id), 'prices': {'0-1': 4000, '0-2': 10001, '1-2': 2000}}), throwsA(isA<PhotoProblem>()));
     expect(() => VoyageView.parse({...voyageJson(id), 'driverAccountId': 'x'}), throwsA(isA<PhotoProblem>()));
+  });
+
+  testWidgets('sans compte chauffeur actif : chercher et réserver, jamais publier', (tester) async {
+    final (login, gateway) = await show(tester, access: 'none');
+    expect(find.text('Trouver'), findsOneWidget);
+    expect(find.text('Mes réservations'), findsOneWidget);
+    expect(find.text('Mes voyages'), findsNothing);
+    expect(find.text('Publier un voyage'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
   });
 
   testWidgets('réserver le trajet complet : prix du chauffeur, paiement demandé dans les 3 minutes', (tester) async {
