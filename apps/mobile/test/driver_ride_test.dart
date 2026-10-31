@@ -43,7 +43,7 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
     driverCalls.add('presence:$online:${at?.toJson()}${destination == null ? '' : ':vers:${destination.toJson()}'}');
     if (!allowed) throw const PhotoProblem(PhotoFailure.driverNotAllowed);
     return DriverPresenceView.parse({'online': online, 'positionAt': online ? iso(departure) : null,
-      'destination': destination?.toJson()});
+      'destination': destination?.toJson(), 'route': destination == null ? null : '_p~iF~ps|U_ulLnnqC'});
   }
 
   @override
@@ -224,6 +224,8 @@ void main() {
     await settle(tester);
     expect(server.driverCalls.single, 'presence:true:{latitude: 3.8601, longitude: 11.5202}:vers:{latitude: 3.8935, longitude: 11.509}');
     expect(find.textContaining('En route vers Bastos'), findsOneWidget);
+    expect(find.text('tracés normal'), findsOneWidget, reason: 'his green route as soon as he is online with a direction');
+    expect(find.text('Ton trajet normal'), findsOneWidget);
 
     await tester.tap(find.text('Actualiser'));
     await settle(tester);

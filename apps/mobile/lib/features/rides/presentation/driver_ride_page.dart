@@ -77,6 +77,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
   String _placeSession = randomLoginId();
   Timer? _typing;
   RidePoint? _position, _destination;
+  /// The driver's own route to his direction, as the server drew it (green).
+  List<RidePoint>? _myRoute;
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
   /// Route shapes per proposal, asked once each (the screen refreshes every few seconds).
@@ -163,6 +165,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _online = presence.online;
       _position = online ? where : _position;
       _positionAt = presence.positionAt;
+      // Keep the last route drawn if this refresh brought none (the server redraws it at most every five minutes).
+      _myRoute = !online || _destination == null ? null : (presence.route ?? _myRoute);
       if (!online) _proposals = const [];
     });
   }
@@ -252,7 +256,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
 
   List<RidePath>? _drawn(DriverProposalView? offer) {
     final shapes = offer == null ? null : _shapes[offer.proposalId];
-    if (shapes == null) return null;
+    if (shapes == null) return _myRoute == null ? null : [RidePath.normal(_myRoute!)];
     return [
       if (shapes.normal != null) RidePath.normal(shapes.normal!),
       if (shapes.combined != null) RidePath.combined(shapes.combined!),
@@ -265,12 +269,15 @@ class _DriverRidePageState extends State<DriverRidePage> {
     if (!opened && mounted) setState(() => _message = 'Impossible d’ouvrir l’application de navigation sur ce téléphone.');
   }
 
-  Widget _legend(ThemeData theme, bool withDirection) => Padding(
+  Widget _legend(List<RidePath> drawn) => Padding(
     padding: const EdgeInsets.only(top: 6),
     child: Wrap(spacing: 12, runSpacing: 4, children: [
-      if (withDirection) _swatch(const Color(0xFF2E7D32), 'Ton trajet normal'),
-      _swatch(const Color(0xFF1565C0), 'Trajet du client'),
-      _swatch(const Color(0xFFF9A825), withDirection ? 'Ton nouveau trajet' : 'Ton trajet avec le client'),
+      for (final path in drawn)
+        _swatch(path.color, switch (path.name) {
+          'normal' => 'Ton trajet normal',
+          'client' => 'Trajet du client',
+          _ => _destination != null ? 'Ton nouveau trajet' : 'Ton trajet avec le client',
+        }),
     ]),
   );
 
@@ -412,7 +419,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
                   }, paths: drawn),
             ),
           ),
-          if (drawn != null && drawn.isNotEmpty) _legend(theme, _destination != null),
+          if (drawn != null && drawn.isNotEmpty) _legend(drawn),
           const SizedBox(height: 12),
           SwitchListTile(
             title: Text(_online ? 'En ligne' : 'Hors ligne'),

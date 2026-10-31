@@ -69,10 +69,16 @@ public final class PersistentRideService {
      * direction (null without one), {@code client} the client's trip, {@code combined} his route with this client.
      */
     public record ProposalPaths(String normal, String client, String combined) { }
-    /** {@code destination}: the direction the driver gave (R15), or null. */
-    public record PresenceView(boolean online, Instant positionAt, GeoPoint destination) {
+    /**
+     * {@code destination}: the direction the driver gave (R15), or null. {@code route}: his road route to it (encoded
+     * polyline, display only), recomputed at most every five minutes or when the direction changes; null otherwise.
+     */
+    public record PresenceView(boolean online, Instant positionAt, GeoPoint destination, String route) {
         @Override public String toString() { return "PresenceView[REDACTED]"; }
     }
+    private record OwnRoute(GeoPoint destination, Instant at, String path) { }
+    private static final Duration OWN_ROUTE_REFRESH = Duration.ofMinutes(5);
+    private final Map<String, OwnRoute> ownRoutes = new java.util.concurrent.ConcurrentHashMap<>();
     private record Out<T>(T value, RideException.Code refusal) { }
     private record Candidate(String driver, GeoPoint position, GeoPoint destination) { }
     /** What the car already carries: active reservations, their seats, a VIP among them, the detour already used. */
@@ -133,12 +139,13 @@ public final class PersistentRideService {
     public PresenceView presence(char[] token, String client, boolean online, GeoPoint position, GeoPoint destination) {
         if (online && position == null) throw invalid();
         GeoPoint direction = online ? destination : null;
-        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+        record Saved(String driver, Instant positionAt) { }
+        Saved saved = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             Instant now = micros(session.serverTime());
             String actor = session.accountId().toString();
             if (online) {
                 var access = DriverAccessService.evaluate(applications.accessBasisLocked(session.accountId(), now), now);
-                if (!Set.of("active", "provisional").contains(access.access())) return new Out<PresenceView>(null, RideException.Code.DRIVER_NOT_ALLOWED);
+                if (!Set.of("active", "provisional").contains(access.access())) return new Out<Saved>(null, RideException.Code.DRIVER_NOT_ALLOWED);
             }
             byte[] cipher = online ? crypto.encrypt(position.canonical().getBytes(StandardCharsets.US_ASCII), positionAad(actor, crypto.keyId())) : null;
             byte[] towards = direction == null ? null
@@ -147,8 +154,27 @@ public final class PersistentRideService {
                     + "ON DUPLICATE KEY UPDATE online=VALUES(online),key_id=VALUES(key_id),position_cipher=VALUES(position_cipher),position_at=VALUES(position_at),"
                     + "destination_cipher=VALUES(destination_cipher),updated_at=VALUES(updated_at)",
                     gate, actor, online ? 1 : 0, crypto.keyId(), cipher, online ? sql(now) : null, towards, sql(now));
-            return new Out<>(new PresenceView(online, online ? now : null, direction), null);
+            return new Out<>(new Saved(actor, online ? now : null), null);
         }));
+        // The drawn route is asked outside the transaction, like every maps call.
+        if (direction == null) {
+            ownRoutes.remove(saved.driver());
+            return new PresenceView(online, saved.positionAt(), null, null);
+        }
+        return new PresenceView(online, saved.positionAt(), direction, ownRoute(saved.driver(), position, direction, saved.positionAt()));
+    }
+
+    /** The driver's own route to his direction: one maps call per direction and per five minutes, whatever the refreshes. */
+    private String ownRoute(String driver, GeoPoint position, GeoPoint direction, Instant now) {
+        OwnRoute known = ownRoutes.get(driver);
+        if (known != null && known.destination().equals(direction) && now.isBefore(known.at().plus(OWN_ROUTE_REFRESH))) return known.path();
+        try {
+            String path = paths.encodedPath(List.of(position, direction));
+            ownRoutes.put(driver, new OwnRoute(direction, now, path));
+            return path;
+        } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException unavailable) {
+            return known != null && known.destination().equals(direction) ? known.path() : null;
+        }
     }
 
     // ---- Client search (A09-A11) ----
