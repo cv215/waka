@@ -333,3 +333,22 @@ Le reste est décidé par Claude, en retenant le choix le plus prudent.
 - **Agrégateurs** : Fapshi indique ne pas accepter les « agrégateurs de paiement », et active le paiement direct en production selon l'usage. WAKA doit être présentée honnêtement comme un service de transport qui encaisse le prix de ses propres courses. Fapshi peut refuser ; Notch Pay reste alors prêt.
 - **Avis juridique** à obtenir avant d'ouvrir les dépôts au public : un crédit rechargeable et retirable peut relever de la monnaie électronique (CEMAC/COBAC).
 - **Bac à sable d'abord** : la forme réelle des réponses de Fapshi est à confirmer en bac à sable avant toute clé réelle. Les clés ne vont jamais dans Git.
+
+## R15 — Partagé par direction : plusieurs clients dans une voiture (31 octobre 2026)
+
+Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R13.
+
+**Décisions du fondateur.**
+- **Partagé** : le chauffeur indique sa **direction**, c'est-à-dire le lieu où il va. WAKA lui propose des clients dont le départ et l'arrivée sont **sur son chemin**. Plusieurs clients qui ne se connaissent pas partagent la voiture, dans la limite des places offertes.
+- **Détour** : **5 minutes au plus**. Le prix des clients déjà engagés ne change pas (R03 : un détour imposé par l'ajout d'un passager ne l'augmente pas).
+- **VIP inchangé** : la voiture entière, le chauffeur libre le plus proche, aucun autre client.
+
+**Précisions de Claude**, chaque fois la plus prudente :
+- **Sans direction**, le chauffeur reste disponible comme dans R13 : une seule réservation à la fois, en partagé (un groupe) ou en VIP.
+- **Avec une direction**, il ne reçoit que des demandes **partagées**, jamais de VIP. Il peut porter plusieurs réservations partagées en même temps, tant que leurs places additionnées ne dépassent pas ses places offertes.
+- **Calcul du détour**, sur le trajet routier du chauffeur, sans trafic en direct :
+  - détour = durée (position → départ du client → arrivée du client → direction) − durée (position → direction) ;
+  - une demande n'est proposée que si ce détour, **ajouté aux détours déjà acceptés depuis que la voiture a pris son premier client**, reste de 5 minutes au plus. Ainsi, aucun client déjà engagé ne voit son trajet allongé de plus de 5 minutes en tout ;
+  - le compteur repart de zéro quand la voiture n'a plus aucune réservation en cours.
+- Les autres conditions de R13 restent : prise en charge à 10 minutes de route au plus, position fraîche, accès effectif, une proposition à la fois, paiement en 3 minutes, code d'embarquement par client.
+- **Limite connue** : le détour est mesuré pour l'ordre « prendre le nouveau client, le déposer, puis continuer ». L'ordre réel des arrêts est choisi par le chauffeur ; la meilleure tournée sera une évolution ultérieure.

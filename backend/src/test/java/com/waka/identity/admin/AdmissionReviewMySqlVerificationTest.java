@@ -510,6 +510,70 @@ class AdmissionReviewMySqlVerificationTest {
                 code.apply(() -> rides.ride(agent.token, client, r3.reservationId())), "only its two parties see a ride");
     }
 
+    @Test void sharedRidesByDirectionGroupClientsWithinSeatsAndFiveMinutesOfDetour() {
+        Login driver = login(candidatePhone);
+        UUID app = readyFile(current, driver, "taxi", "holder", "RS 33-EF", false);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        var detail = current.reviews.detail(agent.token, client, adminToken, app);
+        var waivers = new ArrayList<AdmissionReviewService.Waiver>();
+        for (String c : List.of("REGISTRATION_CERTIFICATE", "INSURANCE", "TECHNICAL_INSPECTION", "TRANSPORT_LICENCE", "PUBLIC_TRANSPORT_CARD")) {
+            waivers.add(new AdmissionReviewService.Waiver(c, "TO_PROVIDE_AFTER_START"));
+        }
+        current.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), detail.application().version(), "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), allDocuments(detail, "acceptable"), waivers);
+        clock.advance(61);
+        Login rider = login(thirdPhone);
+        SecureRandom random = new SecureRandom();
+        byte[] e1 = new byte[32], m1 = new byte[32], e2 = new byte[32], m2 = new byte[32];
+        for (byte[] k : new byte[][] { e1, m1, e2, m2 }) random.nextBytes(k);
+        var quotes = new com.waka.mobility.quote.PersistentQuoteService(sessions, jdbc, new com.waka.identity.profile.ProfileCrypto(e1, m1, "test-key", random),
+                new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc), "launch-v1", (a, b) -> new java.math.BigDecimal("7480"),
+                com.waka.geo.CircleServiceArea.LAUNCH, clock);
+        // Every road leg takes 60 s: a client on the way adds 60 + 60 + 60 - 60 = 120 s of detour.
+        java.util.concurrent.atomic.AtomicInteger leg = new java.util.concurrent.atomic.AtomicInteger(60);
+        var rides = new com.waka.mobility.ride.PersistentRideService(sessions, jdbc, current.applications, quotes,
+                new com.waka.pricing.infrastructure.JdbcFareScheduleRepository(jdbc), (from, to) -> leg.get(),
+                new com.waka.identity.profile.ProfileCrypto(e2, m2, "test-key", random), clock);
+        var a = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.848"), new java.math.BigDecimal("11.502"));
+        var b = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.87"), new java.math.BigDecimal("11.52"));
+        var mvan = new com.waka.geo.GeoPoint(new java.math.BigDecimal("3.827"), new java.math.BigDecimal("11.515"));
+        java.util.function.Function<com.waka.mobility.quote.PersistentQuoteService.Mode, Boolean> offered = m -> {
+            var q = quotes.create(rider.token, client, UUID.randomUUID(), m, 1, a, b);
+            return rides.search(rider.token, client, UUID.randomUUID(), q.quoteId()).proposalPending();
+        };
+
+        var presence = rides.presence(driver.token, client, true, a, mvan);
+        assertEquals(mvan, presence.destination());
+        assertFalse(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.VIP), "with a direction: never a VIP");
+        assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED));
+        var p1 = rides.proposals(driver.token, client).getFirst();
+        assertEquals(120, p1.detourSeconds());
+        var r1 = rides.respond(driver.token, client, p1.proposalId(), true);
+        assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED), "a second stranger on the way, the car still has seats");
+        var r2 = rides.respond(driver.token, client, rides.proposals(driver.token, client).getFirst().proposalId(), true);
+        assertEquals(2, rides.driverRides(driver.token, client).size(), "two clients in the same car");
+        assertFalse(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED), "120 + 120 + 120 s would pass five minutes");
+        assertEquals(240, (int) jdbc.queryForObject("SELECT detour_used_seconds FROM driver_presence WHERE gate_hash=? AND account_id=?",
+                Integer.class, gate, driver.account.toString()));
+
+        // Both rides end: the counter starts again from zero for the next client.
+        rides.cancelByClient(rider.token, client, r1.reservationId());
+        rides.cancelByClient(rider.token, client, r2.reservationId());
+        assertTrue(rides.driverRides(driver.token, client).isEmpty());
+        assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED));
+        leg.set(200);
+        rides.respond(driver.token, client, rides.proposals(driver.token, client).getFirst().proposalId(), false);
+        assertFalse(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED), "a 400 s detour alone is refused");
+
+        // Without a direction the car is as in R13: one reservation, VIP possible.
+        leg.set(60);
+        rides.presence(driver.token, client, true, a);
+        assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.VIP));
+        assertEquals(0, rides.proposals(driver.token, client).getFirst().detourSeconds());
+    }
+
     @Test void privateDriverTrialStartsWithTheFirstRideThenAPaidPeriodFollowsIt() {
         Login driver = login(candidatePhone);
         UUID app = readyFile(current, driver, "private", "holder", "PR 22-CD", false);

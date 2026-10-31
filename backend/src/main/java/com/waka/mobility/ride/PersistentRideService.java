@@ -40,6 +40,8 @@ public final class PersistentRideService {
     public static final Duration SEARCH = Duration.ofMinutes(2), PROPOSAL = Duration.ofSeconds(30),
             POSITION_FRESHNESS = Duration.ofSeconds(60), PAYMENT_WINDOW = Duration.ofMinutes(3), WAIT = Duration.ofMinutes(5);
     public static final int MAX_PICKUP_SECONDS = 600;
+    /** R15: total detour accepted for a car carrying shared clients by direction. */
+    public static final int MAX_DETOUR_SECONDS = 300;
     private static final Set<String> ACTIVE = Set.of("awaiting_payment", "confirmed", "driver_arrived", "boarded");
     /** States in which the client follows the driver coming to the pickup point. */
     private static final Set<String> COMING = Set.of("awaiting_payment", "confirmed", "driver_arrived");
@@ -55,13 +57,19 @@ public final class PersistentRideService {
     }
     public record SearchView(UUID searchId, String state, Instant expiresAt, boolean proposalPending, RideView ride,
             boolean idempotentReplay) { }
+    /** {@code detourSeconds}: R15 detour this client adds to a driver heading somewhere; 0 for a driver without direction. */
     public record ProposalView(UUID proposalId, String mode, int seats, long priceXaf, long driverXaf, int pickupSeconds,
-            Instant expiresAt, GeoPoint pickup, GeoPoint dropoff) {
+            Instant expiresAt, GeoPoint pickup, GeoPoint dropoff, int detourSeconds) {
         @Override public String toString() { return "ProposalView[REDACTED]"; }
     }
-    public record PresenceView(boolean online, Instant positionAt) { }
+    /** {@code destination}: the direction the driver gave (R15), or null. */
+    public record PresenceView(boolean online, Instant positionAt, GeoPoint destination) {
+        @Override public String toString() { return "PresenceView[REDACTED]"; }
+    }
     private record Out<T>(T value, RideException.Code refusal) { }
-    private record Candidate(String driver, GeoPoint position) { }
+    private record Candidate(String driver, GeoPoint position, GeoPoint destination) { }
+    /** What the car already carries: active reservations, their seats, a VIP among them, the detour already used. */
+    private record Load(int active, int seats, boolean vip, int detourUsed) { }
 
     private final PersistentSessionService sessions;
     private final JdbcTemplate jdbc;
@@ -96,7 +104,16 @@ public final class PersistentRideService {
 
     /** Online with a position taken now by the server clock, or offline (the position is then erased). */
     public PresenceView presence(char[] token, String client, boolean online, GeoPoint position) {
+        return presence(token, client, online, position, null);
+    }
+
+    /**
+     * R15: with a {@code destination}, the driver receives only shared clients on his way; without one, he is available
+     * as in R13. Each update gives the direction again (none means no direction); going offline erases both points.
+     */
+    public PresenceView presence(char[] token, String client, boolean online, GeoPoint position, GeoPoint destination) {
         if (online && position == null) throw invalid();
+        GeoPoint direction = online ? destination : null;
         return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             Instant now = micros(session.serverTime());
             String actor = session.accountId().toString();
@@ -105,10 +122,13 @@ public final class PersistentRideService {
                 if (!Set.of("active", "provisional").contains(access.access())) return new Out<PresenceView>(null, RideException.Code.DRIVER_NOT_ALLOWED);
             }
             byte[] cipher = online ? crypto.encrypt(position.canonical().getBytes(StandardCharsets.US_ASCII), positionAad(actor, crypto.keyId())) : null;
-            jdbc.update("INSERT INTO driver_presence (gate_hash,account_id,online,key_id,position_cipher,position_at,updated_at) VALUES (?,?,?,?,?,?,?) "
-                    + "ON DUPLICATE KEY UPDATE online=VALUES(online),key_id=VALUES(key_id),position_cipher=VALUES(position_cipher),position_at=VALUES(position_at),updated_at=VALUES(updated_at)",
-                    gate, actor, online ? 1 : 0, crypto.keyId(), cipher, online ? sql(now) : null, sql(now));
-            return new Out<>(new PresenceView(online, online ? now : null), null);
+            byte[] towards = direction == null ? null
+                    : crypto.encrypt(direction.canonical().getBytes(StandardCharsets.US_ASCII), destinationAad(actor, crypto.keyId()));
+            jdbc.update("INSERT INTO driver_presence (gate_hash,account_id,online,key_id,position_cipher,position_at,destination_cipher,updated_at) VALUES (?,?,?,?,?,?,?,?) "
+                    + "ON DUPLICATE KEY UPDATE online=VALUES(online),key_id=VALUES(key_id),position_cipher=VALUES(position_cipher),position_at=VALUES(position_at),"
+                    + "destination_cipher=VALUES(destination_cipher),updated_at=VALUES(updated_at)",
+                    gate, actor, online ? 1 : 0, crypto.keyId(), cipher, online ? sql(now) : null, towards, sql(now));
+            return new Out<>(new PresenceView(online, online ? now : null, direction), null);
         }));
     }
 
@@ -174,7 +194,7 @@ public final class PersistentRideService {
      * any transaction, then the best candidate is rechecked and proposed in a second transaction.
      */
     private void advance(char[] token, String client, UUID searchId) {
-        record Pending(GeoPoint pickup, List<Candidate> candidates, int seats, String mode) { }
+        record Pending(GeoPoint pickup, GeoPoint dropoff, List<Candidate> candidates, int seats, String mode) { }
         Pending pending = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             Instant now = micros(session.serverTime());
             expireHolds(now);
@@ -187,22 +207,31 @@ public final class PersistentRideService {
             var quote = quotes.forRideLocked(session.accountId(), UUID.fromString((String) search.getFirst()[0]));
             List<Candidate> candidates = new ArrayList<>();
             for (Candidate c : online(now)) {
-                if (c.driver.equals(search.getFirst()[1]) || proposedBefore(searchId, c.driver) || hasActiveRide(c.driver)) continue;
-                var basis = applications.accessBasisLocked(UUID.fromString(c.driver), now);
-                var access = DriverAccessService.evaluate(basis, now);
-                if (!Set.of("active", "provisional").contains(access.access()) || basis.offeredSeats() == null
-                        || basis.offeredSeats() < quote.passengerCount()) continue;
+                if (c.driver.equals(search.getFirst()[1]) || proposedBefore(searchId, c.driver)) continue;
+                Integer seats = offeredSeats(c.driver, now);
+                if (seats == null || !fits(c, quote.mode(), quote.passengerCount(), seats, 0)) continue;
                 candidates.add(c);
             }
-            return new Out<>(new Pending(quote.origin(), candidates, quote.passengerCount(), quote.mode()), null);
+            return new Out<>(new Pending(quote.origin(), quote.destination(), candidates, quote.passengerCount(), quote.mode()), null);
         }));
         if (pending == null || pending.candidates().isEmpty()) return;
-        record Timed(String driver, int seconds) { }
+        record Timed(String driver, int seconds, int detour) { }
         List<Timed> timed = new ArrayList<>();
         for (Candidate c : pending.candidates()) {
             try {
                 Integer seconds = pickupTimes.pickupSeconds(c.position, pending.pickup());
-                if (seconds != null && seconds >= 0 && seconds <= MAX_PICKUP_SECONDS) timed.add(new Timed(c.driver, seconds));
+                if (seconds == null || seconds < 0 || seconds > MAX_PICKUP_SECONDS) continue;
+                int detour = 0;
+                if (c.destination != null) {
+                    // R15: position -> client pickup -> client drop-off -> direction, against position -> direction.
+                    Integer ride = pickupTimes.pickupSeconds(pending.pickup(), pending.dropoff());
+                    Integer onward = pickupTimes.pickupSeconds(pending.dropoff(), c.destination);
+                    Integer direct = pickupTimes.pickupSeconds(c.position, c.destination);
+                    if (ride == null || onward == null || direct == null) continue;
+                    detour = Math.max(0, seconds + ride + onward - direct);
+                    if (detour > MAX_DETOUR_SECONDS) continue;
+                }
+                timed.add(new Timed(c.driver, seconds, detour));
             } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException hidden) {
                 // A driver without a reliable road time is simply not proposed this time.
             }
@@ -218,11 +247,13 @@ public final class PersistentRideService {
             }
             var quote = quotes.forRideLocked(session.accountId(), UUID.fromString((String) search.getFirst()[2]));
             for (Timed t : timed) {
-                // Recheck: still online and fresh, still free, never proposed for this search.
-                if (online(now).stream().noneMatch(c -> c.driver.equals(t.driver)) || hasActiveRide(t.driver) || proposedBefore(searchId, t.driver)) continue;
+                // Recheck: still online and fresh, still room (seats, detour), never proposed for this search.
+                var still = online(now).stream().filter(c -> c.driver.equals(t.driver)).findFirst().orElse(null);
+                Integer seats = still == null ? null : offeredSeats(t.driver, now);
+                if (seats == null || !fits(still, quote.mode(), quote.passengerCount(), seats, t.detour) || proposedBefore(searchId, t.driver)) continue;
                 Instant expires = earliest(earliest(now.plus(PROPOSAL), (Instant) search.getFirst()[1]), quote.expiresAt());
-                jdbc.update("INSERT INTO ride_proposal (gate_hash,id,search_id,driver_account_id,pickup_seconds,state,sent_at,expires_at) VALUES (?,?,?,?,?,'sent',?,?)",
-                        gate, UUID.randomUUID().toString(), searchId.toString(), t.driver, t.seconds, sql(now), sql(expires));
+                jdbc.update("INSERT INTO ride_proposal (gate_hash,id,search_id,driver_account_id,pickup_seconds,detour_seconds,state,sent_at,expires_at) VALUES (?,?,?,?,?,?,'sent',?,?)",
+                        gate, UUID.randomUUID().toString(), searchId.toString(), t.driver, t.seconds, t.detour, sql(now), sql(expires));
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
@@ -235,25 +266,26 @@ public final class PersistentRideService {
     public List<ProposalView> proposals(char[] token, String client) {
         return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             Instant now = micros(session.serverTime());
-            var rows = jdbc.query("SELECT p.id,p.pickup_seconds,p.expires_at,s.quote_id,s.client_account_id FROM ride_proposal p JOIN ride_search s "
+            var rows = jdbc.query("SELECT p.id,p.pickup_seconds,p.expires_at,s.quote_id,s.client_account_id,p.detour_seconds FROM ride_proposal p JOIN ride_search s "
                     + "ON s.gate_hash=p.gate_hash AND s.id=p.search_id WHERE p.gate_hash=? AND p.driver_account_id=? AND p.state='sent' AND p.expires_at>? "
                     + "AND s.state='searching' ORDER BY p.expires_at", (rs, n) -> new Object[] { rs.getString(1), rs.getInt(2),
-                    instant(rs.getObject(3, LocalDateTime.class)), rs.getString(4), rs.getString(5) },
+                    instant(rs.getObject(3, LocalDateTime.class)), rs.getString(4), rs.getString(5), rs.getInt(6) },
                     gate, session.accountId().toString(), sql(now));
             List<ProposalView> views = new ArrayList<>();
             for (Object[] r : rows) {
                 var quote = quotes.forRideLocked(UUID.fromString((String) r[4]), UUID.fromString((String) r[3]));
                 FareCalculation fare = fare(quote);
                 views.add(new ProposalView(UUID.fromString((String) r[0]), quote.mode(), quote.passengerCount(), fare.priceXaf(),
-                        fare.driverXaf(), (Integer) r[1], (Instant) r[2], quote.origin(), quote.destination()));
+                        fare.driverXaf(), (Integer) r[1], (Instant) r[2], quote.origin(), quote.destination(), (Integer) r[5]));
             }
             return new Out<>(List.copyOf(views), null);
         }));
     }
 
     /**
-     * A13: before the proposal, search and quote deadlines, the driver accepts (the car's single active
-     * reservation is created, waiting for payment for three minutes) or refuses (the search goes on).
+     * A13: before the proposal, search and quote deadlines, the driver accepts (a reservation is created, waiting
+     * for payment for three minutes; R15: a driver with a direction may add shared ones while seats and detour allow)
+     * or refuses (the search goes on).
      */
     public RideView respond(char[] token, String client, UUID proposalId, boolean accept) {
         if (proposalId == null) throw invalid();
@@ -261,8 +293,8 @@ public final class PersistentRideService {
             Instant now = micros(session.serverTime());
             String actor = session.accountId().toString();
             expireHolds(now);
-            var rows = jdbc.query("SELECT search_id,state,expires_at FROM ride_proposal WHERE gate_hash=? AND id=? AND driver_account_id=? FOR UPDATE",
-                    (rs, n) -> new Object[] { rs.getString(1), rs.getString(2), instant(rs.getObject(3, LocalDateTime.class)) },
+            var rows = jdbc.query("SELECT search_id,state,expires_at,detour_seconds FROM ride_proposal WHERE gate_hash=? AND id=? AND driver_account_id=? FOR UPDATE",
+                    (rs, n) -> new Object[] { rs.getString(1), rs.getString(2), instant(rs.getObject(3, LocalDateTime.class)), rs.getInt(4) },
                     gate, proposalId.toString(), actor);
             if (rows.isEmpty()) return new Out<RideView>(null, RideException.Code.NOT_FOUND);
             String searchId = (String) rows.getFirst()[0];
@@ -279,8 +311,18 @@ public final class PersistentRideService {
             if (!"searching".equals(search[0]) || !now.isBefore((Instant) search[1]) || !now.isBefore(quote.expiresAt())) {
                 return new Out<RideView>(null, RideException.Code.PROPOSAL_EXPIRED);
             }
-            jdbc.query("SELECT account_id FROM driver_presence WHERE gate_hash=? AND account_id=? FOR UPDATE", (rs, n) -> rs.getString(1), gate, actor);
-            if (hasActiveRide(actor)) return new Out<RideView>(null, RideException.Code.CAR_BUSY);
+            // The presence row serializes the car's acceptances; its direction decides how many reservations it may hold.
+            var me = presenceLocked(actor);
+            Integer seats = offeredSeats(actor, now);
+            int detour = (Integer) rows.getFirst()[3];
+            if (me == null || seats == null || !fits(me, quote.mode(), quote.passengerCount(), seats, detour)) {
+                return new Out<RideView>(null, RideException.Code.CAR_BUSY);
+            }
+            if (me.destination != null) {
+                Load load = load(actor);
+                jdbc.update("UPDATE driver_presence SET detour_used_seconds=? WHERE gate_hash=? AND account_id=?",
+                        (load.active == 0 ? 0 : load.detourUsed) + detour, gate, actor);
+            }
             FareCalculation fare = fare(quote);
             if (fare.priceXaf() != quote.totalXaf()) return new Out<RideView>(null, RideException.Code.SERVICE_UNAVAILABLE);
             String id = UUID.randomUUID().toString(), code = String.format("%06d", random.nextInt(1_000_000));
@@ -318,6 +360,18 @@ public final class PersistentRideService {
                     + "AND state IN ('awaiting_payment','confirmed','driver_arrived','boarded') ORDER BY created_at DESC LIMIT 1",
                     String.class, gate, actor, actor);
             return new Out<>(ids.isEmpty() ? null : ride(ids.getFirst(), actor), null);
+        }));
+    }
+
+    /** R15: every ride the driver carries now (several shared clients with a direction), oldest first. */
+    public List<RideView> driverRides(char[] token, String client) {
+        return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
+            expireHolds(micros(session.serverTime()));
+            String actor = session.accountId().toString();
+            var ids = jdbc.queryForList("SELECT id FROM ride_reservation WHERE gate_hash=? AND driver_account_id=? "
+                    + "AND state IN ('awaiting_payment','confirmed','driver_arrived','boarded') ORDER BY created_at LIMIT 10",
+                    String.class, gate, actor);
+            return new Out<>(ids.stream().map(id -> ride(id, actor)).toList(), null);
         }));
     }
 
@@ -413,12 +467,48 @@ public final class PersistentRideService {
         }
     }
     private List<Candidate> online(Instant now) {
-        return jdbc.query("SELECT account_id,key_id,position_cipher FROM driver_presence WHERE gate_hash=? AND online=1 AND position_at>=?",
-                (rs, n) -> {
-                    if (!crypto.keyId().equals(rs.getString(2))) return null;
-                    String[] p = new String(crypto.decrypt(rs.getBytes(3), positionAad(rs.getString(1), rs.getString(2))), StandardCharsets.US_ASCII).split(",");
-                    return new Candidate(rs.getString(1), new GeoPoint(new BigDecimal(p[0]), new BigDecimal(p[1])));
-                }, gate, sql(now.minus(POSITION_FRESHNESS))).stream().filter(Objects::nonNull).toList();
+        return jdbc.query("SELECT account_id,key_id,position_cipher,destination_cipher FROM driver_presence WHERE gate_hash=? AND online=1 AND position_at>=?",
+                (rs, n) -> candidate(rs.getString(1), rs.getString(2), rs.getBytes(3), rs.getBytes(4)),
+                gate, sql(now.minus(POSITION_FRESHNESS))).stream().filter(Objects::nonNull).toList();
+    }
+    /** The driver's presence row, locked: it serializes the car's acceptances. Null without a row or with an old key. */
+    private Candidate presenceLocked(String driver) {
+        return jdbc.query("SELECT account_id,key_id,position_cipher,destination_cipher FROM driver_presence WHERE gate_hash=? AND account_id=? FOR UPDATE",
+                (rs, n) -> candidate(rs.getString(1), rs.getString(2), rs.getBytes(3), rs.getBytes(4)), gate, driver)
+                .stream().filter(Objects::nonNull).findFirst().orElse(null);
+    }
+    private Candidate candidate(String driver, String keyId, byte[] position, byte[] destination) {
+        if (!crypto.keyId().equals(keyId)) return null;
+        return new Candidate(driver, position == null ? null : point(crypto.decrypt(position, positionAad(driver, keyId))),
+                destination == null ? null : point(crypto.decrypt(destination, destinationAad(driver, keyId))));
+    }
+    private static GeoPoint point(byte[] canonical) {
+        String[] p = new String(canonical, StandardCharsets.US_ASCII).split(",");
+        return new GeoPoint(new BigDecimal(p[0]), new BigDecimal(p[1]));
+    }
+    private Load load(String driver) {
+        return jdbc.queryForObject("SELECT COUNT(*),COALESCE(SUM(r.seats),0),COALESCE(SUM(r.mode='vip'),0),"
+                + "COALESCE((SELECT detour_used_seconds FROM driver_presence p WHERE p.gate_hash=? AND p.account_id=?),0) "
+                + "FROM ride_reservation r WHERE r.gate_hash=? AND r.driver_account_id=? AND r.active_marker=1",
+                (rs, n) -> new Load(rs.getInt(1), rs.getInt(2), rs.getInt(3) > 0, rs.getInt(4)), gate, driver, gate, driver);
+    }
+    /** Seats the driver's approved vehicle offers, when his access is effective; null otherwise. */
+    private Integer offeredSeats(String driver, Instant now) {
+        var basis = applications.accessBasisLocked(UUID.fromString(driver), now);
+        var access = DriverAccessService.evaluate(basis, now);
+        return Set.of("active", "provisional").contains(access.access()) ? basis.offeredSeats() : null;
+    }
+    /**
+     * R13/R15: a driver without direction takes one reservation at a time (shared group or VIP); a driver with a
+     * direction takes only shared ones, several while seats last and the car's total detour stays within five minutes.
+     */
+    private boolean fits(Candidate car, String mode, int seats, int offeredSeats, int extraDetour) {
+        if (seats > offeredSeats) return false;
+        Load load = load(car.driver());
+        if (car.destination() == null) return load.active() == 0;
+        if (!"shared".equals(mode) || load.vip()) return false;
+        int used = load.active() == 0 ? 0 : load.detourUsed();
+        return load.seats() + seats <= offeredSeats && used + extraDetour <= MAX_DETOUR_SECONDS;
     }
     private record Seen(GeoPoint position, Instant at) { }
     /** The driver's own fresh position (online, less than a minute old) with its server time, or null. */
@@ -439,11 +529,6 @@ public final class PersistentRideService {
     private boolean proposedBefore(UUID searchId, String driver) {
         Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM ride_proposal WHERE gate_hash=? AND search_id=? AND driver_account_id=?",
                 Integer.class, gate, searchId.toString(), driver);
-        return n != null && n > 0;
-    }
-    private boolean hasActiveRide(String driver) {
-        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM ride_reservation WHERE gate_hash=? AND driver_account_id=? AND active_marker=1",
-                Integer.class, gate, driver);
         return n != null && n > 0;
     }
     private boolean party(String rideId, String actor) {
@@ -487,6 +572,7 @@ public final class PersistentRideService {
     private String codeMac(String rideId, String code) { return crypto.requestMac(rideId, "ride-boarding-code-v1", code); }
     private byte[] codeAad(String rideId, String keyId) { return ProfileCrypto.aad("waka-ride-boarding-code-v1", gate, rideId, keyId); }
     private byte[] positionAad(String driver, String keyId) { return ProfileCrypto.aad("waka-driver-position-v1", gate, driver, keyId); }
+    private byte[] destinationAad(String driver, String keyId) { return ProfileCrypto.aad("waka-driver-destination-v1", gate, driver, keyId); }
     private static boolean same(String a, String b) {
         return MessageDigest.isEqual(a.getBytes(StandardCharsets.US_ASCII), b.getBytes(StandardCharsets.US_ASCII));
     }

@@ -156,18 +156,22 @@ class CityRideView {
 /// A ride offered to this driver (K31): 30 seconds to answer.
 class DriverProposalView {
   const DriverProposalView(this.proposalId, this.mode, this.seats, this.priceXaf, this.driverXaf, this.pickupSeconds,
-      this.expiresAt, this.pickup, this.dropoff);
+      this.expiresAt, this.pickup, this.dropoff, {this.detourSeconds = 0});
   final String proposalId, mode;
   final int seats, priceXaf, driverXaf, pickupSeconds;
+  /// R15: the detour this client adds to the driver's direction (0 without a direction).
+  final int detourSeconds;
   final DateTime expiresAt;
   final RidePoint pickup, dropoff;
   static DriverProposalView parse(Object? value) {
-    final m = _exact(value, {'proposalId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'pickupSeconds', 'expiresAt', 'pickup', 'dropoff'});
+    final m = _exact(value, {'proposalId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'pickupSeconds', 'expiresAt', 'pickup', 'dropoff',
+      'detourSeconds'});
     if (!{'shared', 'vip'}.contains(m['mode'])) throw const FormatException();
     final price = _amount(m['priceXaf'], min: 1), share = _amount(m['driverXaf']);
     if (share > price) throw const FormatException();
     return DriverProposalView(_id(m['proposalId']), m['mode'] as String, _amount(m['seats'], min: 1, max: 5), price, share,
-        _amount(m['pickupSeconds'], max: 600), _instant(m['expiresAt']), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']));
+        _amount(m['pickupSeconds'], max: 600), _instant(m['expiresAt']), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']),
+        detourSeconds: _amount(m['detourSeconds'], max: 300));
   }
   static List<DriverProposalView> parseList(Object? value) {
     try {
@@ -181,14 +185,17 @@ class DriverProposalView {
 
 /// The driver's presence as the server recorded it; the position time is the server's.
 class DriverPresenceView {
-  const DriverPresenceView(this.online, this.positionAt);
+  const DriverPresenceView(this.online, this.positionAt, [this.destination]);
   final bool online;
   final DateTime? positionAt;
+  /// R15: the direction the server recorded, or null.
+  final RidePoint? destination;
   static DriverPresenceView parse(Object? value) {
     try {
-      final m = _exact(value, {'online', 'positionAt'});
+      final m = _exact(value, {'online', 'positionAt', 'destination'});
       if (m['online'] is! bool) throw const FormatException();
-      return DriverPresenceView(m['online'] as bool, _instantOrNull(m['positionAt']));
+      return DriverPresenceView(m['online'] as bool, _instantOrNull(m['positionAt']),
+          m['destination'] == null ? null : RidePoint.parse(m['destination']));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }
