@@ -99,7 +99,7 @@ class RideFixture extends PayFixture implements RideGateway {
 }
 
 Widget _fakeMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint) onTap,
-        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false}) =>
+        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false, double? heading}) =>
     GestureDetector(
       key: const Key('carte'),
       onTap: () => onTap(const RidePoint(3.86, 11.52)),

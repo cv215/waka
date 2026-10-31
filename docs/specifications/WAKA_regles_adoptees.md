@@ -360,6 +360,13 @@ Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R
 - **Démarrer** : la carte suit la voiture et la position est envoyée toutes les 5 secondes. « Tout le trajet · Google Maps » ouvre Google Maps avec tous les arrêts dans l'ordre ; Waze, qui ne prend qu'une destination, ouvre l'arrêt suivant. Toujours gratuit.
 - **Coût** : les durées de route sont gardées 5 minutes (points arrondis à environ 100 m), pour que les rafraîchissements de l'écran du client ne consomment pas d'appels Google.
 
+**Couleurs et gestes (fondateur, 31 octobre 2026)** :
+- **Bleu** : un client pas encore validé dont le trajet suit l'itinéraire du chauffeur (proposition). Une fois accepté, son trajet **fusionne dans le jaune** : il ne reste qu'une ligne.
+- **Jaune** : la tournée à travers **tous** les clients acceptés, puis la direction.
+- **Rouge, presque transparent** : un client proche dont le parcours **dévie** de l'itinéraire du chauffeur. Il n'est pas proposé, mais **le chauffeur peut le prendre**. Choix du fondateur pour la vie privée : départ et arrivée **arrondis à environ 300 m**, ni nom ni prix ; le détail exact n'arrive qu'une fois la course acceptée. Seuls les clients à 4 km au plus (à vol d'oiseau) sont montrés ; la prise exige 10 minutes de route au plus, des places libres et une demande que personne d'autre n'a en proposition.
+- **Glisser** : à droite, accepter (ou prendre un client rouge) ; à gauche, refuser (ou ignorer). Les boutons restent pour qui préfère toucher.
+- **Navigation** : dès qu'un client est accepté, la carte passe d'elle-même en vue de navigation sur la carte de WAKA — rapprochée, inclinée, tournée dans le sens de la marche, la voiture dessinée par une flèche qui indique sa position et sa direction (calculée à partir de ses déplacements, actualisée toutes les 2 secondes).
+
 ## R16 — Refonte de l'application : marque, thèmes, inscription, double profil chauffeur (31 octobre 2026)
 
 **Décisions du fondateur.**

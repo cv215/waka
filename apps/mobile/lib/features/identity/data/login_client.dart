@@ -114,6 +114,9 @@ abstract interface class DriverRideGateway {
   Future<List<DriverProposalView>> driverProposals(LoginSession session, String client);
   /// The ride on acceptance; null on refusal.
   Future<CityRideView?> answerProposal(LoginSession session, String client, String proposalId, bool accept);
+  /// R15: nearby clients off his way (approximate, faint red), and taking one of them.
+  Future<List<NearbyClientView>> nearbyClients(LoginSession session, String client);
+  Future<CityRideView> takeNearby(LoginSession session, String client, String searchId);
   Future<CityRideView> driverRideAction(LoginSession session, String client, String rideId, String action, String? boardingCode);
   Future<CityRideView> cityRide(LoginSession session, String client, String rideId);
   Future<CityRideView?> activeRide(LoginSession session, String client);
@@ -180,6 +183,16 @@ class LoginClient
     final body = await _photoSend(session, client, 'POST', '/api/v1/proposals/$proposalId/responses', accept ? 201 : 204,
         contentType: 'application/json', bytes: _json({'action': accept ? 'accept' : 'refuse'}));
     return accept ? CityRideView.parse(body) : null;
+  }
+
+  @override
+  Future<List<NearbyClientView>> nearbyClients(LoginSession session, String client) async =>
+      NearbyClientView.parseList(await _photoSend(session, client, 'GET', '/api/v1/driver/nearby', 200, maxBytes: 16384));
+
+  @override
+  Future<CityRideView> takeNearby(LoginSession session, String client, String searchId) async {
+    if (!isLoginUuid(searchId)) throw const PhotoProblem(PhotoFailure.invalid);
+    return CityRideView.parse(await _photoSend(session, client, 'POST', '/api/v1/driver/nearby/$searchId/takes', 201));
   }
 
   @override
@@ -553,6 +566,7 @@ class LoginClient
           (422, 'OUTSIDE_SERVICE_AREA') => PhotoFailure.outsideServiceArea,
           (422, 'NO_ROUTE' || 'DISTANCE_OUT_OF_RANGE') => PhotoFailure.noRoute,
           (409, 'QUOTE_EXPIRED' || 'PROPOSAL_EXPIRED') => PhotoFailure.expired,
+          (409, 'TOO_FAR') => PhotoFailure.tooFar,
           (409, 'CAR_BUSY' || 'NOT_BOARDED' || 'NOT_ARRIVED' || 'ALREADY_BOARDED') => PhotoFailure.notEditable,
           (413, _) => PhotoFailure.tooLarge,
           (415, _) => PhotoFailure.unsupported,

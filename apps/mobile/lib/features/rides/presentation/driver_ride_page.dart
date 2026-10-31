@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
@@ -91,14 +92,18 @@ class _DriverRidePageState extends State<DriverRidePage> {
   /// His tour through the clients he carries, then his direction (yellow), and its stops in order.
   List<RidePoint>? _plan;
   List<RideStop> _stops = const [];
-  /// « Démarrer »: the map follows the car.
+  /// « Démarrer »: navigation view on the car, which turns with [_heading] (degrees from north, from its last moves).
   bool _following = false;
+  double? _heading;
+  /// R15: clients near him whose trip leaves his way (faint red); those he swiped away stay hidden.
+  List<NearbyClientView> _nearby = const [];
+  final Set<String> _hiddenNearby = {};
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
   /// Rides carried now, plus the ones that just ended until the driver closes them.
   List<CityRideView> _rides = const [];
   String? _message;
-  Timer? _poll, _presence;
+  Timer? _poll, _presence, _gps;
 
   @override
   void initState() {
@@ -123,6 +128,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
   void dispose() {
     _poll?.cancel();
     _presence?.cancel();
+    _gps?.cancel();
     _typing?.cancel();
     _where.dispose();
     _whereTo.dispose();
@@ -175,6 +181,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
         return;
       }
     }
+    if (online && where != null) _moveTo(where);
     final presence = await _gateway.setPresence(session, client, online, where, destination: online ? _destination : null);
     if (!mounted) return;
     setState(() {
@@ -191,6 +198,16 @@ class _DriverRidePageState extends State<DriverRidePage> {
         _following = false;
       }
     });
+  }
+
+  /// A new position of the car: its heading follows each move of more than about 5 m.
+  void _moveTo(RidePoint next) {
+    final last = _position;
+    if (last != null) {
+      final dLat = next.latitude - last.latitude, dLon = (next.longitude - last.longitude) * math.cos(last.latitude * math.pi / 180);
+      if (dLat * dLat + dLon * dLon > 2e-9) _heading = (math.atan2(dLon, dLat) * 180 / math.pi + 360) % 360;
+    }
+    _position = next;
   }
 
   void _typedPlace(_Spot spot, String text) {
@@ -227,6 +244,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
   Future<void> _goOnline() => _run(() async {
     await _sendPresence(true);
     if (_online) _startTimers();
+    // Rides found again on opening: back online, the map goes straight to navigation.
+    if (_online) _navigateNow();
   });
 
   Future<void> _goOffline() => _run(() async {
@@ -237,6 +256,13 @@ class _DriverRidePageState extends State<DriverRidePage> {
   void _startTimers() {
     _stopTimers();
     final every = widget.pollEvery, presence = _following ? widget.followEvery : widget.presenceEvery;
+    // In navigation the car moves on the map every 2 seconds (the server still gets the position every 5).
+    if (_following && widget.followEvery != null) {
+      _gps = Timer.periodic(const Duration(seconds: 2), (_) async {
+        final gps = await widget.readPosition();
+        if (mounted && gps != null) setState(() => _moveTo(gps));
+      });
+    }
     if (every != null) _poll = Timer.periodic(every, (_) { if (mounted) _run(_refreshNow, quiet: true); });
     // The server forgets a position older than 60 seconds.
     if (presence != null) {
@@ -247,6 +273,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
   void _stopTimers() {
     _poll?.cancel();
     _presence?.cancel();
+    _gps?.cancel();
   }
 
   Future<void> _refreshNow() async {
@@ -266,12 +293,25 @@ class _DriverRidePageState extends State<DriverRidePage> {
     if (_canReceive) {
       final list = await _gateway.driverProposals(session, client);
       if (mounted) setState(() => _proposals = list);
+      if (_destination != null) {
+        try {
+          final nearby = await _gateway.nearbyClients(session, client);
+          if (mounted) setState(() => _nearby = nearby);
+        } on PhotoProblem {
+          // The red lines are only an aid: the proposals stay.
+        }
+      }
     }
   }
+
+  List<NearbyClientView> get _visibleNearby =>
+      _canReceive && _destination != null ? _nearby.where((n) => !_hiddenNearby.contains(n.searchId)).toList() : const [];
 
   /// Green: his own route; yellow: his tour with the clients he accepted; blue: each client waiting for his answer
   /// (it becomes part of the yellow tour once accepted). Widest underneath so all stay readable.
   List<RidePath> _drawn() => [
+    // Red first, underneath everything: almost transparent, it never hides the road.
+    for (final n in _visibleNearby) RidePath.nearby([n.pickup, n.dropoff]),
     if (_myRoute != null) RidePath.normal(_myRoute!),
     if (_plan != null) RidePath.combined(_plan!),
     if (_canReceive)
@@ -281,6 +321,11 @@ class _DriverRidePageState extends State<DriverRidePage> {
 
   /// The rest of the tour, in order: the stops, then his direction.
   List<RidePoint> get _tour => [for (final s in _stops) s.point, ?_destination];
+
+  /// With a client on board or coming, the map switches to navigation by itself.
+  void _navigateNow() {
+    if (!_following && _rides.any((r) => r.active)) _toggleFollow();
+  }
 
   void _toggleFollow() {
     setState(() => _following = !_following);
@@ -303,6 +348,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _swatch(path.color, switch (path.name) {
         'normal' => 'Ton trajet normal',
         'client' => 'Client qui attend ta réponse',
+        'nearby' => 'Client hors de ton chemin',
         _ => 'Ton trajet avec tes clients',
       }),
   ]);
@@ -328,7 +374,23 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _proposals = _proposals.where((p) => p.proposalId != proposal.proposalId).toList();
       if (ride != null) _rides = [..._rides, ride];
     });
-    if (ride != null) await _refreshTour();
+    if (ride != null) {
+      await _refreshTour();
+      _navigateNow();
+    }
+  });
+
+  /// R15: he takes a client off his way (swipe to the right on a red one).
+  Future<void> _take(NearbyClientView n) => _run(() async {
+    final (session, client) = _context();
+    final ride = await _gateway.takeNearby(session, client, n.searchId);
+    if (!mounted) return;
+    setState(() {
+      _nearby = _nearby.where((x) => x.searchId != n.searchId).toList();
+      _rides = [..._rides, ride];
+    });
+    await _refreshTour();
+    _navigateNow();
   });
 
   TextEditingController _code(String rideId) => _codes.putIfAbsent(rideId, TextEditingController.new);
@@ -456,6 +518,54 @@ class _DriverRidePageState extends State<DriverRidePage> {
     ]),
   ]);
 
+  /// A card that a swipe answers: to the right [right] (green), to the left [left] (red). The buttons stay for those who
+  /// prefer to tap.
+  Widget _swipe({required String key, required Future<bool> Function() onRight, required Future<bool> Function() onLeft,
+      required String right, required String left, required Widget child}) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget side(Alignment at, Color color, IconData icon, String label) => Container(
+      alignment: at,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(16)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, color: Colors.white),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      ]),
+    );
+    return Padding(padding: const EdgeInsets.only(bottom: 8), child: Dismissible(
+      key: ValueKey(key),
+      background: side(Alignment.centerLeft, const Color(0xFF2E7D32), Icons.check, right),
+      secondaryBackground: side(Alignment.centerRight, scheme.error, Icons.close, left),
+      confirmDismiss: (direction) => direction == DismissDirection.startToEnd ? onRight() : onLeft(),
+      child: child,
+    ));
+  }
+
+  Widget _nearbyCard(ThemeData theme, NearbyClientView n) {
+    final here = _position;
+    final km = here == null ? null : _kilometres(here, n.pickup);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: theme.colorScheme.surface, borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0x66E53935))),
+      child: Row(children: [
+        const Icon(Icons.alt_route, color: Color(0xAAE53935)),
+        const SizedBox(width: 10),
+        Expanded(child: Text('Client hors de ton chemin · ${n.seats} place(s)${km == null ? '' : ' · à environ $km km'}')),
+        // The same answers as the swipe, for a mouse or anyone who prefers to tap.
+        IconButton(tooltip: 'Ignorer', onPressed: _busy ? null : () => setState(() => _hiddenNearby.add(n.searchId)),
+            icon: const Icon(Icons.close)),
+        IconButton(tooltip: 'Prendre', onPressed: _busy ? null : () => _take(n), icon: const Icon(Icons.check)),
+      ]),
+    );
+  }
+
+  static String _kilometres(RidePoint a, RidePoint b) {
+    final dLat = (a.latitude - b.latitude) * 111, dLon = (a.longitude - b.longitude) * 111 * math.cos(a.latitude * math.pi / 180);
+    return math.sqrt(dLat * dLat + dLon * dLon).toStringAsFixed(1).replaceAll('.', ',');
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -482,7 +592,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
                 }
                 _places = const [];
               });
-            }, paths: drawn, clients: waiting, driver: _following ? _position : null, follow: _following)),
+            }, paths: drawn, clients: waiting, driver: _following ? _position : null, follow: _following, heading: _heading)),
         if (widget.title.isNotEmpty)
           SafeArea(child: Padding(padding: const EdgeInsets.all(12), child: PointerInterceptor(child: Material(
             color: scheme.surface, shape: const CircleBorder(), elevation: 3,
@@ -490,7 +600,8 @@ class _DriverRidePageState extends State<DriverRidePage> {
           )))),
         // In a browser the map is a page element that would take the touches meant for the panel over it.
         Align(alignment: Alignment.bottomCenter, child: PointerInterceptor(child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.66, maxWidth: 640),
+          // In navigation the map needs room: the panel keeps the lower 40 % and scrolls.
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * (_following ? 0.40 : 0.66), maxWidth: 640),
           child: Material(
             color: scheme.surface,
             elevation: 8,
@@ -546,7 +657,25 @@ class _DriverRidePageState extends State<DriverRidePage> {
                     const Padding(padding: EdgeInsets.only(top: 8),
                         child: Text('Ta position est introuvable : écris où tu es, ou touche la carte.')),
                 ],
-                if (offer != null) _proposalCard(theme, offer, _proposals.length - 1),
+                if (offer != null) _swipe(
+                  key: 'offre-${offer.proposalId}',
+                  onRight: () async { await _answer(offer, true); return !_proposals.contains(offer); },
+                  onLeft: () async { await _answer(offer, false); return !_proposals.contains(offer); },
+                  right: 'Accepter', left: 'Refuser',
+                  child: _proposalCard(theme, offer, _proposals.length - 1),
+                ),
+                if (_visibleNearby.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('Hors de ton chemin · glisse à droite pour prendre, à gauche pour ignorer', style: theme.textTheme.bodySmall),
+                  const SizedBox(height: 6),
+                  for (final n in _visibleNearby) _swipe(
+                    key: 'proche-${n.searchId}',
+                    onRight: () async { await _take(n); return !_nearby.contains(n); },
+                    onLeft: () async { setState(() => _hiddenNearby.add(n.searchId)); return true; },
+                    right: 'Prendre', left: 'Ignorer',
+                    child: _nearbyCard(theme, n),
+                  ),
+                ],
                 if (_online && tour.isNotEmpty) ...[
                   if (offer != null) const SizedBox(height: 16),
                   Row(children: [

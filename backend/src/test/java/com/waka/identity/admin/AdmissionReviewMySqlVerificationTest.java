@@ -605,6 +605,16 @@ class AdmissionReviewMySqlVerificationTest {
         away.set(400);
         assertFalse(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED),
                 "a trip leaving him 400 s from his direction, against 60 s at the pickup, is not on his way");
+        // Shown to him faint red, about 300 m precise, and he may still take it: a third client in the car.
+        var red = rides.nearby(driver.token, client);
+        assertEquals(1, red.size());
+        assertEquals(0, new java.math.BigDecimal("3.849").compareTo(red.getFirst().pickup().latitude()), "rounded to about 300 m");
+        var r3 = rides.take(driver.token, client, red.getFirst().searchId());
+        assertEquals("awaiting_payment", r3.state());
+        assertEquals(3, rides.driverRides(driver.token, client).size(), "three clients in the same car");
+        assertTrue(rides.nearby(driver.token, client).isEmpty(), "taken: no longer shown");
+        assertEquals(6, rides.presence(driver.token, client, true, a, mvan).stops().size(), "the yellow tour goes through all of them");
+        rides.cancelByClient(rider.token, client, r3.reservationId());
 
         // Both rides end: no tour any more.
         rides.cancelByClient(rider.token, client, r1.reservationId());

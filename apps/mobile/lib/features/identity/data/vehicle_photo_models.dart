@@ -11,6 +11,8 @@ enum PhotoFailure {
   denied,
   /// City ride: a point is outside the launch area, or no road joins the two points (K31).
   outsideServiceArea,
+  /// R15: the nearby client is more than 10 minutes of road away.
+  tooFar,
   noRoute,
   notFound,
   /// The server examined the file and refused it (format, size, dimensions).

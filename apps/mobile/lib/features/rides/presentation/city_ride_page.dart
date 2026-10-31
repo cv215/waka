@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -75,27 +76,54 @@ class RidePath {
   static RidePath normal(List<RidePoint> p) => RidePath('normal', p, const Color(0xFF2E7D32), 9);
   static RidePath combined(List<RidePoint> p) => RidePath('combine', p, const Color(0xFFF9A825), 6);
   static RidePath client(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 3);
+  /// R15: a client near the driver whose trip leaves his way — red, almost transparent, never hiding the road.
+  static RidePath nearby(List<RidePoint> p) => RidePath('nearby', p, const Color(0x40E53935), 4);
   /// The passenger's own trip: the same blue, wider since it is alone on his map.
   static RidePath trip(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 6);
 }
 
 /// Builds the map; tests replace it because platform maps need a device. [clients]: clients' pickups (violet pins);
-/// [follow]: the camera stays on [driver] as it moves (the driver's « Démarrer » mode).
+/// [follow]: navigation view on [driver] — close, tilted, turned to [heading] (degrees from north), the car drawn as an
+/// arrow pointing where it goes, like a navigation app (the driver's « Démarrer » mode).
 typedef RideMapBuilder = Widget Function(BuildContext context, RidePoint? origin, RidePoint? destination,
-    void Function(RidePoint point) onTap, {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow});
+    void Function(RidePoint point) onTap, {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow,
+    double? heading});
 
 Widget googleRideMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint point) onTap,
-        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false}) =>
+        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false, double? heading}) =>
     _GoogleRideMap(origin: origin, destination: destination, driver: driver, paths: paths ?? const [], clients: clients ?? const [],
-        follow: follow, onTap: onTap);
+        follow: follow, heading: heading, onTap: onTap);
+
+/// The car seen from above: a dark arrow on a white disc, drawn once and turned by the marker.
+Future<BitmapDescriptor> _carArrow() async {
+  const size = 96.0;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawCircle(const Offset(size / 2, size / 2), size / 2 - 3, Paint()..color = const Color(0xFFFFFFFF));
+  canvas.drawCircle(const Offset(size / 2, size / 2), size / 2 - 3, Paint()
+    ..color = const Color(0x33000000)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3);
+  final arrow = Path()
+    ..moveTo(size / 2, 14)
+    ..lineTo(size - 22, size - 20)
+    ..lineTo(size / 2, size - 36)
+    ..lineTo(22, size - 20)
+    ..close();
+  canvas.drawPath(arrow, Paint()..color = const Color(0xFF1565C0));
+  final image = await recorder.endRecording().toImage(size.toInt(), size.toInt());
+  final png = await image.toByteData(format: ui.ImageByteFormat.png);
+  return BitmapDescriptor.bytes(png!.buffer.asUint8List(), width: 44, height: 44);
+}
 
 class _GoogleRideMap extends StatefulWidget {
   const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver, this.paths = const [],
-      this.clients = const [], this.follow = false});
+      this.clients = const [], this.follow = false, this.heading});
   final RidePoint? origin, destination, driver;
   final List<RidePath> paths;
   final List<RidePoint> clients;
   final bool follow;
+  final double? heading;
   final void Function(RidePoint point) onTap;
   @override
   State<_GoogleRideMap> createState() => _GoogleRideMapState();
@@ -103,6 +131,13 @@ class _GoogleRideMap extends StatefulWidget {
 
 class _GoogleRideMapState extends State<_GoogleRideMap> {
   GoogleMapController? _controller;
+  BitmapDescriptor? _arrow;
+
+  @override
+  void initState() {
+    super.initState();
+    _carArrow().then((icon) { if (mounted) setState(() => _arrow = icon); });
+  }
 
   LatLng _at(RidePoint p) => LatLng(p.latitude, p.longitude);
 
@@ -115,8 +150,11 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
     super.didUpdateWidget(old);
     final o = widget.origin, d = widget.destination, car = widget.driver;
     if (widget.follow) {
-      // Following the car: close and centred on it, whatever else changes.
-      if (car != null && (!old.follow || car != old.driver)) _controller?.animateCamera(CameraUpdate.newLatLngZoom(_at(car), 16));
+      // Navigation view: close, tilted, the road ahead at the top, whatever else changes.
+      if (car != null && (!old.follow || car != old.driver || widget.heading != old.heading)) {
+        _controller?.animateCamera(CameraUpdate.newCameraPosition(
+            CameraPosition(target: _at(car), zoom: 17, tilt: 50, bearing: widget.heading ?? 0)));
+      }
     } else if (widget.paths.isNotEmpty && _signature(widget.paths) != _signature(old.paths)) {
       // Frame every drawn route once, when they arrive.
       final all = [for (final p in widget.paths) ...p.points];
@@ -146,6 +184,8 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
   Widget build(BuildContext context) => GoogleMap(
     initialCameraPosition: CameraPosition(target: _at(yaoundeCentre), zoom: 13),
     onMapCreated: (controller) => _controller = controller,
+    // In navigation the panel covers the bottom of the screen: the car is centred in the part left visible.
+    padding: widget.follow ? EdgeInsets.only(bottom: MediaQuery.sizeOf(context).height * 0.42) : EdgeInsets.zero,
     onTap: (latLng) => widget.onTap(RidePoint(latLng.latitude, latLng.longitude)),
     myLocationButtonEnabled: false,
     mapToolbarEnabled: false,
@@ -161,7 +201,11 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
       if (widget.destination != null)
         Marker(markerId: const MarkerId('arrivee'), position: _at(widget.destination!), infoWindow: const InfoWindow(title: 'Arrivée')),
-      if (widget.driver != null)
+      if (widget.driver != null && widget.follow && _arrow != null)
+        // The driver's own car in navigation: an arrow turned where it goes, lying flat on the map.
+        Marker(markerId: const MarkerId('voiture'), position: _at(widget.driver!), icon: _arrow!, flat: true,
+            rotation: widget.heading ?? 0, anchor: const Offset(0.5, 0.5), zIndexInt: 10)
+      else if (widget.driver != null)
         Marker(markerId: const MarkerId('chauffeur'), position: _at(widget.driver!), infoWindow: const InfoWindow(title: 'Ton chauffeur'),
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure)),
       for (final (i, client) in widget.clients.indexed)

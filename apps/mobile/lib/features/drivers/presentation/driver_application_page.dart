@@ -140,7 +140,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.tooManySeats || PhotoFailure.wrongCode || PhotoFailure.notPaid || PhotoFailure.boardingLocked ||
     PhotoFailure.mutualReferral || PhotoFailure.referralWindowClosed || PhotoFailure.tooManyAttempts || PhotoFailure.tooEarly ||
     PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount ||
-    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute =>
+    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute || PhotoFailure.tooFar =>
       'Cette action n’est pas possible maintenant.',
     null => null,
   };
@@ -489,7 +489,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     PhotoFailure.tooManySeats || PhotoFailure.wrongCode || PhotoFailure.notPaid || PhotoFailure.boardingLocked ||
     PhotoFailure.mutualReferral || PhotoFailure.referralWindowClosed || PhotoFailure.tooManyAttempts || PhotoFailure.tooEarly ||
     PhotoFailure.notPayable || PhotoFailure.insufficientCredit || PhotoFailure.creditLimit || PhotoFailure.phoneNotAccount ||
-    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute =>
+    PhotoFailure.outsideServiceArea || PhotoFailure.noRoute || PhotoFailure.tooFar =>
       'Cette action n’est pas possible maintenant.',
     PhotoFailure.tooLarge => 'L’image dépasse 10 Mo. Choisis une image plus légère.',
     PhotoFailure.unsupported => 'Format non accepté : seules les images JPEG ou PNG sont possibles.',
