@@ -31,6 +31,8 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
 
     /** Calls allowed per UTC day; beyond it the provider answers "unavailable" (Google's free tier is 10 000 a month). */
     public static final int DAILY_LIMIT = 300;
+    /** Start, end and at most 10 intermediates: beyond, Google bills the call in a dearer tier. */
+    public static final int MAX_STOPS = 12;
 
     private final HttpClient http;
     private final URI base;
@@ -92,11 +94,12 @@ public final class GoogleRoutesProvider implements RouteDistanceProvider, Pickup
 
     /**
      * The overview shape (few points) of the driving route through the stops, in order: one call whatever the
-     * number of stops (at most 5), counted against the same daily allowance. Field mask: the polyline only.
+     * number of stops (at most 12, i.e. 10 intermediates, the limit of the Essentials tier), counted against the same
+     * daily allowance. Field mask: the polyline only.
      */
     @Override
     public String encodedPath(List<GeoPoint> stops) throws RouteUnavailableException {
-        if (stops == null || stops.size() < 2 || stops.size() > 5 || stops.stream().anyMatch(java.util.Objects::isNull)) {
+        if (stops == null || stops.size() < 2 || stops.size() > MAX_STOPS || stops.stream().anyMatch(java.util.Objects::isNull)) {
             throw new IllegalArgumentException("INVALID_POINT");
         }
         Map<String, Object> body = new LinkedHashMap<>();

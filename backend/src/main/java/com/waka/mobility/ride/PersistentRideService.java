@@ -42,8 +42,13 @@ public final class PersistentRideService {
     public static final Duration SEARCH = Duration.ofMinutes(2), PROPOSAL = Duration.ofSeconds(30),
             POSITION_FRESHNESS = Duration.ofSeconds(60), PAYMENT_WINDOW = Duration.ofMinutes(3), WAIT = Duration.ofMinutes(5);
     public static final int MAX_PICKUP_SECONDS = 600;
-    /** R15: total detour accepted for a car carrying shared clients by direction. */
-    public static final int MAX_DETOUR_SECONDS = 300;
+    /**
+     * R15 (revised by the founder, 31 October 2026): a client "on the way" may leave the driver at most this much
+     * farther from his direction than the client's pickup does; the detour itself is shown, not capped.
+     */
+    public static final int MAX_AWAY_SECONDS = 120;
+    /** Stored detours are bounded (database check); longer ones are recorded at this value. */
+    private static final int DETOUR_RECORD_LIMIT = 7200;
     private static final Set<String> ACTIVE = Set.of("awaiting_payment", "confirmed", "driver_arrived", "boarded");
     /** States in which the client follows the driver coming to the pickup point. */
     private static final Set<String> COMING = Set.of("awaiting_payment", "confirmed", "driver_arrived");
@@ -60,9 +65,12 @@ public final class PersistentRideService {
     }
     public record SearchView(UUID searchId, String state, Instant expiresAt, boolean proposalPending, RideView ride,
             boolean idempotentReplay) { }
-    /** {@code detourSeconds}: R15 detour this client adds to a driver heading somewhere; 0 for a driver without direction. */
+    /**
+     * {@code detourSeconds}: R15 detour this client adds to a driver heading somewhere; 0 for a driver without direction.
+     * {@code route}: the client's trip by road kept from the quote (blue on the driver's map), or null; no maps call.
+     */
     public record ProposalView(UUID proposalId, String mode, int seats, long priceXaf, long driverXaf, int pickupSeconds,
-            Instant expiresAt, GeoPoint pickup, GeoPoint dropoff, int detourSeconds) {
+            Instant expiresAt, GeoPoint pickup, GeoPoint dropoff, int detourSeconds, String route) {
         @Override public String toString() { return "ProposalView[REDACTED]"; }
     }
     /**
@@ -74,16 +82,28 @@ public final class PersistentRideService {
      * {@code destination}: the direction the driver gave (R15), or null. {@code route}: his road route to it (encoded
      * polyline, display only), recomputed at most every five minutes or when the direction changes; null otherwise.
      */
-    public record PresenceView(boolean online, Instant positionAt, GeoPoint destination, String route) {
+    public record PresenceView(boolean online, Instant positionAt, GeoPoint destination, String route, String plan, List<StopView> stops) {
+        public PresenceView(boolean online, Instant positionAt, GeoPoint destination, String route) {
+            this(online, positionAt, destination, route, null, List.of());
+        }
         @Override public String toString() { return "PresenceView[REDACTED]"; }
     }
+    /**
+     * One stop of the driver's tour: {@code pickup} or {@code dropoff} of a ride he carries. The tour ({@code plan} in the
+     * presence, drawn in yellow) goes through them in this order, then to his direction if he gave one.
+     */
+    public record StopView(String kind, UUID reservationId, GeoPoint point) {
+        @Override public String toString() { return "StopView[REDACTED]"; }
+    }
     private record OwnRoute(GeoPoint destination, Instant at, String path) { }
+    private record Plan(String signature, Instant at, String path) { }
+    private final Map<String, Plan> plans = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Duration OWN_ROUTE_REFRESH = Duration.ofMinutes(5);
     private final Map<String, OwnRoute> ownRoutes = new java.util.concurrent.ConcurrentHashMap<>();
     private record Out<T>(T value, RideException.Code refusal) { }
     private record Candidate(String driver, GeoPoint position, GeoPoint destination) { }
-    /** What the car already carries: active reservations, their seats, a VIP among them, the detour already used. */
-    private record Load(int active, int seats, boolean vip, int detourUsed) { }
+    /** What the car already carries: active reservations, their seats, a VIP among them. */
+    private record Load(int active, int seats, boolean vip) { }
 
     private final PersistentSessionService sessions;
     private final JdbcTemplate jdbc;
@@ -140,10 +160,11 @@ public final class PersistentRideService {
     public PresenceView presence(char[] token, String client, boolean online, GeoPoint position, GeoPoint destination) {
         if (online && position == null) throw invalid();
         GeoPoint direction = online ? destination : null;
-        record Saved(String driver, Instant positionAt) { }
+        record Saved(String driver, Instant positionAt, List<StopView> stops) { }
         Saved saved = unwrap(sessions.withAuthenticatedSession(token, client, session -> {
             Instant now = micros(session.serverTime());
             String actor = session.accountId().toString();
+            expireHolds(now);
             if (online) {
                 var access = DriverAccessService.evaluate(applications.accessBasisLocked(session.accountId(), now), now);
                 if (!Set.of("active", "provisional").contains(access.access())) return new Out<Saved>(null, RideException.Code.DRIVER_NOT_ALLOWED);
@@ -155,14 +176,69 @@ public final class PersistentRideService {
                     + "ON DUPLICATE KEY UPDATE online=VALUES(online),key_id=VALUES(key_id),position_cipher=VALUES(position_cipher),position_at=VALUES(position_at),"
                     + "destination_cipher=VALUES(destination_cipher),updated_at=VALUES(updated_at)",
                     gate, actor, online ? 1 : 0, crypto.keyId(), cipher, online ? sql(now) : null, towards, sql(now));
-            return new Out<>(new Saved(actor, online ? now : null), null);
+            List<StopView> stops = new ArrayList<>();
+            if (online) {
+                for (String id : jdbc.queryForList("SELECT id FROM ride_reservation WHERE gate_hash=? AND driver_account_id=? "
+                        + "AND state IN ('awaiting_payment','confirmed','driver_arrived','boarded') ORDER BY created_at LIMIT 5", String.class, gate, actor)) {
+                    RideView ride = ride(id, actor);
+                    if (!"boarded".equals(ride.state())) stops.add(new StopView("pickup", ride.reservationId(), ride.pickup()));
+                    stops.add(new StopView("dropoff", ride.reservationId(), ride.dropoff()));
+                }
+            }
+            return new Out<>(new Saved(actor, online ? now : null, stops), null);
         }));
-        // The drawn route is asked outside the transaction, like every maps call.
-        if (direction == null) {
-            ownRoutes.remove(saved.driver());
-            return new PresenceView(online, saved.positionAt(), null, null);
+        // The drawn routes are asked outside the transaction, like every maps call.
+        if (direction == null) ownRoutes.remove(saved.driver());
+        String own = direction == null ? null : ownRoute(saved.driver(), position, direction, saved.positionAt());
+        List<StopView> tour = online ? order(position, saved.stops()) : List.of();
+        if (tour.isEmpty()) plans.remove(saved.driver());
+        String plan = tour.isEmpty() ? null : plan(saved.driver(), position, tour, direction, saved.positionAt());
+        return new PresenceView(online, saved.positionAt(), direction, own, plan, tour);
+    }
+
+    /**
+     * The order of the stops: each time the nearest one (straight line) that may come next, a drop-off only after its
+     * pickup. Good enough for a few clients in town; the driver may still choose his own way.
+     */
+    static List<StopView> order(GeoPoint from, List<StopView> stops) {
+        List<StopView> left = new ArrayList<>(stops), tour = new ArrayList<>();
+        GeoPoint here = from;
+        while (!left.isEmpty()) {
+            StopView best = null;
+            double bestDistance = Double.MAX_VALUE;
+            for (StopView stop : left) {
+                boolean waiting = "dropoff".equals(stop.kind()) && left.stream()
+                        .anyMatch(o -> "pickup".equals(o.kind()) && o.reservationId().equals(stop.reservationId()));
+                if (waiting) continue;
+                double dLat = stop.point().latitude().doubleValue() - here.latitude().doubleValue();
+                double dLon = stop.point().longitude().doubleValue() - here.longitude().doubleValue();
+                double distance = dLat * dLat + dLon * dLon;
+                if (distance < bestDistance) { bestDistance = distance; best = stop; }
+            }
+            tour.add(best);
+            left.remove(best);
+            here = best.point();
         }
-        return new PresenceView(online, saved.positionAt(), direction, ownRoute(saved.driver(), position, direction, saved.positionAt()));
+        return List.copyOf(tour);
+    }
+
+    /** The tour's road shape: one maps call when the stops change, otherwise at most every five minutes. */
+    private String plan(String driver, GeoPoint position, List<StopView> tour, GeoPoint direction, Instant now) {
+        StringBuilder signature = new StringBuilder(direction == null ? "-" : direction.canonical());
+        for (StopView stop : tour) signature.append('|').append(stop.kind()).append(stop.reservationId());
+        Plan known = plans.get(driver);
+        if (known != null && known.signature().contentEquals(signature) && now.isBefore(known.at().plus(OWN_ROUTE_REFRESH))) return known.path();
+        List<GeoPoint> points = new ArrayList<>();
+        points.add(position);
+        for (StopView stop : tour) points.add(stop.point());
+        if (direction != null) points.add(direction);
+        try {
+            String path = paths.encodedPath(points.size() > 12 ? points.subList(0, 12) : points);
+            plans.put(driver, new Plan(signature.toString(), now, path));
+            return path;
+        } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException unavailable) {
+            return known != null && known.signature().contentEquals(signature) ? known.path() : null;
+        }
     }
 
     /** The driver's own route to his direction: one maps call per direction and per five minutes, whatever the refreshes. */
@@ -255,7 +331,7 @@ public final class PersistentRideService {
             for (Candidate c : online(now)) {
                 if (c.driver.equals(search.getFirst()[1]) || proposedBefore(searchId, c.driver)) continue;
                 Integer seats = offeredSeats(c.driver, now);
-                if (seats == null || !fits(c, quote.mode(), quote.passengerCount(), seats, 0)) continue;
+                if (seats == null || !fits(c, quote.mode(), quote.passengerCount(), seats)) continue;
                 candidates.add(c);
             }
             return new Out<>(new Pending(quote.origin(), quote.destination(), candidates, quote.passengerCount(), quote.mode()), null);
@@ -269,13 +345,16 @@ public final class PersistentRideService {
                 if (seconds == null || seconds < 0 || seconds > MAX_PICKUP_SECONDS) continue;
                 int detour = 0;
                 if (c.destination != null) {
-                    // R15: position -> client pickup -> client drop-off -> direction, against position -> direction.
+                    // R15: the client's trip must lead towards the driver's direction (the drop-off leaves him no more
+                    // than two minutes farther from it than the pickup). The pickup within 10 minutes bounds the detour,
+                    // shown to the driver: position -> pickup -> drop-off -> direction, against position -> direction.
                     Integer ride = pickupTimes.pickupSeconds(pending.pickup(), pending.dropoff());
+                    Integer fromPickup = pickupTimes.pickupSeconds(pending.pickup(), c.destination);
                     Integer onward = pickupTimes.pickupSeconds(pending.dropoff(), c.destination);
                     Integer direct = pickupTimes.pickupSeconds(c.position, c.destination);
-                    if (ride == null || onward == null || direct == null) continue;
-                    detour = Math.max(0, seconds + ride + onward - direct);
-                    if (detour > MAX_DETOUR_SECONDS) continue;
+                    if (ride == null || fromPickup == null || onward == null || direct == null) continue;
+                    if (onward > fromPickup + MAX_AWAY_SECONDS) continue;
+                    detour = Math.min(DETOUR_RECORD_LIMIT, Math.max(0, seconds + ride + onward - direct));
                 }
                 timed.add(new Timed(c.driver, seconds, detour));
             } catch (RouteDistanceProvider.RouteUnavailableException | RuntimeException hidden) {
@@ -293,10 +372,10 @@ public final class PersistentRideService {
             }
             var quote = quotes.forRideLocked(session.accountId(), UUID.fromString((String) search.getFirst()[2]));
             for (Timed t : timed) {
-                // Recheck: still online and fresh, still room (seats, detour), never proposed for this search.
+                // Recheck: still online and fresh, still room (seats), never proposed for this search.
                 var still = online(now).stream().filter(c -> c.driver.equals(t.driver)).findFirst().orElse(null);
                 Integer seats = still == null ? null : offeredSeats(t.driver, now);
-                if (seats == null || !fits(still, quote.mode(), quote.passengerCount(), seats, t.detour) || proposedBefore(searchId, t.driver)) continue;
+                if (seats == null || !fits(still, quote.mode(), quote.passengerCount(), seats) || proposedBefore(searchId, t.driver)) continue;
                 Instant expires = earliest(earliest(now.plus(PROPOSAL), (Instant) search.getFirst()[1]), quote.expiresAt());
                 jdbc.update("INSERT INTO ride_proposal (gate_hash,id,search_id,driver_account_id,pickup_seconds,detour_seconds,state,sent_at,expires_at) VALUES (?,?,?,?,?,?,'sent',?,?)",
                         gate, UUID.randomUUID().toString(), searchId.toString(), t.driver, t.seconds, t.detour, sql(now), sql(expires));
@@ -322,7 +401,8 @@ public final class PersistentRideService {
                 var quote = quotes.forRideLocked(UUID.fromString((String) r[4]), UUID.fromString((String) r[3]));
                 FareCalculation fare = fare(quote);
                 views.add(new ProposalView(UUID.fromString((String) r[0]), quote.mode(), quote.passengerCount(), fare.priceXaf(),
-                        fare.driverXaf(), (Integer) r[1], (Instant) r[2], quote.origin(), quote.destination(), (Integer) r[5]));
+                        fare.driverXaf(), (Integer) r[1], (Instant) r[2], quote.origin(), quote.destination(), (Integer) r[5],
+                        quotes.route(quote.quoteId())));
             }
             return new Out<>(List.copyOf(views), null);
         }));
@@ -367,7 +447,7 @@ public final class PersistentRideService {
 
     /**
      * A13: before the proposal, search and quote deadlines, the driver accepts (a reservation is created, waiting
-     * for payment for three minutes; R15: a driver with a direction may add shared ones while seats and detour allow)
+     * for payment for three minutes; R15: a driver with a direction may add shared ones while seats allow)
      * or refuses (the search goes on).
      */
     public RideView respond(char[] token, String client, UUID proposalId, boolean accept) {
@@ -397,14 +477,8 @@ public final class PersistentRideService {
             // The presence row serializes the car's acceptances; its direction decides how many reservations it may hold.
             var me = presenceLocked(actor);
             Integer seats = offeredSeats(actor, now);
-            int detour = (Integer) rows.getFirst()[3];
-            if (me == null || seats == null || !fits(me, quote.mode(), quote.passengerCount(), seats, detour)) {
+            if (me == null || seats == null || !fits(me, quote.mode(), quote.passengerCount(), seats)) {
                 return new Out<RideView>(null, RideException.Code.CAR_BUSY);
-            }
-            if (me.destination != null) {
-                Load load = load(actor);
-                jdbc.update("UPDATE driver_presence SET detour_used_seconds=? WHERE gate_hash=? AND account_id=?",
-                        (load.active == 0 ? 0 : load.detourUsed) + detour, gate, actor);
             }
             FareCalculation fare = fare(quote);
             if (fare.priceXaf() != quote.totalXaf()) return new Out<RideView>(null, RideException.Code.SERVICE_UNAVAILABLE);
@@ -570,10 +644,9 @@ public final class PersistentRideService {
         return new GeoPoint(new BigDecimal(p[0]), new BigDecimal(p[1]));
     }
     private Load load(String driver) {
-        return jdbc.queryForObject("SELECT COUNT(*),COALESCE(SUM(r.seats),0),COALESCE(SUM(r.mode='vip'),0),"
-                + "COALESCE((SELECT detour_used_seconds FROM driver_presence p WHERE p.gate_hash=? AND p.account_id=?),0) "
+        return jdbc.queryForObject("SELECT COUNT(*),COALESCE(SUM(r.seats),0),COALESCE(SUM(r.mode='vip'),0) "
                 + "FROM ride_reservation r WHERE r.gate_hash=? AND r.driver_account_id=? AND r.active_marker=1",
-                (rs, n) -> new Load(rs.getInt(1), rs.getInt(2), rs.getInt(3) > 0, rs.getInt(4)), gate, driver, gate, driver);
+                (rs, n) -> new Load(rs.getInt(1), rs.getInt(2), rs.getInt(3) > 0), gate, driver);
     }
     /** Seats the driver's approved vehicle offers, when his access is effective; null otherwise. */
     private Integer offeredSeats(String driver, Instant now) {
@@ -583,15 +656,14 @@ public final class PersistentRideService {
     }
     /**
      * R13/R15: a driver without direction takes one reservation at a time (shared group or VIP); a driver with a
-     * direction takes only shared ones, several while seats last and the car's total detour stays within five minutes.
+     * direction takes only shared ones, several while seats last.
      */
-    private boolean fits(Candidate car, String mode, int seats, int offeredSeats, int extraDetour) {
+    private boolean fits(Candidate car, String mode, int seats, int offeredSeats) {
         if (seats > offeredSeats) return false;
         Load load = load(car.driver());
         if (car.destination() == null) return load.active() == 0;
         if (!"shared".equals(mode) || load.vip()) return false;
-        int used = load.active() == 0 ? 0 : load.detourUsed();
-        return load.seats() + seats <= offeredSeats && used + extraDetour <= MAX_DETOUR_SECONDS;
+        return load.seats() + seats <= offeredSeats;
     }
     private record Seen(GeoPoint position, Instant at) { }
     /** The driver's own fresh position (online, less than a minute old) with its server time, or null. */
