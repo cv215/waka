@@ -28,7 +28,7 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
 
   Map<String, Object?> driverRide(String id) => {...rideJson(), 'reservationId': id, 'state': states[id] ?? rideState,
     'viewerRole': 'driver', 'boardingCode': null, 'refundXaf': null, 'driverPosition': null, 'driverPositionAt': null,
-    'driver': null};
+    'driver': null, 'clientFirstName': {'confirmed', 'driver_arrived', 'boarded'}.contains(states[id] ?? rideState) ? 'Awa' : null};
 
   @override
   Future<CityRideView?> activeRide(LoginSession s, String c) async => null;
@@ -136,26 +136,28 @@ void main() {
     expect(() => CityRideView.parse({'reservationId': _rideIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'state': 'confirmed', 'holdExpiresAt': null, 'arrivedAt': null, 'viewerRole': 'driver', 'boardingCode': '123456',
       'refundXaf': null, 'pickup': {'latitude': 3.8, 'longitude': 11.5}, 'dropoff': {'latitude': 3.9, 'longitude': 11.5},
-      'driverPosition': null, 'driverPositionAt': null, 'route': null, 'driver': null}),
+      'driverPosition': null, 'driverPositionAt': null, 'route': null, 'driver': null, 'clientFirstName': null}),
         throwsA(isA<PhotoProblem>()), reason: 'a driver never receives the client code');
   });
 
   testWidgets('en ligne avec le GPS, accepter, arriver, faire monter avec le bon code, terminer', (tester) async {
     final server = await _open(tester);
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
     expect(server.driverCalls.first, 'presence:true:{latitude: 3.8601, longitude: 11.5202}');
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('Client à 4 min de route'), findsOneWidget);
-    expect(find.text('Prix : 370 F · ta part : 333 F'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('secondes pour répondre')), findsOneWidget, reason: 'the 30-second countdown');
+    expect(find.text('370 F'), findsOneWidget);
+    expect(find.text('Ta part : 333 F'), findsOneWidget);
     await tester.tap(find.text('Accepter'));
     await settle(tester);
     expect(find.textContaining('Course acceptée : le client a 3 minutes pour payer.'), findsOneWidget);
     expect(find.text('Je suis arrivé au départ'), findsNothing, reason: 'not before payment');
 
     server.rideState = 'confirmed';
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     await tester.tap(find.text('Je suis arrivé au départ'));
     await settle(tester);
@@ -182,7 +184,7 @@ void main() {
     await tester.tap(find.widgetWithText(ListTile, 'Poste centrale'));
     await settle(tester);
     expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
     expect(server.driverCalls.single, 'presence:true:{latitude: 3.8667, longitude: 11.5167}');
     expect(find.text('En ligne'), findsOneWidget);
@@ -203,9 +205,9 @@ void main() {
     await settle(tester);
     await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
     await settle(tester);
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('tracés normal+client clients:1'), findsOneWidget, reason: 'green, and the waiting client in blue with his pin');
     expect(find.text('Client qui attend ta réponse'), findsOneWidget);
@@ -234,7 +236,7 @@ void main() {
     expect(opened.last.queryParameters['destination'], '3.8667,11.5167');
 
     server.states[server.accepted.single] = 'cancelled_by_client';
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('tracés normal suivi'), findsOneWidget, reason: 'the cancelled client leaves the yellow tour at once');
   });
@@ -248,19 +250,19 @@ void main() {
     await settle(tester);
     await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
     await settle(tester);
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
     expect(server.driverCalls.single, 'presence:true:{latitude: 3.8601, longitude: 11.5202}:vers:{latitude: 3.8935, longitude: 11.509}');
     expect(find.textContaining('En route vers Bastos'), findsOneWidget);
     expect(find.text('tracés normal'), findsOneWidget, reason: 'his green route as soon as he is online with a direction');
     expect(find.text('Ton trajet normal'), findsOneWidget);
 
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('Détour sur ton chemin : 2 min'), findsOneWidget);
     await tester.tap(find.text('Accepter'));
     await settle(tester);
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     expect(find.text('En attente d’un autre client sur ton chemin…'), findsNothing, reason: 'a second client is offered');
     await tester.tap(find.text('Accepter'));
@@ -269,27 +271,27 @@ void main() {
 
     // Each ride has its own steps: the first one is paid and boards, the second still waits for payment.
     server.states[server.accepted.first] = 'confirmed';
-    await tester.tap(find.text('Actualiser'));
+    await tester.tap(find.byTooltip('Actualiser'));
     await settle(tester);
     await tester.tap(find.text('Je suis arrivé au départ'));
     await settle(tester);
     await tester.enterText(find.widgetWithText(TextField, 'Code du client (6 chiffres)'), '048213');
     await tester.tap(find.text('Faire monter le client'));
     await settle(tester);
-    expect(find.textContaining('Client à bord'), findsOneWidget);
+    expect(find.text('Déposer Awa'), findsOneWidget, reason: 'the first name of the client, once paid');
     expect(find.textContaining('Course acceptée'), findsOneWidget);
     expect(find.text('En attente d’un autre client sur ton chemin…'), findsOneWidget, reason: 'still receiving on the way');
   });
 
   testWidgets('sans GPS, la position vient de la carte ; un compte non chauffeur est refusé clairement', (tester) async {
     final server = await _open(tester, gps: null);
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
     expect(find.textContaining('touche la carte'), findsWidgets);
     expect(server.driverCalls, isEmpty, reason: 'nothing sent without a position');
     await tester.tap(find.byKey(const Key('carte')));
     server.allowed = false;
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.byKey(const Key('en-ligne')));
     await settle(tester);
     expect(server.driverCalls.single, 'presence:true:{latitude: 3.87, longitude: 11.51}');
     expect(find.textContaining('Seul un chauffeur approuvé'), findsOneWidget);

@@ -147,12 +147,14 @@ class DriverCardView {
 class CityRideView {
   const CityRideView(this.reservationId, this.mode, this.seats, this.priceXaf, this.state, this.holdExpiresAt, this.arrivedAt,
       this.boardingCode, this.refundXaf, this.pickup, this.dropoff, {this.driverXaf = 0, this.viewerRole = 'client',
-      this.driverPosition, this.driverPositionAt, this.route, this.driver});
+      this.driverPosition, this.driverPositionAt, this.route, this.driver, this.clientFirstName});
   final String reservationId, mode, state;
   /// The trip by road kept from the quote (blue), or null.
   final List<RidePoint>? route;
   /// For the client, once paid: who to look for.
   final DriverCardView? driver;
+  /// For the driver, once paid: the client's first name.
+  final String? clientFirstName;
   /// The driver coming, for the client only, when the server has a position less than a minute old.
   final RidePoint? driverPosition;
   final DateTime? driverPositionAt;
@@ -167,12 +169,13 @@ class CityRideView {
   static CityRideView parse(Object? value) {
     try {
       final m = _exact(value, {'reservationId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'state', 'holdExpiresAt', 'arrivedAt',
-        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff', 'driverPosition', 'driverPositionAt', 'route', 'driver'});
+        'viewerRole', 'boardingCode', 'refundXaf', 'pickup', 'dropoff', 'driverPosition', 'driverPositionAt', 'route', 'driver', 'clientFirstName'});
       final code = m['boardingCode'], refund = m['refundXaf'], role = m['viewerRole'];
       final seen = m['driverPosition'], seenAt = m['driverPositionAt'];
       if (!{'shared', 'vip'}.contains(m['mode']) || !rideStates.contains(m['state']) || !{'client', 'driver'}.contains(role) ||
           (code != null && (role != 'client' || code is! String || !RegExp(r'^[0-9]{4,8}$').hasMatch(code))) ||
-          ((seen == null) != (seenAt == null)) || (seen != null && role != 'client') || (m['driver'] != null && role != 'client')) {
+          ((seen == null) != (seenAt == null)) || (seen != null && role != 'client') || (m['driver'] != null && role != 'client') ||
+          (m['clientFirstName'] != null && (role != 'driver' || m['clientFirstName'] is! String || (m['clientFirstName'] as String).length > 80))) {
         throw const FormatException();
       }
       return CityRideView(_id(m['reservationId']), m['mode'] as String, _amount(m['seats'], min: 1, max: 5),
@@ -180,7 +183,8 @@ class CityRideView {
           code as String?, refund == null ? null : _amount(refund), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']),
           driverXaf: _amount(m['driverXaf']), viewerRole: role as String,
           driverPosition: seen == null ? null : RidePoint.parse(seen), driverPositionAt: _instantOrNull(seenAt),
-          route: _tripShape(m['route']), driver: m['driver'] == null ? null : DriverCardView.parse(m['driver']));
+          route: _tripShape(m['route']), driver: m['driver'] == null ? null : DriverCardView.parse(m['driver']),
+          clientFirstName: m['clientFirstName'] as String?);
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

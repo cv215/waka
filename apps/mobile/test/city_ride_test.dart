@@ -35,6 +35,7 @@ class RideFixture extends PayFixture implements RideGateway {
     'driverPositionAt': rideState == 'confirmed' ? iso(departure) : null, 'route': _shape,
     'driver': {'confirmed', 'driver_arrived', 'boarded'}.contains(rideState)
         ? {'firstName': 'Paul', 'vehicle': 'Toyota Yaris', 'color': 'Grise', 'plate': 'LT 123 AB'} : null,
+    'clientFirstName': null,
   };
 
   @override
