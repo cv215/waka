@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 
 import '../../../core/presentation/waka_page.dart';
 import '../../identity/application/login_flow.dart';
@@ -38,22 +37,6 @@ String driverStateLabel(String state) => switch (state) {
   _ => state,
 };
 
-/// Where the driver is. Null when the position cannot be read (refused, no GPS, or a page without HTTPS).
-typedef ReadPosition = Future<RidePoint?> Function();
-
-Future<RidePoint?> devicePosition() async {
-  try {
-    if (!await Geolocator.isLocationServiceEnabled()) return null;
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
-    final p = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 10)));
-    return RidePoint(p.latitude, p.longitude);
-  } on Exception {
-    return null;
-  }
-}
 
 /// « Mode chauffeur » (R13): be online with a fresh position, answer proposals within 30 seconds, then take the ride
 /// through its steps. The server alone decides who receives a proposal, the price and the driver's share.
