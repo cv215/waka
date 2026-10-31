@@ -1,11 +1,13 @@
-import '../../payments/presentation/wallet_page.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/config/local_api_configuration.dart';
+import '../../../core/presentation/theme_choice.dart';
 import '../../../core/presentation/waka_page.dart';
+import '../../../core/presentation/waka_theme.dart';
+import '../../payments/presentation/wallet_page.dart';
 import '../../drivers/presentation/driver_access_page.dart';
 import '../../drivers/presentation/driver_application_page.dart';
 import '../../privacy/presentation/my_data_page.dart';
@@ -270,9 +272,9 @@ class _SignInPageState extends State<SignInPage> {
                     maxLength: 80,
                     maxLines: 1,
                     readOnly: _flow.busy || !_flow.canEditProfile || _flow.pendingProfile != null,
-                    decoration: const InputDecoration(labelText: 'Nom d’affichage (facultatif)', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(labelText: 'Nom complet', border: OutlineInputBorder()),
                   ),
-                  Text('Tu peux laisser ce nom vide. Il ne change ni ton numéro ni tes droits.'),
+                  const Text('Ton chauffeur voit ce nom. Il ne change ni ton numéro ni tes droits.'),
                 ],
                 if (_flow.profileNeedsReview || _flow.profile == null)
                   OutlinedButton(onPressed: _flow.busy ? null : () async { await _flow.refreshProfile(); if (mounted) _profileName.text = _flow.profile?.displayName ?? ''; }, child: const Text('Relire mon profil')),
@@ -284,8 +286,21 @@ class _SignInPageState extends State<SignInPage> {
                 if (_flow.profile != null && _flow.pendingProfile == null)
                   Wrap(spacing: 8, children: [
                   FilledButton(onPressed: _flow.busy || !_flow.canEditProfile ? null : () async { await _flow.saveDisplayName(_profileName.text); if (mounted) _profileName.text = _flow.profile?.displayName ?? ''; }, child: const Text('Enregistrer le nom')),
-                    TextButton(onPressed: _flow.busy || !_flow.canEditProfile || _flow.profile!.displayName == null ? null : () async { await _flow.saveDisplayName(null); if (mounted) _profileName.clear(); }, child: const Text('Effacer le nom')),
                   ]),
+              ],
+              if (_flow.confirmedNow && !_flow.logoutPending && !_flow.cleanupPending) ...[
+                const Divider(height: 32),
+                Text('Apparence', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 12),
+                ValueListenableBuilder<WakaThemeChoice>(
+                  valueListenable: wakaThemeChoice,
+                  builder: (context, choice, _) => SegmentedButton<WakaThemeChoice>(
+                    segments: [for (final c in WakaThemeChoice.values) ButtonSegment(value: c, label: Text(c.label))],
+                    selected: {choice},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (s) => chooseTheme(s.first),
+                  ),
+                ),
               ],
             ] else if (challenge == null) ...[
               Text(

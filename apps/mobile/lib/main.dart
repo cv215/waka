@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'core/presentation/theme_choice.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await loadThemeChoice();
   runApp(const WakaApp());
 }

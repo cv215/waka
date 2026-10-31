@@ -174,8 +174,10 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
 /// driver, pay within three minutes, follow the ride. Nothing about the price is computed on the phone.
 class CityRidePage extends StatefulWidget {
   const CityRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
-      this.pollEvery = const Duration(seconds: 4), this.typingDelay = const Duration(milliseconds: 400)});
+      this.pollEvery = const Duration(seconds: 4), this.typingDelay = const Duration(milliseconds: 400), this.actions});
   final LoginFlow login;
+  /// Top-right buttons (the account, when this page is the home).
+  final List<Widget>? actions;
   final RideMapBuilder mapBuilder;
   final ReadPosition readPosition;
   /// Null in tests: the client refreshes by hand.
@@ -420,6 +422,7 @@ class _CityRidePageState extends State<CityRidePage> {
     final trip = ride != null ? ride.route : quote?.route;
     return WakaPage(
       title: 'Course en ville',
+      actions: widget.actions,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
