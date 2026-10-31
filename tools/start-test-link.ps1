@@ -4,6 +4,9 @@ param([string]$Cloudflared = (Join-Path $env:LOCALAPPDATA 'WAKA\tools\cloudflare
 # A lancer apres le serveur (start-dev-backend.ps1 -LocalApp) et l'apercu (start-web-preview.ps1). Donnees de test seulement.
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $Cloudflared)) { throw 'cloudflared absent : voir tools/README.md.' }
+if ((Get-FileHash -LiteralPath $Cloudflared -Algorithm SHA256).Hash -ne '4D2490E74082C5D48DBFEDAF92576FA5BD1702379AB88EB7FAA0CFBE8DC891B6') {
+    throw 'cloudflared ne correspond pas a la version verifiee : rien n est lance.'
+}
 Write-Host 'Lien de test en cours de creation : l adresse https://...trycloudflare.com s affiche ci-dessous.'
 Write-Host 'Ne la donnez qu a vos testeurs ; Ctrl+C pour l arreter.'
 & cmd /c "`"$Cloudflared`" tunnel --no-autoupdate --url http://localhost:8090 2>&1"
