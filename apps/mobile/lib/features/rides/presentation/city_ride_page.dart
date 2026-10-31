@@ -96,11 +96,15 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
 
   LatLng _at(RidePoint p) => LatLng(p.latitude, p.longitude);
 
+  /// Same routes, same signature: the camera is framed only when the drawn routes really change.
+  static String _signature(List<RidePath> paths) =>
+      paths.map((p) => '${p.name}:${p.points.length}:${p.points.first.latitude}:${p.points.last.longitude}').join('|');
+
   @override
   void didUpdateWidget(_GoogleRideMap old) {
     super.didUpdateWidget(old);
     final o = widget.origin, d = widget.destination;
-    if (widget.paths.isNotEmpty && !identical(widget.paths, old.paths)) {
+    if (widget.paths.isNotEmpty && _signature(widget.paths) != _signature(old.paths)) {
       // Frame every drawn route once, when they arrive.
       final all = [for (final p in widget.paths) ...p.points];
       double minLat = all.first.latitude, maxLat = minLat, minLon = all.first.longitude, maxLon = minLon;

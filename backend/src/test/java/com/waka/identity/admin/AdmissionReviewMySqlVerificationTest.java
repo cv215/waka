@@ -546,6 +546,9 @@ class AdmissionReviewMySqlVerificationTest {
 
         var presence = rides.presence(driver.token, client, true, a, mvan);
         assertEquals(mvan, presence.destination());
+        assertNotNull(presence.route(), "green: his own route, as soon as he gives a direction");
+        assertNull(rides.presence(driver.token, client, true, a).route(), "no direction, no route");
+        presence = rides.presence(driver.token, client, true, a, mvan);
         assertFalse(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.VIP), "with a direction: never a VIP");
         assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED));
         var p1 = rides.proposals(driver.token, client).getFirst();

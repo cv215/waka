@@ -207,17 +207,21 @@ class ProposalPathsView {
 
 /// The driver's presence as the server recorded it; the position time is the server's.
 class DriverPresenceView {
-  const DriverPresenceView(this.online, this.positionAt, [this.destination]);
+  const DriverPresenceView(this.online, this.positionAt, [this.destination, this.route]);
   final bool online;
   final DateTime? positionAt;
   /// R15: the direction the server recorded, or null.
   final RidePoint? destination;
+  /// The driver's own road route to his direction (drawn in green), or null.
+  final List<RidePoint>? route;
   static DriverPresenceView parse(Object? value) {
     try {
-      final m = _exact(value, {'online', 'positionAt', 'destination'});
-      if (m['online'] is! bool) throw const FormatException();
+      final m = _exact(value, {'online', 'positionAt', 'destination', 'route'});
+      final route = m['route'];
+      if (m['online'] is! bool || (route != null && route is! String)) throw const FormatException();
       return DriverPresenceView(m['online'] as bool, _instantOrNull(m['positionAt']),
-          m['destination'] == null ? null : RidePoint.parse(m['destination']));
+          m['destination'] == null ? null : RidePoint.parse(m['destination']),
+          route == null ? null : List.unmodifiable(decodePolyline(route as String).map((p) => RidePoint(p.$1, p.$2))));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

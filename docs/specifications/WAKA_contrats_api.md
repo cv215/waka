@@ -700,7 +700,7 @@ Une proposition part au chauffeur recevable le plus proche **en temps de route**
 
 ### K37 — Partagé par direction (R15)
 
-- **`PUT /api/v1/driver/presence`** accepte aussi `destinationLatitude` et `destinationLongitude`, c'est-à-dire la direction du chauffeur. Elle exige la position et doit être redonnée à chaque mise à jour : l'omettre retire la direction. La réponse ajoute `destination`, qui vaut `null` sans direction.
+- **`PUT /api/v1/driver/presence`** accepte aussi `destinationLatitude` et `destinationLongitude`, c'est-à-dire la direction du chauffeur. Elle exige la position et doit être redonnée à chaque mise à jour : l'omettre retire la direction. La réponse ajoute `destination`, qui vaut `null` sans direction, et `route`, le trajet routier du chauffeur jusqu'à sa direction (polyligne encodé, tracé en vert). Ce trajet est recalculé au plus toutes les 5 minutes, ou quand la direction change.
 - **Propositions** (`GET /api/v1/driver/proposals`) : chacune ajoute `detourSeconds`. C'est le détour que ce client ajoute à la direction du chauffeur, de 0 à 300 secondes ; il vaut 0 pour un chauffeur sans direction.
 - **Avec une direction** : le chauffeur ne reçoit que des demandes partagées. Il peut en accepter plusieurs tant que les places et le détour total (5 minutes depuis le premier client) le permettent. Une acceptation qui ne tient plus répond 409 `CAR_BUSY`.
 - **`GET /api/v1/driver/rides`** : les courses que le chauffeur porte en ce moment, 10 au plus, les plus anciennes d'abord.
