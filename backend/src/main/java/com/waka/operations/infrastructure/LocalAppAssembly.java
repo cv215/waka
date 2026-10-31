@@ -212,7 +212,8 @@ public class LocalAppAssembly {
             PersistentQuoteService quotes, JdbcFareScheduleRepository fares, Clock clock) {
         // Google road time when its key is given; otherwise about 25 km/h in town, from the straight-line estimate.
         GoogleRoutesProvider google = routes();
-        PickupTimeProvider pickup = google != null ? google
+        // Kept a few minutes: the screens poll, the matching weighs the same points again (no new maps call).
+        PickupTimeProvider pickup = google != null ? new com.waka.geo.CachedPickupTimes(google, clock)
                 : (from, to) -> straightLineMetres(from, to).divide(BigDecimal.valueOf(6.94), 0, RoundingMode.UP).intValueExact();
         return new PersistentRideService(sessions, jdbc, applications, quotes, fares, pickup,
                 google != null ? google : RoutePathProvider.STRAIGHT, profileCrypto("ride"), clock);

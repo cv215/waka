@@ -42,15 +42,25 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
   Future<DriverPresenceView> setPresence(LoginSession s, String c, bool online, RidePoint? at, {RidePoint? destination}) async {
     driverCalls.add('presence:$online:${at?.toJson()}${destination == null ? '' : ':vers:${destination.toJson()}'}');
     if (!allowed) throw const PhotoProblem(PhotoFailure.driverNotAllowed);
+    // The tour: each accepted ride still going, pickup (unless on board) then drop-off.
+    final stops = [
+      for (final id in accepted)
+        if (activeRideStates.contains(states[id] ?? rideState)) ...[
+          if ((states[id] ?? rideState) != 'boarded')
+            {'kind': 'pickup', 'reservationId': id, 'point': {'latitude': 3.8667, 'longitude': 11.5167}},
+          {'kind': 'dropoff', 'reservationId': id, 'point': {'latitude': 3.8935, 'longitude': 11.509}},
+        ],
+    ];
     return DriverPresenceView.parse({'online': online, 'positionAt': online ? iso(departure) : null,
-      'destination': destination?.toJson(), 'route': destination == null ? null : '_p~iF~ps|U_ulLnnqC'});
+      'destination': destination?.toJson(), 'route': destination == null ? null : '_p~iF~ps|U_ulLnnqC',
+      'plan': online && stops.isNotEmpty ? '_p~iF~ps|U_ulLnnqC_mqNvxq`@' : null, 'stops': online ? stops : []});
   }
 
   @override
   Future<List<DriverProposalView>> driverProposals(LoginSession s, String c) async => DriverProposalView.parseList([
     if (offers > 0) {'proposalId': _proposalIds[accepted.length], 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'pickupSeconds': 240, 'expiresAt': iso(departure), 'pickup': {'latitude': 3.8667, 'longitude': 11.5167},
-      'dropoff': {'latitude': 3.8935, 'longitude': 11.509}, 'detourSeconds': 120},
+      'dropoff': {'latitude': 3.8935, 'longitude': 11.509}, 'detourSeconds': 120, 'route': '_p~iF~ps|U_ulLnnqC'},
   ]);
 
   @override
@@ -84,10 +94,11 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
 }
 
 Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(RidePoint) onTap,
-        {RidePoint? driver, List<RidePath>? paths}) =>
+        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false}) =>
     GestureDetector(
   key: const Key('carte'), onTap: () => onTap(const RidePoint(3.87, 11.51)),
-  child: ColoredBox(color: Colors.green, child: Text('tracés ${(paths ?? const []).map((p) => p.name).join('+')}')));
+  child: ColoredBox(color: Colors.green, child: Text('tracés ${(paths ?? const []).map((p) => p.name).join('+')}'
+      '${(clients ?? const []).isEmpty ? '' : ' clients:${clients!.length}'}${follow ? ' suivi' : ''}')));
 
 final opened = <Uri>[];
 
@@ -116,7 +127,11 @@ void main() {
   test('lecture stricte : une proposition où la part dépasse le prix est refusée', () {
     expect(() => DriverProposalView.parseList([{'proposalId': _proposalIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 100,
       'driverXaf': 101, 'pickupSeconds': 60, 'expiresAt': '2026-10-30T10:00:00Z', 'pickup': {'latitude': 3.8, 'longitude': 11.5},
-      'dropoff': {'latitude': 3.9, 'longitude': 11.5}, 'detourSeconds': 0}]), throwsA(isA<PhotoProblem>()));
+      'dropoff': {'latitude': 3.9, 'longitude': 11.5}, 'detourSeconds': 0, 'route': null}]), throwsA(isA<PhotoProblem>()));
+    expect(DriverProposalView.parseList([{'proposalId': _proposalIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 370,
+      'driverXaf': 333, 'pickupSeconds': 600, 'expiresAt': '2026-10-30T10:00:00Z', 'pickup': {'latitude': 3.8, 'longitude': 11.5},
+      'dropoff': {'latitude': 3.9, 'longitude': 11.5}, 'detourSeconds': 1500, 'route': null}]).single.detourSeconds, 1500,
+        reason: 'revised R15: a long detour is shown, no longer refused');
     expect(() => CityRideView.parse({'reservationId': _rideIds.first, 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'state': 'confirmed', 'holdExpiresAt': null, 'arrivedAt': null, 'viewerRole': 'driver', 'boardingCode': '123456',
       'refundXaf': null, 'pickup': {'latitude': 3.8, 'longitude': 11.5}, 'dropoff': {'latitude': 3.9, 'longitude': 11.5},
@@ -179,9 +194,8 @@ void main() {
     expect(() => ProposalPathsView.parse({'normal': null, 'client': 'a b', 'combined': null}), throwsA(isA<PhotoProblem>()));
   });
 
-  testWidgets('les trois tracés de la proposition sont demandés une seule fois ; Naviguer ouvre Google Maps ou Waze', (tester) async {
+  testWidgets('client en bleu, jaune une fois accepté ; Démarrer suit la voiture ; tout le trajet dans Google Maps', (tester) async {
     final server = await _open(tester);
-    server.withDirection = true;
     await tester.enterText(find.widgetWithText(TextField, 'Où vas-tu ? (facultatif)'), 'Bast');
     await tester.pump(const Duration(milliseconds: 450));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
@@ -192,23 +206,36 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('Actualiser'));
     await settle(tester);
-    await tester.tap(find.text('Actualiser'));
-    await settle(tester);
-    expect(find.text('tracés normal+combine+client'), findsOneWidget, reason: 'green under, yellow, then blue on top');
-    expect(find.text('Ton trajet normal'), findsOneWidget);
-    expect(find.text('Ton nouveau trajet'), findsOneWidget);
-    expect(server.driverCalls.where((c) => c.startsWith('paths:')), hasLength(1), reason: 'asked once despite two refreshes');
+    expect(find.text('tracés normal+client clients:1'), findsOneWidget, reason: 'green, and the waiting client in blue with his pin');
+    expect(find.text('Client qui attend ta réponse'), findsOneWidget);
+    expect(server.driverCalls.where((c) => c.startsWith('paths:')), isEmpty, reason: 'the blue trip comes with the proposal');
 
     await tester.tap(find.text('Accepter'));
     await settle(tester);
+    expect(find.text('tracés normal+combine clients:1'), findsOneWidget, reason: 'accepted: his trip is now in the yellow tour');
+    expect(find.text('Ton trajet avec tes clients'), findsOneWidget);
+
+    await tester.tap(find.text('Démarrer le trajet'));
+    await settle(tester);
+    expect(find.text('tracés normal+combine clients:1 suivi'), findsOneWidget, reason: 'the map follows the car');
+    expect(find.text('Arrêter le suivi'), findsOneWidget);
+
+    await tester.tap(find.text('Tout le trajet · Google Maps'));
+    await settle(tester);
+    expect(opened.single.queryParameters['waypoints'], '3.8667,11.5167|3.8935,11.509', reason: 'pickup, drop-off, then his direction');
+    expect(opened.single.queryParameters['destination'], '3.8935,11.509');
+    expect(opened.single.queryParameters['dir_action'], 'navigate');
+    await tester.tap(find.text('Waze').first);
+    await settle(tester);
+    expect(opened.last.toString(), 'https://waze.com/ul?ll=3.8667%2C11.5167&navigate=yes', reason: 'Waze: the next stop');
     await tester.tap(find.textContaining('Aller au client'));
     await settle(tester);
-    expect(opened.single.host, 'www.google.com');
-    expect(opened.single.queryParameters['destination'], '3.8667,11.5167');
-    expect(opened.single.queryParameters['dir_action'], 'navigate');
-    await tester.tap(find.text('Waze'));
+    expect(opened.last.queryParameters['destination'], '3.8667,11.5167');
+
+    server.states[server.accepted.single] = 'cancelled_by_client';
+    await tester.tap(find.text('Actualiser'));
     await settle(tester);
-    expect(opened.last.toString(), 'https://waze.com/ul?ll=3.8667%2C11.5167&navigate=yes');
+    expect(find.text('tracés normal suivi'), findsOneWidget, reason: 'the cancelled client leaves the yellow tour at once');
   });
 
   testWidgets('avec une direction, le chauffeur prend deux clients en partagé et mène chaque course', (tester) async {

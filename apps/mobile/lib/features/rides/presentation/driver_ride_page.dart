@@ -48,20 +48,27 @@ Future<bool> openExternally(Uri link) => launchUrl(link, mode: LaunchMode.extern
 /// Turn-by-turn guidance by the maps app the driver already has, free: the destination is filled in.
 Uri googleMapsNavigation(RidePoint to) => Uri.https('www.google.com', '/maps/dir/', {
   'api': '1', 'destination': '${to.latitude},${to.longitude}', 'travelmode': 'driving', 'dir_action': 'navigate'});
+/// The whole tour in Google Maps: every stop in order (waypoints), the last one as the destination.
+Uri googleMapsTour(List<RidePoint> stops) => Uri.https('www.google.com', '/maps/dir/', {
+  'api': '1', 'destination': '${stops.last.latitude},${stops.last.longitude}',
+  if (stops.length > 1) 'waypoints': [for (final p in stops.take(stops.length - 1)) '${p.latitude},${p.longitude}'].join('|'),
+  'travelmode': 'driving', 'dir_action': 'navigate'});
 Uri wazeNavigation(RidePoint to) => Uri.https('waze.com', '/ul', {'ll': '${to.latitude},${to.longitude}', 'navigate': 'yes'});
 
 /// « Mode chauffeur » (R13, R15): be online with a fresh position; with a direction, take several shared clients on the
 /// way; answer proposals within 30 seconds, then take each ride through its steps. The server alone decides who
-/// receives a proposal, the price, the driver's share and the detour allowed.
+/// receives a proposal, the price, the driver's share and the order of the stops. « Démarrer » keeps the map on the
+/// car and sends the position more often; the turn-by-turn guidance stays in Google Maps or Waze (free).
 class DriverRidePage extends StatefulWidget {
   const DriverRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
-      this.openLink = openExternally, this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20)});
+      this.openLink = openExternally, this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20),
+      this.followEvery = const Duration(seconds: 5)});
   final LoginFlow login;
   final RideMapBuilder mapBuilder;
   final ReadPosition readPosition;
   final OpenLink openLink;
   /// Null in tests: the driver refreshes by hand.
-  final Duration? pollEvery, presenceEvery;
+  final Duration? pollEvery, presenceEvery, followEvery;
   @override
   State<DriverRidePage> createState() => _DriverRidePageState();
 }
@@ -79,11 +86,13 @@ class _DriverRidePageState extends State<DriverRidePage> {
   RidePoint? _position, _destination;
   /// The driver's own route to his direction, as the server drew it (green).
   List<RidePoint>? _myRoute;
+  /// His tour through the clients he carries, then his direction (yellow), and its stops in order.
+  List<RidePoint>? _plan;
+  List<RideStop> _stops = const [];
+  /// « Démarrer »: the map follows the car.
+  bool _following = false;
   DateTime? _positionAt;
   List<DriverProposalView> _proposals = const [];
-  /// Route shapes per proposal, asked once each (the screen refreshes every few seconds).
-  final Map<String, ProposalPathsView> _shapes = {};
-  final Set<String> _askedShapes = {};
   /// Rides carried now, plus the ones that just ended until the driver closes them.
   List<CityRideView> _rides = const [];
   String? _message;
@@ -167,7 +176,13 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _positionAt = presence.positionAt;
       // Keep the last route drawn if this refresh brought none (the server redraws it at most every five minutes).
       _myRoute = !online || _destination == null ? null : (presence.route ?? _myRoute);
-      if (!online) _proposals = const [];
+      // Same for the tour: kept while it still has stops, dropped with the last one.
+      _stops = presence.stops;
+      _plan = _stops.isEmpty ? null : (presence.plan ?? _plan);
+      if (!online) {
+        _proposals = const [];
+        _following = false;
+      }
     });
   }
 
@@ -214,7 +229,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
 
   void _startTimers() {
     _stopTimers();
-    final every = widget.pollEvery, presence = widget.presenceEvery;
+    final every = widget.pollEvery, presence = _following ? widget.followEvery : widget.presenceEvery;
     if (every != null) _poll = Timer.periodic(every, (_) { if (mounted) _run(_refreshNow, quiet: true); });
     // The server forgets a position older than 60 seconds.
     if (presence != null) {
@@ -238,30 +253,37 @@ class _DriverRidePageState extends State<DriverRidePage> {
         ended.add(r.active ? await _gateway.cityRide(session, client, r.reservationId) : r);
       }
       if (mounted) setState(() => _rides = [...carried, ...ended]);
+      // A ride ended (a client cancelled, did not pay…): its stops leave the yellow tour at once.
+      if (ended.any((r) => !r.active) && _stops.any((s) => ended.any((r) => r.reservationId == s.reservationId))) await _refreshTour();
     }
     if (_canReceive) {
       final list = await _gateway.driverProposals(session, client);
       if (mounted) setState(() => _proposals = list);
-      final first = list.firstOrNull;
-      if (first != null && _askedShapes.add(first.proposalId)) {
-        try {
-          final shapes = await _gateway.proposalPaths(session, client, first.proposalId);
-          if (mounted) setState(() => _shapes[first.proposalId] = shapes);
-        } on PhotoProblem {
-          // Without shapes the proposal is still shown with its pins; the routes are only an aid.
-        }
-      }
     }
   }
 
-  List<RidePath>? _drawn(DriverProposalView? offer) {
-    final shapes = offer == null ? null : _shapes[offer.proposalId];
-    if (shapes == null) return _myRoute == null ? null : [RidePath.normal(_myRoute!)];
-    return [
-      if (shapes.normal != null) RidePath.normal(shapes.normal!),
-      if (shapes.combined != null) RidePath.combined(shapes.combined!),
-      if (shapes.client != null) RidePath.client(shapes.client!),
-    ];
+  /// Green: his own route; yellow: his tour with the clients he accepted; blue: each client waiting for his answer
+  /// (it becomes part of the yellow tour once accepted). Widest underneath so all stay readable.
+  List<RidePath> _drawn() => [
+    if (_myRoute != null) RidePath.normal(_myRoute!),
+    if (_plan != null) RidePath.combined(_plan!),
+    if (_canReceive)
+      for (final p in _proposals)
+        if (p.route != null) RidePath.client(p.route!),
+  ];
+
+  /// The rest of the tour, in order: the stops, then his direction.
+  List<RidePoint> get _tour => [for (final s in _stops) s.point, ?_destination];
+
+  void _toggleFollow() {
+    setState(() => _following = !_following);
+    _startTimers();
+    if (_following) _run(() => _sendPresence(true), quiet: true);
+  }
+
+  /// After an answer or a step, the tour changes: ask the server for the new one at once.
+  Future<void> _refreshTour() async {
+    if (_online) await _sendPresence(true);
   }
 
   Future<void> _navigate(Uri link) async {
@@ -272,11 +294,11 @@ class _DriverRidePageState extends State<DriverRidePage> {
   Widget _legend(List<RidePath> drawn) => Padding(
     padding: const EdgeInsets.only(top: 6),
     child: Wrap(spacing: 12, runSpacing: 4, children: [
-      for (final path in drawn)
+      for (final path in {for (final p in drawn) p.name: p}.values)
         _swatch(path.color, switch (path.name) {
           'normal' => 'Ton trajet normal',
-          'client' => 'Trajet du client',
-          _ => _destination != null ? 'Ton nouveau trajet' : 'Ton trajet avec le client',
+          'client' => 'Client qui attend ta réponse',
+          _ => 'Ton trajet avec tes clients',
         }),
     ]),
   );
@@ -302,6 +324,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _proposals = _proposals.where((p) => p.proposalId != proposal.proposalId).toList();
       if (ride != null) _rides = [..._rides, ride];
     });
+    if (ride != null) await _refreshTour();
   });
 
   TextEditingController _code(String rideId) => _codes.putIfAbsent(rideId, TextEditingController.new);
@@ -319,6 +342,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
       _rides = [for (final r in _rides) r.reservationId == fresh.reservationId ? fresh : r];
       if (action == 'board') _code(ride.reservationId).clear();
     });
+    if (action != 'arrive') await _refreshTour();
   });
 
   void _close(CityRideView ride) => setState(() {
@@ -391,9 +415,12 @@ class _DriverRidePageState extends State<DriverRidePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shown = _rides.where((r) => r.active).firstOrNull;
-    final offer = _canReceive ? _proposals.firstOrNull : null;
-    final drawn = _drawn(offer);
+    final drawn = _drawn();
+    final tour = _tour;
+    final waiting = [
+      if (_canReceive) for (final p in _proposals) p.pickup,
+      for (final s in _stops) if (s.pickup) s.point,
+    ];
     return WakaPage(
       title: 'Mode chauffeur',
       child: Column(
@@ -403,7 +430,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(
               height: 240,
-              child: widget.mapBuilder(context, offer?.pickup ?? shown?.pickup ?? _position, offer?.dropoff ?? shown?.dropoff ?? _destination,
+              child: widget.mapBuilder(context, _position, _destination ?? (_stops.isEmpty ? null : _stops.last.point),
                   (point) {
                     if (_online) return;
                     setState(() {
@@ -416,10 +443,25 @@ class _DriverRidePageState extends State<DriverRidePage> {
                       }
                       _places = const [];
                     });
-                  }, paths: drawn),
+                  }, paths: drawn, clients: waiting, driver: _following ? _position : null, follow: _following),
             ),
           ),
-          if (drawn != null && drawn.isNotEmpty) _legend(drawn),
+          if (drawn.isNotEmpty) _legend(drawn),
+          if (_online && tour.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: _toggleFollow,
+              icon: Icon(_following ? Icons.stop_circle_outlined : Icons.play_arrow),
+              label: Text(_following ? 'Arrêter le suivi' : 'Démarrer le trajet'),
+            ),
+            const SizedBox(height: 4),
+            Row(children: [
+              Expanded(child: OutlinedButton.icon(onPressed: () => _navigate(googleMapsTour(tour)),
+                  icon: const Icon(Icons.navigation_outlined), label: Text(tour.length > 1 ? 'Tout le trajet · Google Maps' : 'Google Maps'))),
+              const SizedBox(width: 8),
+              OutlinedButton(onPressed: () => _navigate(wazeNavigation(tour.first)), child: const Text('Waze')),
+            ]),
+          ],
           const SizedBox(height: 12),
           SwitchListTile(
             title: Text(_online ? 'En ligne' : 'Hors ligne'),
@@ -437,7 +479,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
             ..._suggestions(_Spot.here),
             const SizedBox(height: 8),
             _placeField(_Spot.there, _whereTo, 'Où vas-tu ? (facultatif)',
-                'Avec une direction, tu prends plusieurs clients en partagé sur ton chemin (détour de 5 min au plus)',
+                'Avec une direction, tu reçois les clients à 10 min au plus qui vont dans ton sens, en partagé',
                 Icons.flag_outlined, _destination),
             ..._suggestions(_Spot.there),
           ],

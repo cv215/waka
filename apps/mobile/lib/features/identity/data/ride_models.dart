@@ -173,22 +173,24 @@ class CityRideView {
 /// A ride offered to this driver (K31): 30 seconds to answer.
 class DriverProposalView {
   const DriverProposalView(this.proposalId, this.mode, this.seats, this.priceXaf, this.driverXaf, this.pickupSeconds,
-      this.expiresAt, this.pickup, this.dropoff, {this.detourSeconds = 0});
+      this.expiresAt, this.pickup, this.dropoff, {this.detourSeconds = 0, this.route});
   final String proposalId, mode;
   final int seats, priceXaf, driverXaf, pickupSeconds;
-  /// R15: the detour this client adds to the driver's direction (0 without a direction).
+  /// R15: the detour this client adds to the driver's direction (0 without a direction), shown, not capped.
   final int detourSeconds;
+  /// The client's trip by road (blue on the driver's map), or null.
+  final List<RidePoint>? route;
   final DateTime expiresAt;
   final RidePoint pickup, dropoff;
   static DriverProposalView parse(Object? value) {
     final m = _exact(value, {'proposalId', 'mode', 'seats', 'priceXaf', 'driverXaf', 'pickupSeconds', 'expiresAt', 'pickup', 'dropoff',
-      'detourSeconds'});
+      'detourSeconds', 'route'});
     if (!{'shared', 'vip'}.contains(m['mode'])) throw const FormatException();
     final price = _amount(m['priceXaf'], min: 1), share = _amount(m['driverXaf']);
     if (share > price) throw const FormatException();
     return DriverProposalView(_id(m['proposalId']), m['mode'] as String, _amount(m['seats'], min: 1, max: 5), price, share,
         _amount(m['pickupSeconds'], max: 600), _instant(m['expiresAt']), RidePoint.parse(m['pickup']), RidePoint.parse(m['dropoff']),
-        detourSeconds: _amount(m['detourSeconds'], max: 300));
+        detourSeconds: _amount(m['detourSeconds'], max: 7200), route: _tripShape(m['route']));
   }
   static List<DriverProposalView> parseList(Object? value) {
     try {
@@ -221,23 +223,38 @@ class ProposalPathsView {
   }
 }
 
+/// One stop of the driver's tour: a client's pickup or drop-off, in the order the server chose.
+class RideStop {
+  const RideStop(this.kind, this.reservationId, this.point);
+  final String kind, reservationId;
+  final RidePoint point;
+  bool get pickup => kind == 'pickup';
+}
+
 /// The driver's presence as the server recorded it; the position time is the server's.
 class DriverPresenceView {
-  const DriverPresenceView(this.online, this.positionAt, [this.destination, this.route]);
+  const DriverPresenceView(this.online, this.positionAt, [this.destination, this.route, this.plan, this.stops = const []]);
   final bool online;
   final DateTime? positionAt;
   /// R15: the direction the server recorded, or null.
   final RidePoint? destination;
   /// The driver's own road route to his direction (drawn in green), or null.
   final List<RidePoint>? route;
+  /// His tour through the clients he carries, then his direction (drawn in yellow), or null.
+  final List<RidePoint>? plan;
+  final List<RideStop> stops;
   static DriverPresenceView parse(Object? value) {
     try {
-      final m = _exact(value, {'online', 'positionAt', 'destination', 'route'});
-      final route = m['route'];
-      if (m['online'] is! bool || (route != null && route is! String)) throw const FormatException();
+      final m = _exact(value, {'online', 'positionAt', 'destination', 'route', 'plan', 'stops'});
+      final stops = m['stops'];
+      if (m['online'] is! bool || stops is! List || stops.length > 10) throw const FormatException();
       return DriverPresenceView(m['online'] as bool, _instantOrNull(m['positionAt']),
-          m['destination'] == null ? null : RidePoint.parse(m['destination']),
-          route == null ? null : List.unmodifiable(decodePolyline(route as String).map((p) => RidePoint(p.$1, p.$2))));
+          m['destination'] == null ? null : RidePoint.parse(m['destination']), _tripShape(m['route']), _tripShape(m['plan']),
+          List.unmodifiable(stops.map((v) {
+            final s = _exact(v, {'kind', 'reservationId', 'point'});
+            if (!{'pickup', 'dropoff'}.contains(s['kind'])) throw const FormatException();
+            return RideStop(s['kind'] as String, _id(s['reservationId']), RidePoint.parse(s['point']));
+          })));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

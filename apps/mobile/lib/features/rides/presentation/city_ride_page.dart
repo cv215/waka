@@ -78,18 +78,23 @@ class RidePath {
   static RidePath trip(List<RidePoint> p) => RidePath('client', p, const Color(0xFF1565C0), 6);
 }
 
-/// Builds the map; tests replace it because platform maps need a device.
+/// Builds the map; tests replace it because platform maps need a device. [clients]: clients' pickups (violet pins);
+/// [follow]: the camera stays on [driver] as it moves (the driver's « Démarrer » mode).
 typedef RideMapBuilder = Widget Function(BuildContext context, RidePoint? origin, RidePoint? destination,
-    void Function(RidePoint point) onTap, {RidePoint? driver, List<RidePath>? paths});
+    void Function(RidePoint point) onTap, {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow});
 
 Widget googleRideMap(BuildContext context, RidePoint? origin, RidePoint? destination, void Function(RidePoint point) onTap,
-        {RidePoint? driver, List<RidePath>? paths}) =>
-    _GoogleRideMap(origin: origin, destination: destination, driver: driver, paths: paths ?? const [], onTap: onTap);
+        {RidePoint? driver, List<RidePath>? paths, List<RidePoint>? clients, bool follow = false}) =>
+    _GoogleRideMap(origin: origin, destination: destination, driver: driver, paths: paths ?? const [], clients: clients ?? const [],
+        follow: follow, onTap: onTap);
 
 class _GoogleRideMap extends StatefulWidget {
-  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver, this.paths = const []});
+  const _GoogleRideMap({required this.origin, required this.destination, required this.onTap, this.driver, this.paths = const [],
+      this.clients = const [], this.follow = false});
   final RidePoint? origin, destination, driver;
   final List<RidePath> paths;
+  final List<RidePoint> clients;
+  final bool follow;
   final void Function(RidePoint point) onTap;
   @override
   State<_GoogleRideMap> createState() => _GoogleRideMapState();
@@ -107,8 +112,11 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
   @override
   void didUpdateWidget(_GoogleRideMap old) {
     super.didUpdateWidget(old);
-    final o = widget.origin, d = widget.destination;
-    if (widget.paths.isNotEmpty && _signature(widget.paths) != _signature(old.paths)) {
+    final o = widget.origin, d = widget.destination, car = widget.driver;
+    if (widget.follow) {
+      // Following the car: close and centred on it, whatever else changes.
+      if (car != null && (!old.follow || car != old.driver)) _controller?.animateCamera(CameraUpdate.newLatLngZoom(_at(car), 16));
+    } else if (widget.paths.isNotEmpty && _signature(widget.paths) != _signature(old.paths)) {
       // Frame every drawn route once, when they arrive.
       final all = [for (final p in widget.paths) ...p.points];
       double minLat = all.first.latitude, maxLat = minLat, minLon = all.first.longitude, maxLon = minLon;
@@ -143,7 +151,7 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
     gestureRecognizers: {Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new)},
     polylines: {
       for (final (i, path) in widget.paths.indexed)
-        Polyline(polylineId: PolylineId(path.name), points: [for (final p in path.points) _at(p)], color: path.color,
+        Polyline(polylineId: PolylineId('${path.name}$i'), points: [for (final p in path.points) _at(p)], color: path.color,
             width: path.width, zIndex: i, startCap: Cap.roundCap, endCap: Cap.roundCap, jointType: JointType.round),
     },
     markers: {
@@ -155,6 +163,9 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
       if (widget.driver != null)
         Marker(markerId: const MarkerId('chauffeur'), position: _at(widget.driver!), infoWindow: const InfoWindow(title: 'Ton chauffeur'),
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure)),
+      for (final (i, client) in widget.clients.indexed)
+        Marker(markerId: MarkerId('client$i'), position: _at(client), infoWindow: const InfoWindow(title: 'Client'),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)),
     },
   );
 }
