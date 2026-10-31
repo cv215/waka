@@ -35,6 +35,10 @@ class LoginFlow extends ChangeNotifier {
   }
   bool get canStartApplication =>
       noApplication && applicationGateway != null && pendingApplication == null;
+  /// R16: an approved driver may change situation (taxi <-> private); his profile keeps serving until the decision.
+  bool canChangeTo(String category) =>
+      application?.state == 'approved' && application!.requestedCategory != category && applicationGateway != null &&
+      !applicationNeedsReview && pendingApplication == null;
   bool get canEditVehicle =>
       application != null && application!.editable && applicationGateway != null && !applicationNeedsReview &&
       pendingApplication == null;
@@ -330,9 +334,10 @@ class LoginFlow extends ChangeNotifier {
     }
   }
 
-  /// Creates a draft only: choosing a category gives no admission and no access.
+  /// Creates a draft only: choosing a category gives no admission and no access. For an approved driver, the draft of
+  /// the other category is a change of situation (R16).
   Future<void> startApplication(String category) => _run(() async {
-    if (!canStartApplication || (category != 'taxi' && category != 'private')) {
+    if (!(canStartApplication || canChangeTo(category)) || (category != 'taxi' && category != 'private')) {
       throw const ApplicationProblem(ApplicationFailure.invalid);
     }
     await _persistAndSend(CreateApplicationCommand(randomLoginId(), session!.accountId, category));

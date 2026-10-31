@@ -876,6 +876,69 @@ class AdmissionReviewMySqlVerificationTest {
         void settle(UUID id, State state, Long amount) { statuses.put("fk-" + id, new Status(state, amount, "XAF")); }
     }
 
+    /** R16: one profile at a time; an approved driver changes situation and keeps working until the new file is decided. */
+    @Test void anApprovedDriverChangesSituationAndKeepsWorkingMeanwhile() {
+        Login driver = login(candidatePhone);
+        UUID taxi = readyFile(current, driver, "taxi", "holder", "CS 10-AA", false);
+        clock.advance(61);
+        Login agent = login(agentPhone);
+        char[] adminToken = adminSession(agent);
+        approveWithWaivers(agent, adminToken, taxi);
+        var access = new com.waka.drivers.DriverAccessService(sessions, current.applications);
+        assertEquals("taxi", access.access(driver.token, client).category());
+        assertEquals(AdmissionException.Code.APPLICATION_ALREADY_OPEN, assertThrows(AdmissionException.class,
+                () -> current.applications.create(driver.token, client, UUID.randomUUID(), "taxi")).code(), "already a taxi");
+
+        UUID change = changeFile(driver, "private", "CS 10-AA");
+        var during = access.access(driver.token, client);
+        assertEquals("active", during.access(), "the taxi keeps working while the change is examined");
+        assertEquals("taxi", during.category());
+        assertEquals(taxi, during.applicationId());
+        assertEquals("submitted", current.applications.readCurrent(driver.token, client).state(), "his own file is the new one");
+        assertEquals(AdmissionException.Code.APPLICATION_ALREADY_OPEN, assertThrows(AdmissionException.class,
+                () -> current.applications.create(driver.token, client, UUID.randomUUID(), "taxi")).code(), "one change at a time");
+
+        // Refused: nothing changes, the taxi is his file again.
+        var detail = current.reviews.detail(agent.token, client, adminToken, change);
+        current.reviews.decide(agent.token, client, adminToken, change, UUID.randomUUID(), detail.application().version(),
+                "refuse", "VEHICLE_NOT_ELIGIBLE", null, List.of(), allDocuments(detail, "acceptable"));
+        assertEquals("taxi", access.access(driver.token, client).category());
+        assertEquals(taxi, current.applications.readCurrent(driver.token, client).applicationId());
+
+        // Asked again and approved: the private profile replaces the taxi, closed.
+        UUID again = changeFile(driver, "private", "CS 10-AA");
+        clock.advance(61);
+        approveWithWaivers(agent, adminToken, again);
+        var after = access.access(driver.token, client);
+        assertEquals("private", after.category());
+        assertEquals(again, after.applicationId());
+        assertEquals("replaced", current.applications.read(driver.token, client, taxi).state());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM driver_application WHERE gate_hash=? AND account_id=? AND state='approved'",
+                Integer.class, gate, driver.account.toString()), "one profile at a time");
+    }
+
+    /** A change of situation as the app makes it: the pieces already valid carry over, only the missing ones are sent. */
+    private UUID changeFile(Login owner, String category, String plate) {
+        UUID app = current.applications.create(owner.token, client, UUID.randomUUID(), category).applicationId();
+        current.applications.updateVehicle(owner.token, client, app, UUID.randomUUID(), 1, car("holder", plate));
+        for (String view : AdmissionReviewService.VIEWS) photos.upload(owner.token, client, app, view, UUID.randomUUID(), "image/jpeg", jpeg);
+        for (var requirement : current.applications.requirements(owner.token, client, app)) {
+            if (requirement.requiredForSubmission() && requirement.documentId() == null) upload(current, owner, app, requirement.code());
+        }
+        current.applications.submit(owner.token, client, app, UUID.randomUUID(), 2);
+        return app;
+    }
+
+    private void approveWithWaivers(Login agent, char[] adminToken, UUID app) {
+        var detail = current.reviews.detail(agent.token, client, adminToken, app);
+        var waivers = new ArrayList<AdmissionReviewService.Waiver>();
+        for (var r : detail.requirements()) {
+            if (r.documentId() == null && "established".equals(r.status())) waivers.add(new AdmissionReviewService.Waiver(r.code(), "TO_PROVIDE_AFTER_START"));
+        }
+        current.reviews.decide(agent.token, client, adminToken, app, UUID.randomUUID(), detail.application().version(), "approve",
+                "ALL_CONDITIONS_MET", null, allPhotos(detail, "acceptable"), allDocuments(detail, "acceptable"), waivers);
+    }
+
     @Test void renewalReusesValidPiecesAndVehiclePiecesFollowTheRegistration() {
         Login candidate = login(candidatePhone);
         UUID first = readyFile(established, candidate, "taxi", "holder", "AB 12-CD", true);

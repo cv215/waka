@@ -62,7 +62,9 @@ Uri wazeNavigation(RidePoint to) => Uri.https('waze.com', '/ul', {'ll': '${to.la
 class DriverRidePage extends StatefulWidget {
   const DriverRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
       this.openLink = openExternally, this.pollEvery = const Duration(seconds: 4), this.presenceEvery = const Duration(seconds: 20),
-      this.followEvery = const Duration(seconds: 5)});
+      this.followEvery = const Duration(seconds: 5), this.title = 'Mode chauffeur'});
+  /// Empty when the page sits under the Client | Chauffeur switch.
+  final String title;
   final LoginFlow login;
   final RideMapBuilder mapBuilder;
   final ReadPosition readPosition;
@@ -422,7 +424,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
       for (final s in _stops) if (s.pickup) s.point,
     ];
     return WakaPage(
-      title: 'Mode chauffeur',
+      title: widget.title,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

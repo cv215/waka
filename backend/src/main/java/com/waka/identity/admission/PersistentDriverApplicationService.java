@@ -105,7 +105,10 @@ public final class PersistentDriverApplicationService {
         maintenance.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    /** A26: a declared category creates a draft only; one open candidature per account. */
+    /**
+     * A26: a declared category creates a draft only; one open candidature per account. R16: an approved driver may ask
+     * for the other category (taxi <-> private): his approved file keeps serving while the new one is examined.
+     */
     public ApplicationView create(char[] token, String client, UUID key, String requestedCategory) {
         if (key == null || !("taxi".equals(requestedCategory) || "private".equals(requestedCategory))) throw invalid();
         return unwrap(sessions.withAuthenticatedSession(token, client, session -> {
@@ -116,12 +119,21 @@ public final class PersistentDriverApplicationService {
             Instant now = session.serverTime();
             Outcome replay = replay(account, request, payload, now);
             if (replay != null) return replay;
-            if (openApplication(account) != null) return new Outcome(null, AdmissionException.Code.APPLICATION_ALREADY_OPEN);
+            Row open = openApplication(account);
+            String replaces = null;
+            if (open != null) {
+                if (!"approved".equals(open.state) || open.category.equals(requestedCategory) || servingApplication(account) != null) {
+                    return new Outcome(null, AdmissionException.Code.APPLICATION_ALREADY_OPEN);
+                }
+                // The approved profile keeps serving until the new file is decided.
+                jdbc.update("UPDATE driver_application SET open_marker=NULL,serving_marker=1 WHERE gate_hash=? AND id=?", gate, open.id.toString());
+                replaces = open.id.toString();
+            }
             UUID id = UUID.randomUUID();
             byte[] vehicle = encryptVehicle(actor, id, 1, now, VehicleFields.EMPTY);
             try {
-                jdbc.update("INSERT INTO driver_application (gate_hash,id,account_id,requested_category,state,open_marker,version,key_id,vehicle_cipher,created_at,updated_at) VALUES (?,?,?,?,?,1,1,?,?,?,?)",
-                        gate, id.toString(), actor, requestedCategory, DRAFT, crypto.keyId(), vehicle, sql(now), sql(now));
+                jdbc.update("INSERT INTO driver_application (gate_hash,id,account_id,requested_category,state,open_marker,version,key_id,vehicle_cipher,created_at,updated_at,replaces_id) VALUES (?,?,?,?,?,1,1,?,?,?,?,?)",
+                        gate, id.toString(), actor, requestedCategory, DRAFT, crypto.keyId(), vehicle, sql(now), sql(now), replaces);
             } finally { Arrays.fill(vehicle, (byte) 0); }
             ApplicationView view = view(id, account, requestedCategory, DRAFT, 1, VehicleFields.EMPTY, now, now, now, false);
             remember(actor, request, payload, view, now);
@@ -270,7 +282,7 @@ public final class PersistentDriverApplicationService {
     /** For the access service, inside its authenticated transaction: the open file and its requirement statuses. */
     public AccessBasis accessBasisLocked(UUID candidate, Instant now) {
         requireTransaction();
-        Row row = openApplication(candidate);
+        Row row = profileRow(candidate);
         if (row == null) return null;
         // Only the latest approval counts: a later file version is approved again with its own waivers.
         Set<String> waived = "approved".equals(row.state) ? Set.copyOf(jdbc.query(
@@ -335,7 +347,7 @@ public final class PersistentDriverApplicationService {
     /** The declared vehicle of the driver's open file, inside the caller's transaction, or null without one. */
     public VehicleFields vehicleLocked(UUID candidate, Instant now) {
         requireTransaction();
-        Row row = openApplication(candidate);
+        Row row = profileRow(candidate);
         return row == null ? null : current(candidate, row, now).vehicleFields();
     }
 
@@ -373,6 +385,13 @@ public final class PersistentDriverApplicationService {
         long next = reencrypt(candidate.toString(), row, fields, now);
         jdbc.update("UPDATE driver_application SET state=?,open_marker=? WHERE gate_hash=? AND id=?",
                 toState, "refused".equals(toState) ? null : 1, gate, applicationId.toString());
+        // R16: a change of situation ends here — approved, the new file replaces the serving one; refused, nothing changes.
+        Row serving = servingApplication(candidate);
+        if (serving != null && "approved".equals(toState)) {
+            jdbc.update("UPDATE driver_application SET state='replaced',serving_marker=NULL WHERE gate_hash=? AND id=?", gate, serving.id.toString());
+        } else if (serving != null && "refused".equals(toState)) {
+            jdbc.update("UPDATE driver_application SET serving_marker=NULL,open_marker=1 WHERE gate_hash=? AND id=?", gate, serving.id.toString());
+        }
         return next;
     }
 
@@ -429,6 +448,16 @@ public final class PersistentDriverApplicationService {
     private Row openApplication(UUID account) {
         return single(jdbc.query("SELECT id,requested_category,state,version,key_id,vehicle_cipher,created_at,updated_at FROM driver_application WHERE gate_hash=? AND account_id=? AND open_marker=1 FOR UPDATE",
                 (rs, n) -> row(rs), gate, account.toString()));
+    }
+    /** R16: the approved file still serving while a change of situation is examined, or null. */
+    private Row servingApplication(UUID account) {
+        return single(jdbc.query("SELECT id,requested_category,state,version,key_id,vehicle_cipher,created_at,updated_at FROM driver_application WHERE gate_hash=? AND account_id=? AND serving_marker=1 FOR UPDATE",
+                (rs, n) -> row(rs), gate, account.toString()));
+    }
+    /** The file the driver works with: the serving one during a change of situation, otherwise the open one. */
+    private Row profileRow(UUID account) {
+        Row serving = servingApplication(account);
+        return serving != null ? serving : openApplication(account);
     }
     private Row owned(UUID account, UUID id) {
         return single(jdbc.query("SELECT id,requested_category,state,version,key_id,vehicle_cipher,created_at,updated_at FROM driver_application WHERE gate_hash=? AND id=? AND account_id=? FOR UPDATE",

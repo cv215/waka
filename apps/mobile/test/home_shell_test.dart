@@ -45,8 +45,9 @@ void main() {
     }
     await tester.tap(find.text('Devenir chauffeur'));
     await settle(tester);
-    expect(find.text('Conduire avec WAKA'), findsOneWidget);
-    expect(find.text('Ma candidature'), findsOneWidget);
+    expect(find.text('Devenir chauffeur'), findsWidgets);
+    expect(find.text('Chauffeur particulier'), findsOneWidget, reason: 'the file in progress, one profile at a time');
+    expect(find.text('Taxi'), findsNothing, reason: 'no second type to start while a file is open');
   });
 
   testWidgets('Activité : la course en cours en haut (un toucher la rouvre), puis l’historique', (tester) async {

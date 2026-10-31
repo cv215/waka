@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../../../core/presentation/theme_choice.dart';
 import '../../../core/presentation/waka_theme.dart';
-import '../../drivers/presentation/driver_access_page.dart';
-import '../../drivers/presentation/driver_application_page.dart';
-import '../../drivers/presentation/driver_information_page.dart';
+import '../../drivers/presentation/driver_hub_page.dart';
+import '../../identity/data/driver_access_models.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/ride_models.dart';
@@ -19,12 +19,13 @@ import '../../rides/presentation/driver_ride_page.dart';
 import '../../voyages/presentation/voyages_page.dart';
 
 /// Step 3 of the redesign: four tabs at the bottom — Course (the map), Voyages, Activité (in progress and history),
-/// Compte. Each tab keeps its state while another one is shown.
+/// Compte. Each tab keeps its state while another one is shown. Step 4: an approved driver switches the Course tab
+/// between Client and Chauffeur at its top.
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key, required this.login, this.course, this.voyages});
+  const HomeShell({super.key, required this.login, this.course, this.voyages, this.driver});
   final LoginFlow login;
-  /// The ride and trip tabs; tests replace the map and the polling trips page.
-  final Widget? course, voyages;
+  /// The ride, trip and driver screens; tests replace the maps and the polling pages.
+  final Widget? course, voyages, driver;
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
@@ -33,23 +34,66 @@ class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
   /// Bumped each time Activité is opened, so it reads the server again.
   int _activityVisit = 0;
+  DriverAccessView? _access;
+  bool _driving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _readAccess();
+  }
+
+  /// Read again when the Course tab is shown: an approval or a change of situation shows up without restarting.
+  Future<void> _readAccess() async {
+    final gateway = widget.login.gateway, session = widget.login.session, client = widget.login.clientInstance;
+    if (gateway is! DriverAccessGateway || session == null || client == null) return;
+    try {
+      final access = await (gateway as DriverAccessGateway).driverAccess(session, client);
+      if (mounted) setState(() { _access = access; if (!canDriveCityRides(access)) _driving = false; });
+    } on PhotoProblem {
+      // Unknown access: the switch stays hidden, the client side works as usual.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final login = widget.login;
     return Scaffold(
       body: IndexedStack(index: _tab, children: [
-        widget.course ?? CityRidePage(login: login),
+        Stack(children: [
+          Positioned.fill(child: _driving
+              ? widget.driver ?? DriverRidePage(login: login, title: '')
+              : widget.course ?? CityRidePage(login: login)),
+          if (canDriveCityRides(_access) && login.gateway is DriverRideGateway)
+            SafeArea(child: Align(alignment: Alignment.topCenter, child: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              // In a browser the map would take the touches meant for the switch drawn over it.
+              child: PointerInterceptor(child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 3,
+                borderRadius: BorderRadius.circular(24),
+                child: Padding(padding: const EdgeInsets.all(4), child: SegmentedButton<bool>(
+                  segments: const [ButtonSegment(value: false, label: Text('Client')), ButtonSegment(value: true, label: Text('Chauffeur'))],
+                  selected: {_driving},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (s) => setState(() => _driving = s.first),
+                )),
+              )),
+            ))),
+        ]),
         widget.voyages ?? (login.gateway is VoyageGateway ? VoyagesPage(login: login) : const SizedBox.shrink()),
         ActivityTab(key: ValueKey(_activityVisit), login: login, openRide: () => setState(() => _tab = 0)),
         AccountTab(login: login),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() {
-          if (i == 2 && _tab != 2) _activityVisit++;
-          _tab = i;
-        }),
+        onDestinationSelected: (i) {
+          setState(() {
+            if (i == 2 && _tab != 2) _activityVisit++;
+            _tab = i;
+          });
+          if (i == 0) _readAccess();
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.local_taxi_outlined), selectedIcon: Icon(Icons.local_taxi), label: 'Course'),
           NavigationDestination(icon: Icon(Icons.route_outlined), selectedIcon: Icon(Icons.route), label: 'Voyages'),
@@ -206,7 +250,7 @@ class AccountTab extends StatelessWidget {
         const SizedBox(height: 16),
         if (gateway is PaymentGateway)
           _row(Icons.account_balance_wallet_outlined, 'Mon argent', () => _open(context, WalletPage(login: login))),
-        _row(Icons.directions_car_outlined, 'Devenir chauffeur', () => _open(context, DriverHub(login: login))),
+        _row(Icons.directions_car_outlined, 'Devenir chauffeur', () => _open(context, DriverHubPage(login: login))),
         if (gateway is ReferralGateway)
           _row(Icons.card_giftcard_outlined, 'Parrainage', () => _open(context, ReferralPage(login: login))),
         _row(Icons.palette_outlined, 'Apparence', () => _appearance(context)),
@@ -264,33 +308,5 @@ class AccountTab extends StatelessWidget {
     ));
     field.dispose();
     if (name != null && name.split(' ').length >= 2 && name != login.profile?.displayName) await login.saveDisplayName(name);
-  }
-}
-
-/// « Devenir chauffeur », until step 4 redoes it: the existing driver screens, in one place.
-class DriverHub extends StatelessWidget {
-  const DriverHub({super.key, required this.login});
-  final LoginFlow login;
-
-  @override
-  Widget build(BuildContext context) {
-    void open(Widget page) => Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) => page));
-    final gateway = login.gateway;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Chauffeur')),
-      body: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
-        ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.info_outline), title: const Text('Conduire avec WAKA'),
-            trailing: const Icon(Icons.chevron_right), onTap: () => open(const DriverInformationPage())),
-        if (login.applicationGateway != null)
-          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.badge_outlined), title: const Text('Ma candidature'),
-              trailing: const Icon(Icons.chevron_right), onTap: () => open(DriverApplicationPage(flow: login))),
-        if (gateway is DriverAccessGateway)
-          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.verified_user_outlined), title: const Text('Mon accès chauffeur'),
-              trailing: const Icon(Icons.chevron_right), onTap: () => open(DriverAccessPage(login: login))),
-        if (gateway is DriverRideGateway)
-          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.drive_eta_outlined), title: const Text('Mode chauffeur'),
-              trailing: const Icon(Icons.chevron_right), onTap: () => open(DriverRidePage(login: login))),
-      ]),
-    );
   }
 }
