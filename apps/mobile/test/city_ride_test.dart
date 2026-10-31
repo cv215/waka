@@ -113,6 +113,7 @@ Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideF
     return (login, gateway);
   }))!;
   await tester.pumpWidget(MaterialApp(home: CityRidePage(login: login, mapBuilder: _fakeMap, pollEvery: null,
+      readPosition: () async => const RidePoint(3.8667, 11.5167),
       typingDelay: Duration.zero)));
   await settle(tester);
   return (login, gateway);
@@ -181,6 +182,23 @@ void main() {
     await tester.tap(find.text('Voir le prix'));
     await settle(tester);
     expect(find.textContaining('Yaoundé seulement'), findsOneWidget);
+  });
+
+  testWidgets('un départ écrit sans être choisi est signalé ; « Ma position » le remplit', (tester) async {
+    await _open(tester);
+    await _type(tester, 'Départ', 'mobil omnisports');
+    await _type(tester, 'Arrivée', 'Bast');
+    await tester.tap(find.widgetWithText(ListTile, 'Bastos'));
+    await settle(tester);
+    expect(find.text('Touche ce champ et choisis un lieu dans la liste'), findsOneWidget);
+    expect(find.textContaining('choisis d’abord le départ'), findsOneWidget);
+    await tester.tap(find.byTooltip('Ma position'));
+    await settle(tester);
+    expect(find.text('carte DA'), findsOneWidget);
+    expect(find.text('Touche ce champ et choisis un lieu dans la liste'), findsNothing);
+    await tester.tap(find.text('Voir le prix'));
+    await settle(tester);
+    expect(find.text('370 F'), findsOneWidget);
   });
 
   testWidgets('une course en cours est retrouvée à l’ouverture, avec le chauffeur sur la carte', (tester) async {

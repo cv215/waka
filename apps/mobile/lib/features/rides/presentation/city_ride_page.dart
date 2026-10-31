@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../core/presentation/waka_page.dart';
@@ -42,6 +43,23 @@ String rideStateLabel(String state) => switch (state) {
   'expired' => 'Le délai de paiement est passé : la course est annulée.',
   _ => state,
 };
+
+/// Where this phone is. Null when the position cannot be read (refused, no GPS, or a page without HTTPS).
+typedef ReadPosition = Future<RidePoint?> Function();
+
+Future<RidePoint?> devicePosition() async {
+  try {
+    if (!await Geolocator.isLocationServiceEnabled()) return null;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
+    final p = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 10)));
+    return RidePoint(p.latitude, p.longitude);
+  } on Exception {
+    return null;
+  }
+}
 
 /// Builds the map; tests replace it because platform maps need a device.
 typedef RideMapBuilder = Widget Function(BuildContext context, RidePoint? origin, RidePoint? destination,
@@ -105,10 +123,11 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
 /// « Course en ville » (R13): choose the pickup and drop-off by search or on the map, see the server's price, find a
 /// driver, pay within three minutes, follow the ride. Nothing about the price is computed on the phone.
 class CityRidePage extends StatefulWidget {
-  const CityRidePage({super.key, required this.login, this.mapBuilder = googleRideMap,
+  const CityRidePage({super.key, required this.login, this.mapBuilder = googleRideMap, this.readPosition = devicePosition,
       this.pollEvery = const Duration(seconds: 4), this.typingDelay = const Duration(milliseconds: 400)});
   final LoginFlow login;
   final RideMapBuilder mapBuilder;
+  final ReadPosition readPosition;
   /// Null in tests: the client refreshes by hand.
   final Duration? pollEvery;
   final Duration typingDelay;
@@ -300,18 +319,48 @@ class _CityRidePageState extends State<CityRidePage> {
     setState(() { _search = null; _ride = null; _quote = null; _message = null; _keys.clear(); });
   }
 
-  Widget _placeField(_Field field, TextEditingController controller, String label, IconData icon) => TextField(
-    controller: controller,
-    enabled: !_busy && _search == null,
-    onTap: () => setState(() => _active = field),
-    onChanged: (text) => _typed(field, text),
-    decoration: InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon),
-      helperText: _active == field && _search == null ? 'Écris un lieu, ou touche la carte' : null,
-      suffixIcon: (field == _Field.origin ? _origin : _destination) == null ? null : const Icon(Icons.check_circle_outline),
-    ),
-  );
+  Widget _placeField(_Field field, TextEditingController controller, String label, IconData icon) {
+    final chosen = (field == _Field.origin ? _origin : _destination) != null;
+    // Text typed but no place chosen: the point is unknown, so the price cannot be asked yet.
+    final unchosen = !chosen && controller.text.trim().isNotEmpty && _search == null && _ride == null;
+    return TextField(
+      controller: controller,
+      enabled: !_busy && _search == null && _ride == null,
+      onTap: () {
+        setState(() => _active = field);
+        if (unchosen) _typed(field, controller.text); // bring the suggestions back
+      },
+      onChanged: (text) => _typed(field, text),
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        helperText: _active == field && !unchosen && _search == null ? 'Écris un lieu, ou touche la carte' : null,
+        errorText: unchosen && _active != field ? 'Touche ce champ et choisis un lieu dans la liste' : null,
+        suffixIcon: chosen
+            ? const Icon(Icons.check_circle_outline)
+            : field == _Field.origin && _search == null && _ride == null
+                ? IconButton(tooltip: 'Ma position', icon: const Icon(Icons.my_location), onPressed: _busy ? null : _here)
+                : null,
+      ),
+    );
+  }
+
+  /// The pickup at this phone's position (GPS; only over https in a browser).
+  Future<void> _here() => _run(() async {
+    final point = await widget.readPosition();
+    if (!mounted) return;
+    if (point == null) {
+      setState(() => _message = 'Position introuvable : autorise la localisation, ou écris le lieu de départ.');
+      return;
+    }
+    setState(() {
+      _origin = point;
+      _originText.text = 'Ma position';
+      _suggestions = const [];
+      _quote = null;
+      _active = _Field.destination;
+    });
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -353,13 +402,20 @@ class _CityRidePageState extends State<CityRidePage> {
                   icon: const Icon(Icons.add_circle_outline)),
             ]),
             const SizedBox(height: 8),
-            if (quote == null)
+            if (quote == null) ...[
               FilledButton.icon(
                 onPressed: _busy || _origin == null || _destination == null ? null : _price,
                 icon: const Icon(Icons.payments_outlined),
                 label: const Text('Voir le prix'),
-              )
-            else ...[
+              ),
+              if (_origin == null || _destination == null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(_origin == null
+                      ? 'Pour voir le prix, choisis d’abord le départ dans la liste, avec « Ma position » ou sur la carte.'
+                      : 'Pour voir le prix, choisis l’arrivée dans la liste ou sur la carte.'),
+                ),
+            ] else ...[
               Card(child: ListTile(
                 leading: const Icon(Icons.route),
                 title: Text('${quote.totalXaf} F', style: theme.textTheme.headlineSmall),
