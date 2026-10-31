@@ -90,6 +90,26 @@ void main() {
     expect(find.text('Ton numéro'), findsNothing);
   });
 
+  testWidgets('changer son nom ne fait pas quitter les écrans principaux', (tester) async {
+    final store = MemoryStore(), server = SignUpGateway()..name = 'Awa Ngono';
+    final flow = LoginFlow(server, store);
+    addTearDown(flow.dispose);
+    await flow.initialize();
+    await flow.request('699000001');
+    await flow.verify('111111');
+    await flow.checkAccount();
+    var built = 0;
+    await tester.pumpWidget(MaterialApp(home: WelcomePage(flow: flow, home: (context, f) {
+      return _Counted(onCreate: () => built++, name: f.profile?.displayName ?? '');
+    })));
+    await tester.pumpAndSettle();
+    expect(built, 1);
+    await flow.saveDisplayName('Awa Ngono Mbida');
+    await tester.pumpAndSettle();
+    expect(server.name, 'Awa Ngono Mbida');
+    expect(built, 1, reason: 'the same screens stay: the tab in use is kept');
+  });
+
   testWidgets('le retour depuis le code ramène au numéro', (tester) async {
     await _open(tester);
     await tester.enterText(find.byType(TextField), '699000001');
@@ -139,4 +159,23 @@ void main() {
       semantics.dispose();
     }
   });
+}
+
+class _Counted extends StatefulWidget {
+  const _Counted({required this.onCreate, required this.name});
+  final VoidCallback onCreate;
+  final String name;
+  @override
+  State<_Counted> createState() => _CountedState();
+}
+
+class _CountedState extends State<_Counted> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onCreate();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Text(widget.name));
 }
