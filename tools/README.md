@@ -29,6 +29,14 @@ Le serveur reste fermé au réseau : seul le relais est joignable. La session es
 
 **APK de test avec la carte** : `tools\build-android-preview.ps1` construit l'APK pour l'émulateur avec la clé « waka-carte » enregistrée sur ce poste.
 
+**Essai sur un vrai téléphone Android** :
+1. Sur le téléphone, ouvrir Paramètres, puis À propos du téléphone, et toucher 7 fois « Numéro de build ». Ensuite, dans Options pour les développeurs, activer « Débogage USB ».
+2. Brancher le téléphone en USB, le déverrouiller et accepter « Autoriser le débogage USB ».
+3. Lancer `tools\install-android-phone.ps1`. Le script construit l'APK, l'installe et relie le téléphone au serveur local par le câble (`adb reverse`), sans rien ouvrir sur Internet ni sur le Wi-Fi.
+4. Lancer le serveur local, puis ouvrir WAKA sur le téléphone.
+
+Le câble doit rester branché pendant l'essai ; après un rebranchement, relancer le script. Le GPS est le vrai : la position est celle du téléphone.
+
 **Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.
 
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.

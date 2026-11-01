@@ -645,7 +645,14 @@ class AdmissionReviewMySqlVerificationTest {
         leg.set(60);
         rides.presence(driver.token, client, true, a);
         assertTrue(offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.VIP));
-        assertEquals(0, rides.proposals(driver.token, client).getFirst().detourSeconds());
+        var vip = rides.proposals(driver.token, client).getFirst();
+        assertEquals(0, vip.detourSeconds());
+        // One search at a time: the client asking again ends his VIP search, whose proposal can no longer be accepted.
+        offered.apply(com.waka.mobility.quote.PersistentQuoteService.Mode.SHARED);
+        assertEquals(com.waka.mobility.ride.RideException.Code.PROPOSAL_EXPIRED, assertThrows(com.waka.mobility.ride.RideException.class,
+                () -> rides.respond(driver.token, client, vip.proposalId(), true)).code());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ride_search WHERE client_account_id=? AND state='searching'",
+                Integer.class, rider.account().toString()), "never two searches at once for one client");
     }
 
     @Test void privateDriverTrialStartsWithTheFirstRideThenAPaidPeriodFollowsIt() {

@@ -129,6 +129,30 @@ void main() {
     login.dispose();
   });
 
+  testWidgets('paiement refusé sur le téléphone : rien de pris, nouvel essai avec une nouvelle clé', (tester) async {
+    final (login, gateway) = await open(tester, (login) => WalletPage(login: login, pollEvery: null));
+    gateway.nextState = 'failed';
+    await tester.tap(find.text('Recharger'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '5000');
+    await tester.tap(find.text('Continuer'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '690000031');
+    await tester.tap(find.text('Payer 5000 F'));
+    await settle(tester);
+    expect(find.text('Paiement refusé ou annulé. Aucun argent n’a été pris.'), findsOneWidget);
+    gateway.nextState = 'pending';
+    await tester.tap(find.text('Réessayer'));
+    await settle(tester);
+    await tester.enterText(find.byType(TextField), '670000000');
+    await tester.tap(find.text('Payer 5000 F'));
+    await settle(tester);
+    expect(find.textContaining('Confirme le paiement de 5000 F'), findsOneWidget);
+    expect(gateway.payments.length, 2, reason: 'a new key: the refused payment is not found again');
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
   testWidgets('retirer ses gains : 2 % annoncés avant, seulement vers son numéro', (tester) async {
     final (login, gateway) = await open(tester, (login) => WalletPage(login: login, pollEvery: null));
     await tester.tap(find.text('Retirer'));

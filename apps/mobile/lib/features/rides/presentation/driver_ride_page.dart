@@ -102,7 +102,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
   List<DriverProposalView> _proposals = const [];
   /// Rides carried now, plus the ones that just ended until the driver closes them.
   List<CityRideView> _rides = const [];
-  String? _message;
+  String? _message, _quietFailure;
   Timer? _poll, _presence, _gps;
 
   @override
@@ -162,8 +162,11 @@ class _DriverRidePageState extends State<DriverRidePage> {
     if (!quiet) setState(() { _busy = true; _message = null; });
     try {
       await action();
+      // A background refresh that works again clears the message its earlier failure left (a server restarting).
+      if (quiet && mounted && _message != null && _message == _quietFailure) setState(() => _message = null);
     } on PhotoProblem catch (problem) {
       if (mounted) setState(() => _message = driverRideMessage(problem.failure));
+      if (quiet) _quietFailure = _message;
       if (problem.failure == PhotoFailure.denied) await widget.login.checkAccount();
     } finally {
       if (mounted && !quiet) setState(() => _busy = false);

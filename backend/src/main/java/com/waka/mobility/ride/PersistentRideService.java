@@ -292,6 +292,8 @@ public final class PersistentRideService {
             if (quote == null) return new Out<SearchView>(null, RideException.Code.NOT_FOUND);
             if (!now.isBefore(quote.expiresAt())) return new Out<SearchView>(null, RideException.Code.QUOTE_EXPIRED);
             Instant expires = earliest(now.plus(SEARCH), quote.expiresAt());
+            // One search at a time per client: a new one ends the others, so two drivers can never accept the same person.
+            jdbc.update("UPDATE ride_search SET state='cancelled' WHERE gate_hash=? AND client_account_id=? AND state='searching'", gate, actor);
             String id = UUID.randomUUID().toString();
             jdbc.update("INSERT INTO ride_search (gate_hash,id,quote_id,client_account_id,state,request_mac,created_at,expires_at) VALUES (?,?,?,?,'searching',?,?,?)",
                     gate, id, quoteId.toString(), actor, request, sql(now), sql(expires));
@@ -604,7 +606,15 @@ public final class PersistentRideService {
                     gate, id, searchId.toString(), actor, seconds, detour, sql(now), sql(earliest(now.plus(PROPOSAL), (Instant) search.getFirst()[1])));
             return new Out<>(id, null);
         }));
-        return respond(token, client, UUID.fromString(proposal), true);
+        try {
+            return respond(token, client, UUID.fromString(proposal), true);
+        } catch (RideException refused) {
+            // Taking failed (car now full, quote over): release the client at once instead of holding him 30 s.
+            sessions.withAuthenticatedSession(token, client, session -> jdbc.update(
+                    "UPDATE ride_proposal SET state='refused',responded_at=? WHERE gate_hash=? AND id=? AND state='sent'",
+                    sql(micros(session.serverTime())), gate, proposal));
+            throw refused;
+        }
     }
 
     /** About 300 m: shows where demand is without giving a stranger's exact address. */
