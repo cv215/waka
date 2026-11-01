@@ -150,7 +150,7 @@ class DecisionView {
         for (final review in m['photoReviews'] as List) {
           final r = exactObject(review, {'view', 'fileId', 'result', 'reasonCode'});
           if (!vehiclePhotoViews.contains(r['view'])) throw const FormatException();
-          reviews.add(_review('${r['view']} — ${vehiclePhotoLabels[r['view']]}', r));
+          reviews.add(_review('${r['view']} – ${vehiclePhotoLabels[r['view']]}', r));
         }
         for (final review in m['documentReviews'] as List) {
           final r = exactObject(review, {'documentId', 'documentType', 'result', 'reasonCode'});

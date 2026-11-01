@@ -122,8 +122,8 @@ void main() {
     )));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('PH06 — Habitacle arrière'), 300, scrollable: find.byType(Scrollable).first);
-    expect(find.text('PH06 — Habitacle arrière'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('PH06 – Habitacle arrière'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('PH06 – Habitacle arrière'), findsOneWidget);
     expect(find.text('Manquante'), findsNWidgets(6));
     await tester.tap(find.byTooltip('Prendre une photo').first);
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));

@@ -581,7 +581,7 @@ class _CityRidePageState extends State<CityRidePage> {
     final shared = _quotes['shared'], vip = _quotes['vip'], chosen = _quotes[_mode];
     final km = (shared ?? vip)?.distanceMetres;
     return [
-      Text('${_originText.text} → ${_destinationText.text}${km == null ? '' : ' · ${(km / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'}',
+      Text('${_originText.text} – ${_destinationText.text}${km == null ? '' : ' · ${(km / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'}',
           maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       const SizedBox(height: 12),
       Row(children: [
