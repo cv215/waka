@@ -49,8 +49,8 @@ class PayDialog extends StatefulWidget {
 class _PayDialogState extends State<PayDialog> {
   PaymentGateway get _gateway => widget.login.gateway as PaymentGateway;
   final _phone = TextEditingController();
-  /// One key for this dialog: a retry after a lost answer finds the same payment.
-  final _key = randomLoginId();
+  /// One key per attempt: a retry after a lost answer finds the same payment; a new attempt after a refusal gets a new key.
+  var _key = randomLoginId();
   String _method = 'cm.mtn';
   WalletView? _wallet;
   PaymentView? _payment;
@@ -169,6 +169,10 @@ class _PayDialogState extends State<PayDialog> {
         TextButton(onPressed: () => Navigator.of(context).pop(payment), child: Text(payment == null ? 'Annuler' : 'Fermer')),
         if (payment == null) FilledButton(onPressed: _busy ? null : _pay, child: Text('Payer ${widget.amountXaf} F')),
         if (payment != null && payment.pending) FilledButton(onPressed: _busy ? null : _check, child: const Text('Vérifier')),
+        // Refused or cancelled on the phone (wrong number, not enough money): nothing was taken, try again here.
+        if (payment != null && payment.state == 'failed')
+          FilledButton(onPressed: _busy ? null : () => setState(() { _payment = null; _polls = 0; _key = randomLoginId(); }),
+              child: const Text('Réessayer')),
       ],
     );
   }

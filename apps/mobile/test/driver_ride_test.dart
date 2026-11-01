@@ -57,8 +57,14 @@ class DriverFixture extends RideFixture implements DriverRideGateway {
       'plan': online && stops.isNotEmpty ? '_p~iF~ps|U_ulLnnqC_mqNvxq`@' : null, 'stops': online ? stops : []});
   }
 
+  /// A server restarting: the next proposal reads fail as unavailable.
+  bool down = false;
   @override
-  Future<List<DriverProposalView>> driverProposals(LoginSession s, String c) async => DriverProposalView.parseList([
+  Future<List<DriverProposalView>> driverProposals(LoginSession s, String c) async {
+    if (down) throw const PhotoProblem(PhotoFailure.unavailable);
+    return _proposals();
+  }
+  List<DriverProposalView> _proposals() => DriverProposalView.parseList([
     if (offers > 0) {'proposalId': _proposalIds[accepted.length], 'mode': 'shared', 'seats': 1, 'priceXaf': 370, 'driverXaf': 333,
       'pickupSeconds': 240, 'expiresAt': iso(departure), 'pickup': {'latitude': 3.8667, 'longitude': 11.5167},
       'dropoff': {'latitude': 3.8935, 'longitude': 11.509}, 'detourSeconds': 120, 'route': '_p~iF~ps|U_ulLnnqC'},
@@ -120,7 +126,7 @@ Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(
 final opened = <Uri>[];
 
 Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202),
-    void Function(DriverFixture)? before}) async {
+    void Function(DriverFixture)? before, Duration? pollEvery}) async {
   opened.clear();
   tester.view.physicalSize = const Size(900, 2600);
   tester.view.devicePixelRatio = 1.0;
@@ -137,7 +143,7 @@ Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoi
   }))!;
   await tester.pumpWidget(MaterialApp(home: DriverRidePage(login: login, mapBuilder: _fakeMap, readPosition: () async => gps,
       openLink: (link) async { opened.add(link); return true; },
-      pollEvery: null, presenceEvery: null)));
+      pollEvery: pollEvery, presenceEvery: null)));
   await settle(tester);
   return gateway;
 }
@@ -200,6 +206,22 @@ void main() {
     expect(find.text('En ligne'), findsOneWidget);
     expect(find.text('Arrêter le suivi'), findsOneWidget, reason: 'navigation view');
     expect(find.text('Aller chercher Awa'), findsOneWidget);
+  });
+
+  testWidgets('serveur un moment injoignable : le message rouge disparaît dès que la lecture suivante marche', (tester) async {
+    final server = await _open(tester, pollEvery: const Duration(seconds: 4), before: (s) => s.offers = 0);
+    await tester.tap(find.byKey(const Key('en-ligne')));
+    await tester.pump(const Duration(milliseconds: 100));
+    server.down = true;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 100));
+    final shown = find.textContaining('indisponible');
+    expect(shown, findsOneWidget);
+    server.down = false;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(shown, findsNothing);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('sans GPS, le chauffeur écrit le lieu où il se trouve, puis passe en ligne à ce point', (tester) async {
