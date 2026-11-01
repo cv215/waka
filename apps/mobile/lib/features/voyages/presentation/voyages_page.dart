@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/presentation/waka_page.dart';
+
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/login_models.dart';
@@ -213,7 +215,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
   /// Step 6 of the redesign: where from, where to, which day, then simple cards; one opens the trip.
   Widget _find() {
     final voyages = _upcoming;
-    if (voyages == null) return const Center(child: Text('Chargement…'));
+    if (voyages == null) return const WakaLoading();
     final from = _fromText.text.trim().toLowerCase(), to = _toText.text.trim().toLowerCase();
     // The stops a trip serves for this search: the first one matching the departure, a later one matching the arrival.
     (int, int)? section(VoyageView v) {
@@ -283,7 +285,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
 
   Widget _myReservations() {
     final reservations = _reservations;
-    if (reservations == null) return const Center(child: Text('Chargement…'));
+    if (reservations == null) return const WakaLoading();
     if (reservations.isEmpty) return const Center(child: Text('Aucune réservation.'));
     return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       for (final r in reservations)
@@ -332,7 +334,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
 
   Widget _myIncidents() {
     final incidents = _incidents;
-    if (incidents == null) return const Center(child: Text('Chargement…'));
+    if (incidents == null) return const WakaLoading();
     if (incidents.isEmpty) return const Center(child: Text('Aucun incident.'));
     String who(String role) => switch (role) { 'client' => 'Client', 'driver' => 'Chauffeur', _ => 'Assistance WAKA' };
     return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
@@ -651,7 +653,7 @@ class _PassengersPageState extends State<PassengersPage> {
         if (_message != null) Padding(padding: const EdgeInsets.only(top: 12),
             child: Semantics(liveRegion: true, child: Text(_message!))),
         const Divider(height: 32),
-        if (passengers == null) const Text('Chargement…'),
+        if (passengers == null) const WakaLoading(),
         if (passengers != null && passengers.isEmpty) const Text('Aucun passager pour l’instant.'),
         for (final p in passengers ?? const <PassengerView>[])
           ListTile(

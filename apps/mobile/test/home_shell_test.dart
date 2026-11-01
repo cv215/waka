@@ -33,7 +33,7 @@ Future<(LoginFlow, RideFixture)> _open(WidgetTester tester, {void Function(RideF
 
 void main() {
   testWidgets('quatre onglets en bas ; la course est le premier écran', (tester) async {
-    await _open(tester);
+    await _open(tester, before: (server) => server.access = 'none');
     expect(find.text('carte des courses'), findsOneWidget);
     for (final tab in ['Course', 'Voyages', 'Activité', 'Compte']) {
       expect(find.widgetWithText(NavigationDestination, tab), findsOneWidget);
@@ -77,6 +77,9 @@ void main() {
     final (login, _) = await _open(tester);
     await tester.tap(find.text('Compte'));
     await settle(tester);
+    expect(find.text('Chauffeur particulier · actif'), findsOneWidget, reason: 'the profile in service, under the name');
+    expect(find.text('Mon profil chauffeur'), findsOneWidget);
+    expect(find.text('3200 F'), findsOneWidget, reason: 'credit and earnings beside « Mon argent »');
     await tester.tap(find.text('Apparence'));
     await settle(tester);
     addTearDown(() => wakaThemeChoice.value = WakaThemeChoice.light);

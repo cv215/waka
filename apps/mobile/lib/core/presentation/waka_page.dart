@@ -33,6 +33,17 @@ class WakaPage extends StatelessWidget {
   }
 }
 
+/// Step 7 of the redesign: a small turning wheel while a screen reads the server, instead of the word « Chargement ».
+class WakaLoading extends StatelessWidget {
+  const WakaLoading({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Center(child: Padding(
+    padding: EdgeInsets.all(24),
+    child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 3, semanticsLabel: 'Chargement')),
+  ));
+}
+
 class InformationPanel extends StatelessWidget {
   const InformationPanel({
     required this.title,

@@ -95,14 +95,27 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
     _ => ('Pas encore d’accès chauffeur', 'L’accès s’ouvre après l’approbation de ton dossier.'),
   };
 
+  Widget _step(String label, {required bool done, bool now = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: Icon(done ? Icons.check_circle : now ? Icons.timelapse : Icons.radio_button_unchecked,
+          color: done || now ? scheme.primary : scheme.outline),
+      title: Text(label),
+      subtitle: now ? const Text('En cours') : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final view = _view;
+    final theme = Theme.of(context), scheme = theme.colorScheme;
     return WakaPage(
       title: 'Mon accès chauffeur',
       actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : _load, icon: const Icon(Icons.refresh))],
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (view == null && _failure == null) const Text('Chargement…'),
+        if (view == null && _failure == null) const WakaLoading(),
         if (_failure != null)
           Text(switch (_failure) {
             PhotoFailure.denied => 'La session est refusée. Reconnecte-toi.',
@@ -111,9 +124,26 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
             _ => 'La réponse n’a pas pu être vérifiée. Actualise.',
           }),
         if (view != null) ...[
-          Semantics(header: true, child: Text(_summary(view).$1, style: Theme.of(context).textTheme.headlineSmall)),
-          const SizedBox(height: 8),
-          Text(_summary(view).$2),
+          // Step 7 of the redesign: the state in one block, then where a private driver stands.
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(20)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('État', style: theme.textTheme.bodySmall?.copyWith(color: scheme.onPrimary.withValues(alpha: 0.75))),
+              Semantics(header: true, child: Text(_summary(view).$1,
+                  style: theme.textTheme.headlineSmall?.copyWith(color: scheme.onPrimary, fontWeight: FontWeight.w700))),
+              const SizedBox(height: 6),
+              Text(_summary(view).$2, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onPrimary.withValues(alpha: 0.85))),
+            ]),
+          ),
+          if (view.category == 'private' && view.access != 'none' && !view.reasons.contains('NOT_APPROVED')) ...[
+            const SizedBox(height: 16),
+            Text('Étapes', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            _step('Dossier approuvé', done: true),
+            _step('Première course payée et terminée', done: view.trial == 'running' || view.trial == 'ended'),
+            _step('Essai de 7 périodes de 24 h', done: view.trial == 'ended', now: view.trial == 'running'),
+            _step('Abonnement de 30 jours (3 000 F)', done: view.basis == 'paid_period'),
+          ],
           for (final reason in view.reasons)
             Padding(padding: const EdgeInsets.only(top: 8), child: Text(_reasonTexts[reason] ?? reason)),
           if (view.documentsToRenew.isNotEmpty)

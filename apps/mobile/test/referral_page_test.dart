@@ -57,10 +57,15 @@ void main() {
       await login.initialize();
       return (login, gateway);
     }))!;
-    await tester.pumpWidget(MaterialApp(home: ReferralPage(login: login)));
+    final opened = <Uri>[];
+    await tester.pumpWidget(MaterialApp(home: ReferralPage(login: login, openLink: (link) async { opened.add(link); return true; })));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pumpAndSettle();
     expect(find.text(ReferralFixture.own), findsOneWidget);
+    await tester.tap(find.text('Partager sur WhatsApp'));
+    await tester.pump();
+    expect(opened.single.host, 'wa.me');
+    expect(opened.single.queryParameters['text'], 'Rejoins WAKA avec mon code de parrainage : ${ReferralFixture.own}');
     final field = find.widgetWithText(TextField, 'Code de mon parrain');
     await tester.enterText(field, 'waka 2345');
     await tester.tap(find.text('Enregistrer ce parrain'));
