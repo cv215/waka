@@ -236,8 +236,9 @@ public class LocalAppAssembly {
         if (routes == null && key != null) routes = new GoogleRoutesProvider(key);
         return routes;
     }
-    @Bean PersistentVoyageService voyages(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications, Clock clock) {
-        return new PersistentVoyageService(sessions, jdbc, applications, profileCrypto("voyage"), clock);
+    @Bean PersistentVoyageService voyages(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
+            PersistentProfileService profiles, Clock clock) {
+        return new PersistentVoyageService(sessions, jdbc, applications, profiles, profileCrypto("voyage"), clock);
     }
     @Bean VoyageAssistanceService voyageAssistance(PersistentSessionService sessions, PersistentAdminService admin, JdbcTemplate jdbc) {
         return new VoyageAssistanceService(sessions, admin, jdbc);

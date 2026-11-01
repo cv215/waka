@@ -698,6 +698,10 @@ Ces routes sont réalisées côté serveur et ne sont pas assemblées par défau
 
 Une proposition part au chauffeur recevable le plus proche **en temps de route** (au plus 10 minutes), un seul à la fois. Elle expire au plus tôt des trois échéances : 30 secondes, fin de la recherche, fin du devis. Le prix est celui du devis, recalculé par le moteur de prix R03 et contrôlé.
 
+### K39 — Carte d'un voyage (R16, étape 6)
+
+- **Voyages** (liste, détail, voyages du chauffeur) : chaque voyage ajoute `driverFirstName`, le prénom du chauffeur (premier mot de son nom), et `vehicle`, la marque et le modèle déclarés dans son dossier. Chacun peut valoir `null`. Jamais de téléphone, de nom complet ni de plaque.
+
 ### K38 — Changement de situation du chauffeur (R16)
 
 - **`POST /api/v1/driver-applications`** avec l'autre catégorie, pour un compte dont le dossier ouvert est **approuvé** : crée le brouillon du changement au lieu de répondre 409 `APPLICATION_ALREADY_OPEN`. Le dossier approuvé reste en service (accès, places, carte du chauffeur) jusqu'à la décision. Même catégorie, dossier non approuvé ou changement déjà en cours : 409 `APPLICATION_ALREADY_OPEN`, comme avant.

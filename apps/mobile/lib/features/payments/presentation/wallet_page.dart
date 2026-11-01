@@ -109,37 +109,52 @@ class _WalletPageState extends State<WalletPage> {
   Widget build(BuildContext context) {
     final wallet = _wallet;
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    Widget pocket(String label, int amount, String detail) => Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onPrimary.withValues(alpha: 0.75))),
+      Text('$amount F', style: theme.textTheme.headlineSmall?.copyWith(color: scheme.onPrimary, fontWeight: FontWeight.w700)),
+      Text(detail, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onPrimary.withValues(alpha: 0.75))),
+    ]));
     return WakaPage(
       title: 'Mon argent',
       actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : () => _run(_load), icon: const Icon(Icons.refresh))],
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (wallet == null && _message == null) const Text('Chargement…'),
         if (wallet != null) ...[
-          Card(child: ListTile(title: const Text('Mon crédit WAKA'), trailing: Text('${wallet.creditXaf} F', style: theme.textTheme.titleLarge),
-              subtitle: const Text('Recharges et remboursements. Sert à payer tes courses et voyages. Retrait : 3 % de frais.'))),
-          Card(child: ListTile(title: const Text('Mes gains'), trailing: Text('${wallet.earningsXaf} F', style: theme.textTheme.titleLarge),
-              subtitle: const Text('Courses de chauffeur et parrainage. Retrait : 2 % de frais.'))),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            FilledButton.icon(onPressed: _busy ? null : _topup, icon: const Icon(Icons.add), label: const Text('Recharger')),
-            OutlinedButton.icon(onPressed: _busy || wallet.creditXaf + wallet.earningsXaf == 0 ? null : _withdraw,
-                icon: const Icon(Icons.call_made), label: const Text('Retirer')),
-            if (_withdrawal?.state == 'pending')
-              TextButton(onPressed: _busy ? null : _checkWithdrawal, child: const Text('Vérifier le retrait')),
+          // Step 6 of the redesign: one block with both pockets, two buttons, then the latest movements.
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(20)),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              pocket('Crédit WAKA', wallet.creditXaf, 'Paie tes courses · retrait 3 %'),
+              const SizedBox(width: 12),
+              pocket('Mes gains', wallet.earningsXaf, 'Chauffeur, parrainage · retrait 2 %'),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: FilledButton.icon(onPressed: _busy ? null : _topup, icon: const Icon(Icons.add), label: const Text('Recharger'))),
+            const SizedBox(width: 10),
+            Expanded(child: OutlinedButton.icon(onPressed: _busy || wallet.creditXaf + wallet.earningsXaf == 0 ? null : _withdraw,
+                icon: const Icon(Icons.call_made), label: const Text('Retirer'))),
           ]),
+          if (_withdrawal?.state == 'pending')
+            TextButton(onPressed: _busy ? null : _checkWithdrawal, child: const Text('Vérifier le retrait')),
         ],
         if (_message != null) Padding(padding: const EdgeInsets.only(top: 12),
             child: Semantics(liveRegion: true, child: Text(_message!))),
         if (wallet != null) ...[
-          const Divider(height: 32),
-          Text('Derniers mouvements', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 20),
+          Text('Récent', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           if (wallet.lines.isEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text('Aucun mouvement pour l’instant.')),
           for (final line in wallet.lines)
             ListTile(
+              contentPadding: EdgeInsets.zero,
               dense: true,
               title: Text('${_kindLabels[line.kind]} · ${line.pocket == 'earnings' ? 'gains' : 'crédit'}'),
               subtitle: Text(line.at.toLocal().toString().substring(0, 16)),
-              trailing: Text('${line.amountXaf > 0 ? '+' : ''}${line.amountXaf} F'),
+              trailing: Text('${line.amountXaf > 0 ? '+' : ''}${line.amountXaf} F', style: theme.textTheme.titleSmall?.copyWith(
+                  color: line.amountXaf > 0 ? const Color(0xFF2E7D32) : scheme.onSurface)),
             ),
         ],
       ]),

@@ -34,8 +34,15 @@ public final class PersistentVoyageService {
     /** Technical bounds, adjustable: published 1 h to 60 days ahead, at most 48 h from first to last stop. */
     public static final Duration MIN_NOTICE = Duration.ofHours(1), MAX_ADVANCE = Duration.ofDays(60), MAX_LENGTH = Duration.ofHours(48);
     public record Stop(String place, Instant plannedAt) { }
+    /** {@code driverFirstName}, {@code vehicle}: who drives and with what (make and model), nothing more; each may be null. */
     public record VoyageView(UUID voyageId, String category, int seats, String state, List<Stop> stops,
-            Map<String, Integer> prices, Map<String, Integer> availableSeats, Instant createdAt, boolean idempotentReplay) { }
+            Map<String, Integer> prices, Map<String, Integer> availableSeats, Instant createdAt, boolean idempotentReplay,
+            String driverFirstName, String vehicle) {
+        public VoyageView(UUID voyageId, String category, int seats, String state, List<Stop> stops, Map<String, Integer> prices,
+                Map<String, Integer> availableSeats, Instant createdAt, boolean idempotentReplay) {
+            this(voyageId, category, seats, state, stops, prices, availableSeats, createdAt, idempotentReplay, null, null);
+        }
+    }
     /**
      * A seat reservation on one section. {@code state} is awaiting_payment, expired (payment window over),
      * confirmed, boarded, cancelled_by_client or cancelled_by_driver; the settlement amounts are set on a
@@ -66,8 +73,17 @@ public final class PersistentVoyageService {
     private final String gate;
     private final SecureRandom random = new SecureRandom();
 
+    /** The driver's name for the trip cards; null when not assembled. */
+    private final com.waka.identity.profile.PersistentProfileService profiles;
+
     public PersistentVoyageService(PersistentSessionService sessions, JdbcTemplate jdbc,
             PersistentDriverApplicationService applications, ProfileCrypto crypto, Clock clock) {
+        this(sessions, jdbc, applications, null, crypto, clock);
+    }
+
+    public PersistentVoyageService(PersistentSessionService sessions, JdbcTemplate jdbc, PersistentDriverApplicationService applications,
+            com.waka.identity.profile.PersistentProfileService profiles, ProfileCrypto crypto, Clock clock) {
+        this.profiles = profiles;
         this.sessions = Objects.requireNonNull(sessions);
         this.jdbc = Objects.requireNonNull(jdbc);
         this.applications = Objects.requireNonNull(applications);
@@ -396,7 +412,7 @@ public final class PersistentVoyageService {
     }
 
     private VoyageView view(UUID id, boolean replay, Instant now) {
-        var row = jdbc.queryForMap("SELECT category,seats,state,created_at FROM voyage WHERE gate_hash=? AND id=?", gate, id.toString());
+        var row = jdbc.queryForMap("SELECT category,seats,state,created_at,driver_account_id,application_id FROM voyage WHERE gate_hash=? AND id=?", gate, id.toString());
         List<Stop> stops = jdbc.query("SELECT place,planned_at FROM voyage_stop WHERE gate_hash=? AND voyage_id=? ORDER BY stop_index",
                 (rs, n) -> new Stop(rs.getString(1), instant(rs.getObject(2, LocalDateTime.class))), gate, id.toString());
         Map<String, Integer> prices = new LinkedHashMap<>();
@@ -411,8 +427,14 @@ public final class PersistentVoyageService {
             for (int leg = Integer.parseInt(ends[0]); leg < Integer.parseInt(ends[1]); leg++) max = Math.max(max, used[leg]);
             available.put(pair, Math.max(0, seats - max));
         }
+        UUID driver = UUID.fromString((String) row.get("driver_account_id"));
+        var car = applications.vehicleOfLocked(driver, UUID.fromString((String) row.get("application_id")), now);
+        String vehicle = car == null ? null : String.join(" ", java.util.stream.Stream.of(car.brand(), car.model())
+                .filter(v -> v != null && !v.isBlank()).toList());
+        String name = profiles == null ? null : profiles.displayNameLocked(driver);
         return new VoyageView(id, (String) row.get("category"), seats, (String) row.get("state"),
-                List.copyOf(stops), Map.copyOf(prices), Map.copyOf(available), instant((LocalDateTime) row.get("created_at")), replay);
+                List.copyOf(stops), Map.copyOf(prices), Map.copyOf(available), instant((LocalDateTime) row.get("created_at")), replay,
+                name == null ? null : name.trim().split("\\s+")[0], vehicle == null || vehicle.isEmpty() ? null : vehicle);
     }
 
     /** A place name: NFC, trimmed, 2 to 60 characters, no control or invisible character. */
