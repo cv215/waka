@@ -41,7 +41,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  */
 public final class PersistentRideService {
     public static final Duration SEARCH = Duration.ofMinutes(2), PROPOSAL = Duration.ofSeconds(30),
-            POSITION_FRESHNESS = Duration.ofSeconds(60), PAYMENT_WINDOW = Duration.ofMinutes(3), WAIT = Duration.ofMinutes(5);
+            POSITION_FRESHNESS = Duration.ofSeconds(60), PAYMENT_WINDOW = Duration.ofMinutes(3), WAIT = Duration.ofMinutes(5),
+            /** Revised R15 (1 Nov 2026): a client refused (or left unanswered) comes back to that driver after this pause. */
+            REPROPOSE = Duration.ofSeconds(60);
     public static final int MAX_PICKUP_SECONDS = 600;
     /**
      * R15 (revised by the founder, 31 October 2026): a client "on the way" may leave the driver at most this much
@@ -349,7 +351,7 @@ public final class PersistentRideService {
             var quote = quotes.forRideLocked(session.accountId(), UUID.fromString((String) search.getFirst()[0]));
             List<Candidate> candidates = new ArrayList<>();
             for (Candidate c : online(now)) {
-                if (c.driver.equals(search.getFirst()[1]) || proposedBefore(searchId, c.driver)) continue;
+                if (c.driver.equals(search.getFirst()[1]) || proposedRecently(searchId, c.driver, now)) continue;
                 Integer seats = offeredSeats(c.driver, now);
                 if (seats == null || !fits(c, quote.mode(), quote.passengerCount(), seats)) continue;
                 candidates.add(c);
@@ -395,7 +397,7 @@ public final class PersistentRideService {
                 // Recheck: still online and fresh, still room (seats), never proposed for this search.
                 var still = online(now).stream().filter(c -> c.driver.equals(t.driver)).findFirst().orElse(null);
                 Integer seats = still == null ? null : offeredSeats(t.driver, now);
-                if (seats == null || !fits(still, quote.mode(), quote.passengerCount(), seats) || proposedBefore(searchId, t.driver)) continue;
+                if (seats == null || !fits(still, quote.mode(), quote.passengerCount(), seats) || proposedRecently(searchId, t.driver, now)) continue;
                 Instant expires = earliest(earliest(now.plus(PROPOSAL), (Instant) search.getFirst()[1]), quote.expiresAt());
                 jdbc.update("INSERT INTO ride_proposal (gate_hash,id,search_id,driver_account_id,pickup_seconds,detour_seconds,state,sent_at,expires_at) VALUES (?,?,?,?,?,?,'sent',?,?)",
                         gate, UUID.randomUUID().toString(), searchId.toString(), t.driver, t.seconds, t.detour, sql(now), sql(expires));
@@ -540,7 +542,7 @@ public final class PersistentRideService {
             List<NearbyView> found = new ArrayList<>();
             for (String[] s : searches) {
                 UUID search = UUID.fromString(s[0]);
-                if (found.size() == 10 || liveProposal(search, now) || proposedBefore(search, actor)) continue;
+                if (found.size() == 10 || liveProposal(search, now) || proposedRecently(search, actor, now)) continue;
                 var quote = quotes.forRideLocked(UUID.fromString(s[2]), UUID.fromString(s[1]));
                 if (quote == null || !now.isBefore(quote.expiresAt()) || !fits(me, quote.mode(), quote.passengerCount(), seats)) continue;
                 if (metres(me.position, quote.origin()) > NEARBY_METRES) continue;
@@ -594,7 +596,7 @@ public final class PersistentRideService {
                     (rs, n) -> new Object[] { rs.getString(1), instant(rs.getObject(2, LocalDateTime.class)), rs.getString(3) },
                     gate, searchId.toString());
             if (search.isEmpty() || !"searching".equals(search.getFirst()[0]) || !now.isBefore((Instant) search.getFirst()[1])
-                    || liveProposal(searchId, now) || proposedBefore(searchId, actor)) {
+                    || liveProposal(searchId, now) || proposedRecently(searchId, actor, now)) {
                 return new Out<String>(null, RideException.Code.PROPOSAL_EXPIRED);
             }
             String id = UUID.randomUUID().toString();
@@ -836,9 +838,14 @@ public final class PersistentRideService {
                 Integer.class, gate, searchId.toString(), sql(now));
         return n != null && n > 0;
     }
-    private boolean proposedBefore(UUID searchId, String driver) {
-        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM ride_proposal WHERE gate_hash=? AND search_id=? AND driver_account_id=?",
-                Integer.class, gate, searchId.toString(), driver);
+    /**
+     * Revised R15 (1 Nov 2026): a refusal is not final. A client still searching comes back to a driver who refused him,
+     * or let the 30 s run out, one minute after that answer: the driver may have come closer, or changed his mind.
+     */
+    private boolean proposedRecently(UUID searchId, String driver, Instant now) {
+        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM ride_proposal WHERE gate_hash=? AND search_id=? AND driver_account_id=? "
+                + "AND (state='accepted' OR COALESCE(responded_at,expires_at)>?)",
+                Integer.class, gate, searchId.toString(), driver, sql(now.minus(REPROPOSE)));
         return n != null && n > 0;
     }
     private boolean party(String rideId, String actor) {

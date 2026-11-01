@@ -283,4 +283,19 @@ void main() {
           throwsA(isA<PhotoProblem>()));
     });
   });
+
+  test('serveur injoignable derrière un relais (502 sans nos en-têtes) : indisponible, pas « application pas à jour »', () async {
+    final relay = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    relay.listen((request) async {
+      await request.drain<void>();
+      request.response.statusCode = 502;
+      request.response.headers.contentType = ContentType.html;
+      request.response.write('<html>Serveur WAKA local injoignable</html>');
+      await request.response.close();
+    });
+    final client = LoginClient(LocalApiConfiguration.parse(environment: 'dev', baseUrl: 'http://127.0.0.1:${relay.port}', releaseMode: false));
+    addTearDown(() async { client.dispose(); await relay.close(force: true); });
+    await expectLater(client.decisions(grant(), 'c' * 20, randomLoginId()),
+        throwsA(isA<PhotoProblem>().having((p) => p.failure, 'failure', PhotoFailure.unavailable)));
+  });
 }
