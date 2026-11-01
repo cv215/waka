@@ -176,10 +176,10 @@ void main() {
 
   testWidgets('réserver le trajet complet : prix du chauffeur, paiement demandé dans les 3 minutes', (tester) async {
     final (login, gateway) = await show(tester);
-    expect(find.text('Yaoundé → Edéa → Douala'), findsOneWidget);
+    expect(find.text('Yaoundé – Edéa – Douala'), findsOneWidget);
     expect(find.text('6000 F'), findsOneWidget, reason: 'the whole trip, on the card');
     expect(find.textContaining('Paul · Toyota Hiace · 4 place(s)'), findsOneWidget);
-    await tester.tap(find.text('Yaoundé → Edéa → Douala'));
+    await tester.tap(find.text('Yaoundé – Edéa – Douala'));
     await tester.pumpAndSettle();
     expect(find.text('Total : 6000 F (6000 F la place).'), findsOneWidget);
     await tester.tap(find.text('Réserver · 6000 F'));
@@ -217,11 +217,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Lieu de départ'), 'Yaoundé');
     await tester.enterText(find.widgetWithText(TextField, 'Lieu d’arrivée'), 'Douala');
-    await tester.tap(find.text('Choisir — départ'));
+    await tester.tap(find.text('Choisir – départ'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Choisir — arrêt 2'));
+    await tester.tap(find.text('Choisir – arrêt 2'));
     await tester.pumpAndSettle();
-    final price = find.widgetWithText(TextField, 'Yaoundé → Douala (F)');
+    final price = find.widgetWithText(TextField, 'Yaoundé – Douala (F)');
     await tester.enterText(price, '10001');
     await tester.pump();
     expect(find.text('Chaque prix va de 1 à 10 000 F la place.'), findsOneWidget);
@@ -250,7 +250,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Passagers'));
     await settle(tester);
-    expect(find.text('Yaoundé → Douala · 2 place(s)'), findsOneWidget);
+    expect(find.text('Yaoundé – Douala · 2 place(s)'), findsOneWidget);
     expect(find.text('Payé, à embarquer'), findsOneWidget);
     await tester.enterText(find.widgetWithText(TextField, 'Code du passager'), '111111');
     await tester.tap(find.widgetWithText(FilledButton, 'Embarquer'));
@@ -304,7 +304,7 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('Incidents'));
     await tester.pumpAndSettle();
-    expect(find.text('Assistance WAKA — décision : Avertissement au chauffeur · Rappel envoyé.'), findsOneWidget);
+    expect(find.text('Assistance WAKA – décision : Avertissement au chauffeur · Rappel envoyé.'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Contester'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'Pas suffisant');

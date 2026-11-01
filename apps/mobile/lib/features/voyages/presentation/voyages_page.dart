@@ -30,7 +30,7 @@ String _dayLabel(DateTime day) {
   final gap = d.difference(start).inDays;
   return gap == 0 ? 'Aujourd’hui' : gap == 1 ? 'Demain' : '${_weekdays[d.weekday - 1]} ${d.day}';
 }
-String _route(VoyageView v) => v.stops.map((s) => s.place).join(' → ');
+String _route(VoyageView v) => v.stops.map((s) => s.place).join(' – ');
 
 String voyageMessage(PhotoFailure failure) => switch (failure) {
   PhotoFailure.denied => 'La session est refusée. Reconnecte-toi.',
@@ -261,7 +261,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
             Text(_route(v), style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
             Row(children: [
-              Expanded(child: Text('${_dayLabel(v.stops[a].plannedAt.toLocal())} · ${_hour(v.stops[a].plannedAt)} → ${_hour(v.stops[b].plannedAt)}',
+              Expanded(child: Text('${_dayLabel(v.stops[a].plannedAt.toLocal())} · ${_hour(v.stops[a].plannedAt)} – ${_hour(v.stops[b].plannedAt)}',
                   style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
               Text('${v.prices['$a-$b']} F', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             ]),
@@ -285,13 +285,13 @@ class _VoyagesPageState extends State<VoyagesPage> {
     final reservations = _reservations;
     if (reservations == null) return const Center(child: Text('Chargement…'));
     if (reservations.isEmpty) return const Center(child: Text('Aucune réservation.'));
-    return ListView(padding: const EdgeInsets.all(12), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       for (final r in reservations)
         Card(child: ListTile(
           title: Text('${r.seats} place(s) · ${r.totalXaf} F · ${_stateLabel(r.state)}'),
           subtitle: Text('Embarquement prévu ${_when(r.boardingAt)}'
               '${r.refundXaf == null || r.state == 'boarded' ? '' : ' · remboursé ${r.refundXaf} F (frais ${r.feePercent} %)'}'
-              '${r.boardingCode == null ? '' : '\nCode d’embarquement : ${r.boardingCode} — à donner au chauffeur au départ, à personne d’autre.'}'),
+              '${r.boardingCode == null ? '' : '\nCode d’embarquement : ${r.boardingCode} – à donner au chauffeur au départ, à personne d’autre.'}'),
           trailing: Wrap(spacing: 4, children: [
             if (r.state == 'awaiting_payment' && widget.login.gateway is PaymentGateway)
               FilledButton(onPressed: _busy ? null : () => _pay(r.reservationId, r.totalXaf), child: const Text('Payer')),
@@ -335,14 +335,14 @@ class _VoyagesPageState extends State<VoyagesPage> {
     if (incidents == null) return const Center(child: Text('Chargement…'));
     if (incidents.isEmpty) return const Center(child: Text('Aucun incident.'));
     String who(String role) => switch (role) { 'client' => 'Client', 'driver' => 'Chauffeur', _ => 'Assistance WAKA' };
-    return ListView(padding: const EdgeInsets.all(12), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       for (final i in incidents)
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('${incidentCategories[i.category]} · ${switch (i.state) { 'open' => 'en examen', 'decided' => 'décidé', _ => 'contesté' }}',
               style: Theme.of(context).textTheme.titleSmall),
           for (final m in i.messages)
             Padding(padding: const EdgeInsets.only(top: 6), child: Text(m.kind == 'decision'
-                ? '${who(m.authorRole)} — décision : ${incidentDecisions[m.decision]}${m.text == null ? '' : ' · ${m.text}'}'
+                ? '${who(m.authorRole)} – décision : ${incidentDecisions[m.decision]}${m.text == null ? '' : ' · ${m.text}'}'
                 : '${who(m.authorRole)} : ${m.text ?? ''}')),
           Wrap(spacing: 4, children: [
             TextButton(onPressed: _busy ? null : () => _answer(i, 'reply'), child: const Text('Répondre')),
@@ -367,15 +367,16 @@ class _VoyagesPageState extends State<VoyagesPage> {
 
   Widget _myVoyages() {
     final mine = _mine;
-    return ListView(padding: const EdgeInsets.all(12), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       FilledButton.icon(
         onPressed: _busy ? null : () => Navigator.of(context).push<void>(MaterialPageRoute<void>(
             builder: (_) => PublishVoyagePage(pickDateTime: widget.pickDateTime, onPublish: _publish))),
         icon: const Icon(Icons.add),
         label: const Text('Publier un voyage'),
       ),
-      const SizedBox(height: 4),
-      const Text('Aucun abonnement n’est demandé pour les voyages. WAKA garde 10 % du prix ; tu es payé à l’embarquement.'),
+      const SizedBox(height: 8),
+      Text('Aucun abonnement n’est demandé pour les voyages. WAKA garde 10 % du prix ; tu es payé à l’embarquement.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
       const SizedBox(height: 12),
       if (mine != null && mine.isEmpty) const Text('Tu n’as publié aucun voyage.'),
       for (final v in mine ?? const <VoyageView>[])
@@ -425,7 +426,7 @@ class _VoyageDetailPageState extends State<_VoyageDetailPage> {
     final free = v.availableSeats[pair] ?? 0, price = v.prices[pair];
     if (_seats > free && free > 0) _seats = free;
     return Scaffold(
-      appBar: AppBar(title: Text('${v.stops[_from].place} → ${v.stops[_to].place}')),
+      appBar: AppBar(title: Text('${v.stops[_from].place} – ${v.stops[_to].place}')),
       body: SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
         Text('${_dayLabel(v.stops[_from].plannedAt.toLocal())} · départ ${_hour(v.stops[_from].plannedAt)} · arrivée vers ${_hour(v.stops[_to].plannedAt)}',
             style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
@@ -527,7 +528,7 @@ class _PublishVoyagePageState extends State<PublishVoyagePage> {
               TextButton(onPressed: () async {
                 final picked = await widget.pickDateTime(context);
                 if (picked != null) setState(() => _times[i] = picked);
-              }, child: Text('Choisir — ${i == 0 ? 'départ' : 'arrêt ${i + 1}'}')),
+              }, child: Text('Choisir – ${i == 0 ? 'départ' : 'arrêt ${i + 1}'}')),
             ]),
           ]))),
         if (_places.length < 6)
@@ -545,7 +546,7 @@ class _PublishVoyagePageState extends State<PublishVoyagePage> {
         Text('Prix par place (10 000 F au plus)', style: Theme.of(context).textTheme.titleMedium),
         for (final pair in _pairs)
           TextField(controller: _prices[pair], keyboardType: TextInputType.number, onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(labelText: '${name(int.parse(pair[0]))} → ${name(int.parse(pair[2]))} (F)')),
+              decoration: InputDecoration(labelText: '${name(int.parse(pair[0]))} – ${name(int.parse(pair[2]))} (F)')),
         const SizedBox(height: 12),
         if (_problem != null) Text(_problem!),
         FilledButton(
@@ -632,7 +633,7 @@ class _PassengersPageState extends State<PassengersPage> {
     await _load();
   });
 
-  String _section(PassengerView p) => '${widget.voyage.stops[p.fromIndex].place} → ${widget.voyage.stops[p.toIndex].place}';
+  String _section(PassengerView p) => '${widget.voyage.stops[p.fromIndex].place} – ${widget.voyage.stops[p.toIndex].place}';
 
   @override
   Widget build(BuildContext context) {

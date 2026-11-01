@@ -165,7 +165,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(status.received ? Icons.check_circle_outline : Icons.radio_button_unchecked),
-                  title: Text('${status.view} — ${vehiclePhotoLabels[status.view]}'),
+                  title: Text('${status.view} – ${vehiclePhotoLabels[status.view]}'),
                   subtitle: Text(photos.busyView == status.view
                       ? 'Envoi en cours…'
                       : status.received ? 'Reçue, non examinée' : 'Manquante'),
@@ -410,7 +410,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
           'approve' => 'Approuvé',
           'refuse' => 'Refusé',
           _ => 'Correction demandée',
-        }} — motif : ${decisions.last.reasonCode}'),
+        }} – motif : ${decisions.last.reasonCode}'),
         if (decisions.last.details != null) Text(decisions.last.details!),
       ],
     ];
@@ -467,7 +467,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       _ => 'Reçue, en attente d’examen',
     };
     final until = r.validUntil == null ? '' : ' (valable jusqu’au ${dayText(r.validUntil!)})';
-    return r.established ? '$state$until' : '$state$until — exigence en cours de confirmation par WAKA';
+    return r.established ? '$state$until' : '$state$until – exigence en cours de confirmation par WAKA';
   }
 
   String? get _documentError {
