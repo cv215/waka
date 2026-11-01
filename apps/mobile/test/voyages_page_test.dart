@@ -23,7 +23,7 @@ Map<String, Object?> voyageJson(String id, {Map<String, int>? available}) => {
   ],
   'prices': {'0-1': 4000, '0-2': 6000, '1-2': 2000},
   'availableSeats': available ?? {'0-1': 4, '0-2': 4, '1-2': 4},
-  'createdAt': iso(departure.subtract(const Duration(days: 2))), 'idempotentReplay': false,
+  'createdAt': iso(departure.subtract(const Duration(days: 2))), 'idempotentReplay': false, 'driverFirstName': 'Paul', 'vehicle': 'Toyota Hiace',
 };
 
 Map<String, Object?> reservationJson(String voyage, {String state = 'awaiting_payment', int? refund, int? fee}) => {
@@ -177,10 +177,12 @@ void main() {
   testWidgets('réserver le trajet complet : prix du chauffeur, paiement demandé dans les 3 minutes', (tester) async {
     final (login, gateway) = await show(tester);
     expect(find.text('Yaoundé → Edéa → Douala'), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, 'Réserver'));
+    expect(find.text('6000 F'), findsOneWidget, reason: 'the whole trip, on the card');
+    expect(find.textContaining('Paul · Toyota Hiace · 4 place(s)'), findsOneWidget);
+    await tester.tap(find.text('Yaoundé → Edéa → Douala'));
     await tester.pumpAndSettle();
     expect(find.text('Total : 6000 F (6000 F la place).'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Réserver'));
+    await tester.tap(find.text('Réserver · 6000 F'));
     await settle(tester);
     expect(gateway.reserved.single, endsWith(':0-2:1'));
     expect(find.textContaining('Tes places sont gardées 3 minutes : paie maintenant.'), findsOneWidget);

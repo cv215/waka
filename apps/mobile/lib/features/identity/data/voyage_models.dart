@@ -39,9 +39,19 @@ class VoyageStop {
   Map<String, Object?> toJson() => {'place': place, 'plannedAt': '${plannedAt.toUtc().toIso8601String().substring(0, 19)}Z'};
 }
 
+/// An optional short display text (a first name, a car model); anything else is refused.
+String? _shortText(Object? v) {
+  if (v == null) return null;
+  if (v is! String || v.length > 80) throw const FormatException();
+  return v.trim().isEmpty ? null : v.trim();
+}
+
 class VoyageView {
-  const VoyageView(this.voyageId, this.category, this.seats, this.state, this.stops, this.prices, this.availableSeats);
+  const VoyageView(this.voyageId, this.category, this.seats, this.state, this.stops, this.prices, this.availableSeats,
+      {this.driverFirstName, this.vehicle});
   final String voyageId, category, state;
+  /// Who drives and with what (make and model), or null.
+  final String? driverFirstName, vehicle;
   final int seats;
   final List<VoyageStop> stops;
   /// "from-to" stop indexes -> seat price in XAF, and seats still free on that section.
@@ -50,7 +60,7 @@ class VoyageView {
   static VoyageView parse(Object? value) {
     try {
       final m = _exact(value, {'voyageId', 'category', 'seats', 'state', 'stops', 'prices', 'availableSeats', 'createdAt',
-        'idempotentReplay'});
+        'idempotentReplay', 'driverFirstName', 'vehicle'});
       final stops = m['stops'];
       if (!{'taxi', 'private'}.contains(m['category']) || m['seats'] is! int || (m['seats'] as int) < 1 ||
           (m['seats'] as int) > 5 || !{'published', 'cancelled'}.contains(m['state']) || stops is! List ||
@@ -72,7 +82,8 @@ class VoyageView {
         throw const FormatException();
       }
       return VoyageView(_id(m['voyageId']), m['category'] as String, m['seats'] as int, m['state'] as String,
-          List.unmodifiable(parsed), prices, available);
+          List.unmodifiable(parsed), prices, available,
+          driverFirstName: _shortText(m['driverFirstName']), vehicle: _shortText(m['vehicle']));
     } on FormatException {
       throw const PhotoProblem(PhotoFailure.invalidResponse);
     }

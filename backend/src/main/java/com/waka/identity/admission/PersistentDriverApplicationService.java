@@ -351,6 +351,13 @@ public final class PersistentDriverApplicationService {
         return row == null ? null : current(candidate, row, now).vehicleFields();
     }
 
+    /** The vehicle declared in one of the driver's files (a trip keeps the file it was published with), or null. */
+    public VehicleFields vehicleOfLocked(UUID candidate, UUID applicationId, Instant now) {
+        requireTransaction();
+        Row row = owned(candidate, applicationId);
+        return row == null ? null : current(candidate, row, now).vehicleFields();
+    }
+
     private static void requireTransaction() {
         if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new AdmissionException(AdmissionException.Code.SERVICE_UNAVAILABLE);

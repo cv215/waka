@@ -20,6 +20,16 @@ Future<DateTime?> pickWithDialogs(BuildContext context) async {
 }
 
 String _when(DateTime value) => value.toLocal().toString().substring(0, 16);
+String _hour(DateTime value) => value.toLocal().toString().substring(11, 16);
+const _weekdays = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'];
+/// « Aujourd'hui », « Demain », or the day and its date (« sam. 15 »).
+String _dayLabel(DateTime day) {
+  final today = DateTime.now();
+  final start = DateTime(today.year, today.month, today.day);
+  final d = DateTime(day.year, day.month, day.day);
+  final gap = d.difference(start).inDays;
+  return gap == 0 ? 'Aujourd’hui' : gap == 1 ? 'Demain' : '${_weekdays[d.weekday - 1]} ${d.day}';
+}
 String _route(VoyageView v) => v.stops.map((s) => s.place).join(' → ');
 
 String voyageMessage(PhotoFailure failure) => switch (failure) {
@@ -62,6 +72,16 @@ class _VoyagesPageState extends State<VoyagesPage> {
   /// Publishing a trip needs an approved driver account (the server refuses anyone else): only then the « Mes voyages »
   /// tab appears. A private driver whose subscription is due still publishes trips (R12: no subscription for them).
   bool _driver = false;
+  /// The search of the « Trouver » tab: departure, arrival (parts of a stop name) and the day (null: every day).
+  final _fromText = TextEditingController(), _toText = TextEditingController();
+  DateTime? _day;
+
+  @override
+  void dispose() {
+    _fromText.dispose();
+    _toText.dispose();
+    super.dispose();
+  }
   static const _publishing = {'active', 'provisional', 'subscription_required'};
 
   @override
@@ -173,7 +193,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
     length: _driver ? 4 : 3,
     child: Scaffold(
       appBar: AppBar(
-        title: const Text('Voyage'),
+        title: const Text('Voyages'),
         actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : _refresh, icon: const Icon(Icons.refresh))],
         bottom: TabBar(isScrollable: true, tabs: [
           const Tab(text: 'Trouver'),
@@ -190,23 +210,74 @@ class _VoyagesPageState extends State<VoyagesPage> {
     ),
   );
 
+  /// Step 6 of the redesign: where from, where to, which day, then simple cards; one opens the trip.
   Widget _find() {
     final voyages = _upcoming;
     if (voyages == null) return const Center(child: Text('Chargement…'));
-    if (voyages.isEmpty) return const Center(child: Text('Aucun voyage à venir pour l’instant.'));
-    return ListView(padding: const EdgeInsets.all(12), children: [
+    final from = _fromText.text.trim().toLowerCase(), to = _toText.text.trim().toLowerCase();
+    // The stops a trip serves for this search: the first one matching the departure, a later one matching the arrival.
+    (int, int)? section(VoyageView v) {
+      final a = from.isEmpty ? 0 : v.stops.indexWhere((st) => st.place.toLowerCase().contains(from));
+      if (a < 0 || a == v.stops.length - 1) return null;
+      var b = v.stops.length - 1;
+      if (to.isNotEmpty) {
+        b = -1;
+        for (var i = a + 1; i < v.stops.length; i++) {
+          if (v.stops[i].place.toLowerCase().contains(to)) { b = i; break; }
+        }
+      }
+      return b < 0 ? null : (a, b);
+    }
+    DateTime dayOf(DateTime t) { final l = t.toLocal(); return DateTime(l.year, l.month, l.day); }
+    final days = {for (final v in voyages) dayOf(v.stops.first.plannedAt)}.toList()..sort();
+    final shown = [
       for (final v in voyages)
-        Card(child: ListTile(
-          title: Text(_route(v)),
-          subtitle: Text('Départ ${_when(v.stops.first.plannedAt)} · ${v.category == 'taxi' ? 'taxi' : 'voiture personnelle'} · '
-              'trajet complet ${v.prices['0-${v.stops.length - 1}']} F la place'),
-          trailing: TextButton(onPressed: _busy ? null : () => _openReservation(v), child: const Text('Réserver')),
+        if (section(v) != null && (_day == null || dayOf(v.stops.first.plannedAt) == _day)) (v, section(v)!),
+    ];
+    final theme = Theme.of(context);
+    InputDecoration field(String hint, IconData icon) => InputDecoration(hintText: hint, prefixIcon: Icon(icon), filled: true,
+        fillColor: theme.colorScheme.surfaceContainerHigh,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none));
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+      TextField(controller: _fromText, onChanged: (_) => setState(() {}), decoration: field('Départ', Icons.trip_origin)),
+      const SizedBox(height: 8),
+      TextField(controller: _toText, onChanged: (_) => setState(() {}), decoration: field('Arrivée', Icons.place_outlined)),
+      const SizedBox(height: 10),
+      if (days.length > 1)
+        Wrap(spacing: 8, children: [
+          ChoiceChip(label: const Text('Tous'), selected: _day == null, onSelected: (_) => setState(() => _day = null)),
+          for (final d in days)
+            ChoiceChip(label: Text(_dayLabel(d)), selected: _day == d, onSelected: (_) => setState(() => _day = d)),
+        ]),
+      const SizedBox(height: 8),
+      if (shown.isEmpty)
+        Padding(padding: const EdgeInsets.only(top: 32), child: Center(child: Text(voyages.isEmpty
+            ? 'Aucun voyage à venir pour l’instant.' : 'Aucun voyage pour cette recherche.'))),
+      for (final (v, (a, b)) in shown)
+        Card(child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: _busy ? null : () => _openReservation(v, from: a, to: b),
+          child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text(_route(v), style: theme.textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Row(children: [
+              Expanded(child: Text('${_dayLabel(v.stops[a].plannedAt.toLocal())} · ${_hour(v.stops[a].plannedAt)} → ${_hour(v.stops[b].plannedAt)}',
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
+              Text('${v.prices['$a-$b']} F', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            ]),
+            Text([
+              ?v.driverFirstName,
+              ?v.vehicle,
+              '${v.availableSeats['$a-$b'] ?? 0} place(s)',
+            ].join(' · '), style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ])),
         )),
     ]);
   }
 
-  Future<void> _openReservation(VoyageView voyage) async {
-    final choice = await showDialog<(int, int, int)>(context: context, builder: (_) => _ReservationDialog(voyage: voyage));
+  Future<void> _openReservation(VoyageView voyage, {int from = 0, int? to}) async {
+    final choice = await Navigator.of(context).push<(int, int, int)>(MaterialPageRoute(
+        builder: (_) => _VoyageDetailPage(voyage: voyage, from: from, to: to ?? voyage.stops.length - 1)));
     if (choice != null) await _reserve(voyage, choice.$1, choice.$2, choice.$3);
   }
 
@@ -335,47 +406,62 @@ class _VoyagesPageState extends State<VoyagesPage> {
   };
 }
 
-class _ReservationDialog extends StatefulWidget {
-  const _ReservationDialog({required this.voyage});
+/// One trip: its stops and driver, where to get on and off, how many seats, then one button.
+class _VoyageDetailPage extends StatefulWidget {
+  const _VoyageDetailPage({required this.voyage, required this.from, required this.to});
   final VoyageView voyage;
+  final int from, to;
   @override
-  State<_ReservationDialog> createState() => _ReservationDialogState();
+  State<_VoyageDetailPage> createState() => _VoyageDetailPageState();
 }
 
-class _ReservationDialogState extends State<_ReservationDialog> {
-  int _from = 0, _seats = 1;
-  late int _to = widget.voyage.stops.length - 1;
+class _VoyageDetailPageState extends State<_VoyageDetailPage> {
+  late int _from = widget.from, _to = widget.to;
+  int _seats = 1;
 
   @override
   Widget build(BuildContext context) {
-    final v = widget.voyage, pair = '$_from-$_to';
+    final v = widget.voyage, pair = '$_from-$_to', theme = Theme.of(context);
     final free = v.availableSeats[pair] ?? 0, price = v.prices[pair];
     if (_seats > free && free > 0) _seats = free;
-    return AlertDialog(
-      title: const Text('Réserver'),
-      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    return Scaffold(
+      appBar: AppBar(title: Text('${v.stops[_from].place} → ${v.stops[_to].place}')),
+      body: SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
+        Text('${_dayLabel(v.stops[_from].plannedAt.toLocal())} · départ ${_hour(v.stops[_from].plannedAt)} · arrivée vers ${_hour(v.stops[_to].plannedAt)}',
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 12),
+        Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (v.driverFirstName != null || v.vehicle != null)
+            Text([?v.driverFirstName, ?v.vehicle].join(' · '), style: theme.textTheme.titleMedium),
+          Text('Arrêts : ${_route(v)}', style: theme.textTheme.bodyMedium),
+        ]))),
+        const SizedBox(height: 12),
         DropdownButtonFormField<int>(
           initialValue: _from, isExpanded: true, decoration: const InputDecoration(labelText: 'Je monte à'),
           items: [for (var i = 0; i < v.stops.length - 1; i++) DropdownMenuItem(value: i, child: Text(v.stops[i].place))],
           onChanged: (value) => setState(() { _from = value!; if (_to <= _from) _to = _from + 1; }),
         ),
+        const SizedBox(height: 10),
         DropdownButtonFormField<int>(
+          key: ValueKey(_from),
           initialValue: _to, isExpanded: true, decoration: const InputDecoration(labelText: 'Je descends à'),
           items: [for (var i = _from + 1; i < v.stops.length; i++) DropdownMenuItem(value: i, child: Text(v.stops[i].place))],
           onChanged: (value) => setState(() => _to = value!),
         ),
-        DropdownButtonFormField<int>(
-          initialValue: free == 0 ? null : _seats, decoration: const InputDecoration(labelText: 'Places'),
-          items: [for (var n = 1; n <= free; n++) DropdownMenuItem(value: n, child: Text('$n'))],
-          onChanged: (value) => setState(() => _seats = value!),
-        ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: Text('Places', style: theme.textTheme.bodyLarge)),
+          IconButton(tooltip: 'Moins', onPressed: _seats <= 1 ? null : () => setState(() => _seats--), icon: const Icon(Icons.remove_circle_outline)),
+          Text('$_seats', style: theme.textTheme.titleMedium),
+          IconButton(tooltip: 'Plus', onPressed: _seats >= free ? null : () => setState(() => _seats++), icon: const Icon(Icons.add_circle_outline)),
+        ]),
         Text(free == 0 ? 'Plus de place sur ce trajet.' : 'Total : ${price! * _seats} F ($price F la place).'),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
-        FilledButton(onPressed: free == 0 ? null : () => Navigator.pop(context, (_from, _to, _seats)), child: const Text('Réserver')),
-      ],
+        const SizedBox(height: 4),
+        Text('Annulation gratuite jusqu’à 12 h avant le départ.', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 20),
+        FilledButton(onPressed: free == 0 ? null : () => Navigator.pop(context, (_from, _to, _seats)),
+            child: Text(free == 0 ? 'Complet' : 'Réserver · ${price! * _seats} F')),
+      ])),
     );
   }
 }
