@@ -91,7 +91,7 @@ class _DriverHubPageState extends State<DriverHubPage> {
         'subscription_required'}.contains(access.access);
     final changing = approved && file != null && file.requestedCategory != access.category && file.state != 'approved';
     return Scaffold(
-      appBar: AppBar(title: const Text('Devenir chauffeur')),
+      appBar: AppBar(title: Text(approved ? 'Mon profil chauffeur' : 'Devenir chauffeur')),
       body: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
         if (_login.busy && file == null) const LinearProgressIndicator(),
         if (_login.noApplication) ...[

@@ -34,6 +34,8 @@ class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
   /// Bumped each time Activité is opened, so it reads the server again.
   int _activityVisit = 0;
+  /// Bumped each time Compte is opened, so the driver state and the balance are read again.
+  int _accountVisit = 0;
   DriverAccessView? _access;
   bool _driving = false;
 
@@ -83,13 +85,14 @@ class _HomeShellState extends State<HomeShell> {
         ]),
         widget.voyages ?? (login.gateway is VoyageGateway ? VoyagesPage(login: login) : const SizedBox.shrink()),
         ActivityTab(key: ValueKey(_activityVisit), login: login, openRide: () => setState(() => _tab = 0)),
-        AccountTab(login: login),
+        AccountTab(key: ValueKey(_accountVisit), login: login),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) {
           setState(() {
             if (i == 2 && _tab != 2) _activityVisit++;
+            if (i == 3 && _tab != 3) _accountVisit++;
             _tab = i;
           });
           if (i == 0) _readAccess();
@@ -223,13 +226,63 @@ class _ActivityTabState extends State<ActivityTab> {
   }
 }
 
-/// Compte: who you are, then each part of the account in one list; signing out returns to the first screen.
-class AccountTab extends StatelessWidget {
+/// Compte: who you are, then each part of the account in one list; signing out returns to the first screen. Step 7: a
+/// driver sees his profile in service under his name and « Mon profil chauffeur »; the balance stands beside « Mon argent ».
+class AccountTab extends StatefulWidget {
   const AccountTab({super.key, required this.login});
   final LoginFlow login;
+  @override
+  State<AccountTab> createState() => _AccountTabState();
+}
+
+class _AccountTabState extends State<AccountTab> {
+  LoginFlow get login => widget.login;
+  DriverAccessView? _access;
+  int? _balance;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  /// Both only decorate the list: without them, the rows stay as they are.
+  Future<void> _load() async {
+    final gateway = login.gateway, session = login.session, client = login.clientInstance;
+    if (session == null || client == null) return;
+    if (gateway is DriverAccessGateway) {
+      try {
+        final access = await (gateway as DriverAccessGateway).driverAccess(session, client);
+        if (mounted) setState(() => _access = access);
+      } on PhotoProblem {
+        // Unknown access: « Devenir chauffeur » stays.
+      }
+    }
+    if (gateway is PaymentGateway) {
+      try {
+        final wallet = await (gateway as PaymentGateway).wallet(session, client);
+        if (mounted) setState(() => _balance = wallet.creditXaf + wallet.earningsXaf);
+      } on PhotoProblem {
+        // No balance shown.
+      }
+    }
+  }
+
+  /// « Chauffeur taxi · actif » for an approved driver, null otherwise.
+  String? get _driverLine {
+    final access = _access;
+    if (access == null || access.category == null || access.access == 'none') return null;
+    final state = switch (access.access) {
+      'active' => 'actif',
+      'provisional' => 'accès provisoire',
+      'subscription_required' => 'abonnement nécessaire',
+      _ => 'réservations bloquées',
+    };
+    return 'Chauffeur ${access.category == 'taxi' ? 'taxi' : 'particulier'} · $state';
+  }
 
   void _open(BuildContext context, Widget page) =>
-      Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) => page));
+      Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: (_) => page)).then((_) { if (mounted) _load(); });
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(animation: login, builder: (context, _) {
@@ -244,13 +297,19 @@ class AccountTab extends StatelessWidget {
           CircleAvatar(radius: 28, backgroundColor: theme.colorScheme.primary, foregroundColor: theme.colorScheme.onPrimary,
               child: Text(initials, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
           const SizedBox(width: 14),
-          Expanded(child: Text(name, style: theme.textTheme.titleLarge)),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: theme.textTheme.titleLarge),
+            if (_driverLine != null)
+              Text(_driverLine!, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ])),
           IconButton(tooltip: 'Changer mon nom', onPressed: login.busy ? null : () => _rename(context), icon: const Icon(Icons.edit_outlined)),
         ]),
         const SizedBox(height: 16),
         if (gateway is PaymentGateway)
-          _row(Icons.account_balance_wallet_outlined, 'Mon argent', () => _open(context, WalletPage(login: login))),
-        _row(Icons.directions_car_outlined, 'Devenir chauffeur', () => _open(context, DriverHubPage(login: login))),
+          _row(Icons.account_balance_wallet_outlined, 'Mon argent', () => _open(context, WalletPage(login: login)),
+              detail: _balance == null ? null : '$_balance F'),
+        _row(Icons.directions_car_outlined, _driverLine == null ? 'Devenir chauffeur' : 'Mon profil chauffeur',
+            () => _open(context, DriverHubPage(login: login))),
         if (gateway is ReferralGateway)
           _row(Icons.card_giftcard_outlined, 'Parrainage', () => _open(context, ReferralPage(login: login))),
         _row(Icons.palette_outlined, 'Apparence', () => _appearance(context)),
@@ -266,11 +325,14 @@ class AccountTab extends StatelessWidget {
     );
   });
 
-  Widget _row(IconData icon, String label, VoidCallback onTap) => ListTile(
+  Widget _row(IconData icon, String label, VoidCallback onTap, {String? detail}) => ListTile(
     contentPadding: EdgeInsets.zero,
     leading: Icon(icon),
     title: Text(label),
-    trailing: const Icon(Icons.chevron_right),
+    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (detail != null) Text(detail, style: Theme.of(context).textTheme.bodyMedium),
+      const Icon(Icons.chevron_right),
+    ]),
     onTap: onTap,
   );
 

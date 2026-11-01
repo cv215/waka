@@ -51,6 +51,18 @@ void main() {
     final login = await show(tester, json('provisional', basis: 'provisional_before_first_service', trial: 'not_started'));
     expect(find.text('Accès provisoire'), findsOneWidget);
     expect(find.textContaining('après ta première course payée et terminée'), findsOneWidget);
+    expect(find.text('Étapes'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsOneWidget, reason: 'only the approved file is done');
+    expect(find.text('Première course payée et terminée'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('essai en cours : première course faite, essai marqué en cours', (tester) async {
+    final login = await show(tester, json('active', basis: 'trial', trial: 'running'));
+    expect(find.text('Accès actif'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    expect(find.text('En cours'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/presentation/waka_page.dart';
 import '../../identity/application/login_flow.dart';
@@ -10,8 +11,10 @@ import '../../identity/data/vehicle_photo_models.dart';
 
 /// « Parrainage » : one's own code to share, and the single referrer one may attach (R05).
 class ReferralPage extends StatefulWidget {
-  const ReferralPage({super.key, required this.login});
+  const ReferralPage({super.key, required this.login, this.openLink});
   final LoginFlow login;
+  /// Opens the WhatsApp link; tests replace it.
+  final Future<bool> Function(Uri link)? openLink;
   @override
   State<ReferralPage> createState() => _ReferralPageState();
 }
@@ -86,23 +89,48 @@ class _ReferralPageState extends State<ReferralPage> {
     _ => 'La réponse n’a pas pu être vérifiée. Réessaie.',
   };
 
+  /// WhatsApp opens with the message ready; the person chooses to whom it goes.
+  Future<void> _share(String code) async {
+    final link = Uri.https('wa.me', '/', {'text': 'Rejoins WAKA avec mon code de parrainage : $code'});
+    final opened = await (widget.openLink ?? ((Uri l) => launchUrl(l, mode: LaunchMode.externalApplication)))(link);
+    if (!opened && mounted) setState(() => _message = 'WhatsApp n’a pas pu s’ouvrir : copie ton code.');
+  }
+
+  Future<void> _copy(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Code copié.')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final view = _view;
+    final theme = Theme.of(context);
     return WakaPage(
       title: 'Parrainage',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('Mon code', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        if (view == null) const Text('Code non chargé.'),
-        if (view != null)
-          Row(children: [
-            Expanded(child: SelectableText(view.code, style: Theme.of(context).textTheme.headlineSmall)),
-            IconButton(tooltip: 'Copier mon code', icon: const Icon(Icons.copy),
-                onPressed: () => Clipboard.setData(ClipboardData(text: view.code))),
-          ]),
-        const Text('Partage ce code. Un bonus n’est dû qu’après une réservation payée et terminée par la personne parrainée, '
-            'selon les règles de WAKA ; l’inscription seule ne donne rien.'),
+        if (view == null && _busy) const WakaLoading(),
+        if (view == null && !_busy) const Text('Code non chargé.'),
+        if (view != null) ...[
+          // Step 7 of the redesign: the code first, then the two ways to pass it on.
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: theme.colorScheme.primary, width: 1.5)),
+            child: Column(children: [
+              Text('Mon code', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              SelectableText(view.code, textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, letterSpacing: 3)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(onPressed: () => _share(view.code), icon: const Icon(Icons.share), label: const Text('Partager sur WhatsApp')),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(onPressed: () => _copy(view.code), icon: const Icon(Icons.copy), label: const Text('Copier mon code')),
+          const SizedBox(height: 10),
+        ],
+        Text('Un bonus n’est dû qu’après une réservation payée et terminée par la personne parrainée, '
+            'selon les règles de WAKA ; l’inscription seule ne donne rien.',
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         const Divider(height: 32),
         Text('Mon parrain', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),

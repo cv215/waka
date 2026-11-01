@@ -119,7 +119,7 @@ class _WalletPageState extends State<WalletPage> {
       title: 'Mon argent',
       actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : () => _run(_load), icon: const Icon(Icons.refresh))],
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (wallet == null && _message == null) const Text('Chargement…'),
+        if (wallet == null && _message == null) const WakaLoading(),
         if (wallet != null) ...[
           // Step 6 of the redesign: one block with both pockets, two buttons, then the latest movements.
           Container(

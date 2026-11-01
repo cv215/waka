@@ -10,7 +10,7 @@ import '../application/my_data_flow.dart';
 const _typeLabels = {
   'driver_application': 'Candidature chauffeur',
   'privacy_request': 'Demande sur mes données',
-  'quote': 'Devis',
+  'quote': 'Prix demandé',
 };
 const _stateLabels = {
   'draft': 'brouillon',
@@ -19,9 +19,16 @@ const _stateLabels = {
   'refused': 'refusée',
   'approved': 'approuvée',
   'received': 'reçue',
-  'valid': 'valable',
-  'expired': 'expiré',
+  'valid': 'encore valable',
+  'expired': 'plus valable',
 };
+
+const _months = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+/// « 1 nov. à 08:00 ».
+String _when(DateTime at) {
+  final l = at.toLocal();
+  return '${l.day} ${_months[l.month - 1]} à ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+}
 
 /// « Mes données » : ask for one's data or their deletion, and see one's own activity.
 class MyDataPage extends StatefulWidget {
@@ -108,16 +115,16 @@ class _MyDataPageState extends State<MyDataPage> {
           if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!)),
           const Divider(height: 32),
           Row(children: [
-            Expanded(child: Text('Mon activité', style: Theme.of(context).textTheme.titleLarge)),
+            Expanded(child: Text('Ce que WAKA a enregistré', style: Theme.of(context).textTheme.titleLarge)),
             IconButton(tooltip: 'Actualiser', onPressed: _flow.busy ? null : _flow.refresh, icon: const Icon(Icons.refresh)),
           ]),
-          if (items == null) const Text('Activité non chargée.'),
+          if (items == null) _flow.busy ? const WakaLoading() : const Text('Activité non chargée.'),
           if (items != null && items.isEmpty) const Text('Aucune activité pour l’instant.'),
           for (final item in items ?? const <ActivityItem>[])
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(_typeLabels[item.objectType] ?? item.objectType),
-              subtitle: Text('${_stateLabels[item.state] ?? item.state} · ${item.at.toLocal().toString().substring(0, 16)}'),
+              subtitle: Text('${_stateLabels[item.state] ?? item.state} · ${_when(item.at)}'),
             ),
           if (_flow.hasMore)
             TextButton(onPressed: _flow.busy ? null : _flow.more, child: const Text('Voir plus')),
