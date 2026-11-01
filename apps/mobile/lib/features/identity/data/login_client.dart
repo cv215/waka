@@ -519,6 +519,9 @@ class LoginClient
           if (received.length + chunk.length > maxBytes) throw const PhotoProblem(PhotoFailure.invalidResponse);
           received.addAll(chunk);
         }
+        // A gateway in front of a server that is down or restarting answers 5xx without our headers: unavailable, not an
+        // out-of-date app.
+        if (response.statusCode >= 500) throw const PhotoProblem(PhotoFailure.unavailable);
         if (response.headers.value(HttpHeaders.cacheControlHeader) != 'no-store') {
           throw const PhotoProblem(PhotoFailure.invalidResponse);
         }
@@ -644,6 +647,7 @@ class LoginClient
           if (bytes.length + chunk.length > 8192) throw const ApplicationProblem(ApplicationFailure.invalidResponse);
           bytes.addAll(chunk);
         }
+        if (response.statusCode >= 500) throw const ApplicationProblem(ApplicationFailure.unavailable);
         if (response.headers.value(HttpHeaders.cacheControlHeader) != 'no-store') {
           throw const ApplicationProblem(ApplicationFailure.invalidResponse);
         }
@@ -717,6 +721,7 @@ class LoginClient
           if (bytes.length + chunk.length > 8192) throw const ProfileProblem(ProfileFailure.invalidResponse);
           bytes.addAll(chunk);
         }
+        if (response.statusCode >= 500) throw const ProfileProblem(ProfileFailure.unavailable);
         if (response.headers.value(HttpHeaders.cacheControlHeader) != 'no-store') throw const ProfileProblem(ProfileFailure.invalidResponse);
         if (response.statusCode != 200) {
           String? code;

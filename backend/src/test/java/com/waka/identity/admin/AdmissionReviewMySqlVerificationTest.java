@@ -630,6 +630,16 @@ class AdmissionReviewMySqlVerificationTest {
         var far = rides.proposals(driver.token, client).getFirst();
         assertEquals(350, far.detourSeconds());
         rides.respond(driver.token, client, far.proposalId(), false);
+        // A refusal is not final: not shown again at once, but a minute later he sees that client again and may take him.
+        assertTrue(rides.proposals(driver.token, client).isEmpty());
+        assertTrue(rides.nearby(driver.token, client).isEmpty(), "just refused: not shown again at once");
+        clock.advance(61);
+        rides.presence(driver.token, client, true, a, mvan);
+        var back = rides.nearby(driver.token, client);
+        assertEquals(1, back.size(), "a minute later, the client still searching is back");
+        assertEquals("awaiting_payment", rides.take(driver.token, client, back.getFirst().searchId()).state(),
+                "a second proposal to the same driver for the same search");
+        rides.cancelByClient(rider.token, client, rides.driverRides(driver.token, client).getFirst().reservationId());
 
         // Without a direction the car is as in R13: one reservation, VIP possible.
         leg.set(60);

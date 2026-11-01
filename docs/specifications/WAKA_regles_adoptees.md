@@ -365,7 +365,8 @@ Cette règle remplace, pour le partagé, le choix « pas de regroupement » de R
 - **Jaune** : la tournée à travers **tous** les clients acceptés, puis la direction.
 - **Rouge, presque transparent** : un client proche dont le parcours **dévie** de l'itinéraire du chauffeur. Il n'est pas proposé, mais **le chauffeur peut le prendre**. Choix du fondateur pour la vie privée : départ et arrivée **arrondis à environ 300 m**, ni nom ni prix ; le détail exact n'arrive qu'une fois la course acceptée. Seuls les clients à 4 km au plus (à vol d'oiseau) sont montrés ; la prise exige 10 minutes de route au plus, des places libres et une demande que personne d'autre n'a en proposition.
 - **Glisser** : à droite, accepter (ou prendre un client rouge) ; à gauche, refuser (ou ignorer). Les boutons restent pour qui préfère toucher.
-- **Navigation** : dès qu'un client est accepté, la carte passe d'elle-même en vue de navigation sur la carte de WAKA — rapprochée, inclinée, tournée dans le sens de la marche, la voiture dessinée par une flèche qui indique sa position et sa direction (calculée à partir de ses déplacements, actualisée toutes les 2 secondes).
+- **Un refus n'est pas définitif (fondateur, 1er novembre 2026)** : un client refusé, ou laissé sans réponse pendant les 30 secondes, revient chez ce chauffeur **une minute après**, s'il cherche encore (proposé de nouveau, ou montré en rouge). Le chauffeur a pu se rapprocher ou changer d'avis. Une recherche dure 2 minutes ; une nouvelle recherche du client repart de zéro.
+- **Navigation** : dès qu'un client est accepté, la carte passe d'elle-même en vue de navigation sur la carte de WAKA : rapprochée, inclinée, tournée dans le sens de la marche, la voiture dessinée par une flèche qui indique sa position et sa direction (calculée à partir de ses déplacements, actualisée toutes les 2 secondes).
 
 ## R16 — Refonte de l'application : marque, thèmes, inscription, double profil chauffeur (31 octobre 2026)
 

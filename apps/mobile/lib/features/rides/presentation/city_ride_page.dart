@@ -53,9 +53,9 @@ String rideStateLabel(String state) => switch (state) {
 typedef ReadPosition = Future<RidePoint?> Function();
 
 /// Android: Google's location service first. When the person declines Google's « Location Accuracy », it fails and each
-/// later call would ask again (every 2 seconds while driving), so the phone's own location is used from then on, also
-/// after the app is closed (kept on this device only).
-bool? _phoneLocationOnly;
+/// later call would ask again (every 2 seconds while driving), so the phone's own location is used for a day, also
+/// after the app is closed (kept on this device only); Google's location is tried again the next day.
+DateTime? _phoneLocationUntil;
 
 Future<RidePoint?> devicePosition() async {
   final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -64,15 +64,15 @@ Future<RidePoint?> devicePosition() async {
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
-    if (android) _phoneLocationOnly ??= await readPreference('waka_phone_location') == 'yes';
-    if (android && _phoneLocationOnly != true) {
+    if (android) _phoneLocationUntil ??= DateTime.tryParse(await readPreference('waka_phone_location') ?? '') ?? DateTime(2000);
+    if (android && DateTime.now().isAfter(_phoneLocationUntil!)) {
       try {
         final p = await Geolocator.getCurrentPosition(
             locationSettings: AndroidSettings(accuracy: LocationAccuracy.high, timeLimit: const Duration(seconds: 10)));
         return RidePoint(p.latitude, p.longitude);
       } on Exception {
-        _phoneLocationOnly = true;
-        unawaited(writePreference('waka_phone_location', 'yes'));
+        _phoneLocationUntil = DateTime.now().add(const Duration(days: 1));
+        unawaited(writePreference('waka_phone_location', _phoneLocationUntil!.toIso8601String()));
       }
     }
     final p = await Geolocator.getCurrentPosition(locationSettings: android
@@ -439,12 +439,13 @@ class _CityRidePageState extends State<CityRidePage> {
   Future<void> _refreshNow() async {
     final (session, client) = _context();
     final ride = _ride;
+    // A fresh answer clears a message left by an earlier failed refresh (a server restarting, a lost network).
     if (ride != null) {
       final fresh = await _gateway.cityRide(session, client, ride.reservationId);
-      if (mounted) setState(() => _ride = fresh);
+      if (mounted) setState(() { _ride = fresh; _message = null; });
     } else if (_search != null) {
       final search = await _gateway.rideSearch(session, client, _search!.searchId);
-      if (mounted) setState(() { _search = search; _ride = search.ride; });
+      if (mounted) setState(() { _search = search; _ride = search.ride; _message = null; });
     }
   }
 
