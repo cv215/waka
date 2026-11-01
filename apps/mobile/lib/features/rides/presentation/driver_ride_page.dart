@@ -113,14 +113,16 @@ class _DriverRidePageState extends State<DriverRidePage> {
       if (!mounted || _online) return;
       setState(() { if (gps == null) { _gpsMissing = true; } else { _position ??= gps; } });
     });
-    // Rides still in progress (the screen or the phone was closed) are found again.
+    // Rides still in progress (the screen or the phone was closed) are found again. A driver carrying a client comes
+    // back online at once, in navigation: the client keeps seeing the car come.
     _run(() async {
       final (session, client) = _context();
       final rides = await _gateway.driverRides(session, client);
-      if (mounted && rides.isNotEmpty) {
-        setState(() => _rides = rides);
-        _startTimers();
-      }
+      if (!mounted || rides.isEmpty) return;
+      setState(() => _rides = rides);
+      if (_carrying) await _sendPresence(true);
+      _startTimers();
+      if (_online) _navigateNow();
     });
   }
 

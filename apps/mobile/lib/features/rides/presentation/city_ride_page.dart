@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
+import '../../../core/presentation/preference_store.dart';
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
 import '../../identity/data/login_models.dart';
@@ -51,17 +52,42 @@ String rideStateLabel(String state) => switch (state) {
 /// Where this phone is. Null when the position cannot be read (refused, no GPS, or a page without HTTPS).
 typedef ReadPosition = Future<RidePoint?> Function();
 
+/// Android: Google's location service first. When the person declines Google's « Location Accuracy », it fails and each
+/// later call would ask again (every 2 seconds while driving), so the phone's own location is used from then on, also
+/// after the app is closed (kept on this device only).
+bool? _phoneLocationOnly;
+
 Future<RidePoint?> devicePosition() async {
+  final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   try {
     if (!await Geolocator.isLocationServiceEnabled()) return null;
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return null;
-    final p = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 10)));
+    if (android) _phoneLocationOnly ??= await readPreference('waka_phone_location') == 'yes';
+    if (android && _phoneLocationOnly != true) {
+      try {
+        final p = await Geolocator.getCurrentPosition(
+            locationSettings: AndroidSettings(accuracy: LocationAccuracy.high, timeLimit: const Duration(seconds: 10)));
+        return RidePoint(p.latitude, p.longitude);
+      } on Exception {
+        _phoneLocationOnly = true;
+        unawaited(writePreference('waka_phone_location', 'yes'));
+      }
+    }
+    final p = await Geolocator.getCurrentPosition(locationSettings: android
+        ? AndroidSettings(accuracy: LocationAccuracy.high, timeLimit: const Duration(seconds: 10), forceLocationManager: true)
+        : const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 10)));
     return RidePoint(p.latitude, p.longitude);
   } on Exception {
-    return null;
+    // No fresh fix (indoors, slow GPS): the last one the phone knows is better than none.
+    if (!android) return null;
+    try {
+      final last = await Geolocator.getLastKnownPosition(forceAndroidLocationManager: true);
+      return last == null ? null : RidePoint(last.latitude, last.longitude);
+    } on Exception {
+      return null;
+    }
   }
 }
 
@@ -189,6 +215,8 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
     onTap: (latLng) => widget.onTap(RidePoint(latLng.latitude, latLng.longitude)),
     myLocationButtonEnabled: false,
     mapToolbarEnabled: false,
+    // Two fingers zoom; the + and − buttons only hid part of the map.
+    zoomControlsEnabled: false,
     gestureRecognizers: {Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new)},
     polylines: {
       for (final (i, path) in widget.paths.indexed)
@@ -196,7 +224,8 @@ class _GoogleRideMapState extends State<_GoogleRideMap> {
             width: path.width, zIndex: i, startCap: Cap.roundCap, endCap: Cap.roundCap, jointType: JointType.round),
     },
     markers: {
-      if (widget.origin != null)
+      // In navigation the car arrow already shows where the driver starts from.
+      if (widget.origin != null && !widget.follow)
         Marker(markerId: const MarkerId('depart'), position: _at(widget.origin!), infoWindow: const InfoWindow(title: 'Départ'),
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)),
       if (widget.destination != null)

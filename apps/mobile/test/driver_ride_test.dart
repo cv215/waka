@@ -119,7 +119,8 @@ Widget _fakeMap(BuildContext context, RidePoint? a, RidePoint? b, void Function(
 
 final opened = <Uri>[];
 
-Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202)}) async {
+Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoint(3.8601, 11.5202),
+    void Function(DriverFixture)? before}) async {
   opened.clear();
   tester.view.physicalSize = const Size(900, 2600);
   tester.view.devicePixelRatio = 1.0;
@@ -129,6 +130,7 @@ Future<DriverFixture> _open(WidgetTester tester, {RidePoint? gps = const RidePoi
     final store = fixture.MemoryStore();
     await store.write(LoginSnapshot(randomLoginId(), session: session));
     final gateway = DriverFixture(session);
+    before?.call(gateway);
     final login = LoginFlow(gateway, store);
     await login.initialize();
     return (login, gateway);
@@ -189,6 +191,15 @@ void main() {
     expect(find.textContaining('Course terminée : ta part est dans tes gains.'), findsOneWidget);
     expect(server.driverCalls, containsAllInOrder(['answer:true', 'action:arrive:-', 'action:board:111111', 'action:board:048213',
       'action:finish:-']));
+  });
+
+  testWidgets('écran rouvert pendant une course payée : de nouveau en ligne, en navigation', (tester) async {
+    final server = await _open(tester, before: (s) { s.accepted.add(_rideIds.first); s.rideState = 'confirmed'; });
+    expect(server.driverCalls.first, 'presence:true:{latitude: 3.8601, longitude: 11.5202}',
+        reason: 'the client keeps seeing the car come');
+    expect(find.text('En ligne'), findsOneWidget);
+    expect(find.text('Arrêter le suivi'), findsOneWidget, reason: 'navigation view');
+    expect(find.text('Aller chercher Awa'), findsOneWidget);
   });
 
   testWidgets('sans GPS, le chauffeur écrit le lieu où il se trouve, puis passe en ligne à ce point', (tester) async {
