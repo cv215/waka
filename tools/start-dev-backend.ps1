@@ -1,6 +1,6 @@
 ﻿param(
     [Parameter(Mandatory = $true)][string]$JavaHome,
-    [string]$PrivateRoot = (Join-Path $env:LOCALAPPDATA 'WAKA'),
+    [string]$PrivateRoot = (& (Join-Path $PSScriptRoot 'private-root.ps1')),
     [ValidateSet('dev', 'test')][string]$Profile = 'dev',
     [ValidateRange(0, 65535)][int]$Port = 8080,
     # Application complete pour essai sur ce poste : codes de connexion dans un fichier prive, distances estimees,
