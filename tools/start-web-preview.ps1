@@ -1,4 +1,4 @@
-param([string]$PrivateRoot = (Join-Path $env:LOCALAPPDATA 'WAKA'),
+param([string]$PrivateRoot = (& (Join-Path $PSScriptRoot 'private-root.ps1')),
       [string]$Python = 'python')
 # Lance l'apercu web (iPhone sur le meme Wi-Fi) avec la cle "waka-carte" protegee de ce poste, sans jamais l'afficher.
 # Sans cle enregistree (tools/save-google-maps-keys.ps1), l'apercu marche sans carte.

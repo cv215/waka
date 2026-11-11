@@ -1,4 +1,4 @@
-param([string]$PrivateRoot = (Join-Path $env:LOCALAPPDATA 'WAKA'))
+param([string]$PrivateRoot = (& (Join-Path $PSScriptRoot 'private-root.ps1')))
 # Enregistre les cles de bac a sable Fapshi sur ce poste, protegees par Windows (DPAPI, utilisateur courant).
 # Les valeurs sont tapees ici, jamais affichees, jamais ecrites en clair, jamais dans Git ni dans une conversation.
 # Chaque valeur est controlee des qu'elle est collee (forme seulement) ; une valeur fausse est redemandee.

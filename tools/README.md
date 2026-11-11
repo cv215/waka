@@ -4,12 +4,14 @@ Emplacement des futurs outils reproductibles de construction et controle. Aucun 
 
 ## Essayer l'application complète sur ce poste (R14, 30 octobre 2026)
 
+**Dossier privé** de ce poste (base MySQL, outils, clés protégées par Windows, jamais dans Git) : `%USERPROFILE%\WAKA-local` s'il existe, sinon `%LOCALAPPDATA%\WAKA` (voir `tools\private-root.ps1`). Il est placé hors d'AppData : Windows range ce qu'une app empaquetée écrit sous AppData dans l'espace de cette app, et le supprime quand l'app est réinstallée.
+
 Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1). Trois services payants y sont remplacés par des stand-ins :
-- **SMS** : les codes de connexion sont écrits dans `%LOCALAPPDATA%\WAKA\backend-local\app\codes-connexion-local.txt` ;
+- **SMS** : les codes de connexion sont écrits dans `<dossier privé>\backend-local\app\codes-connexion-local.txt` ;
 - **Cartes** : les distances sont estimées en ligne droite, multipliées par 1,3 ;
 - **Paiements** : ils sont simulés (tout réussit), sauf si des clés de bac à sable Fapshi ont été enregistrées.
 
-1. Démarrer MySQL : `%LOCALAPPDATA%\WAKA\mysql-local\start-mysql.ps1`.
+1. Démarrer MySQL : `<dossier privé>\mysql-local\start-mysql.ps1`.
 2. Compiler le serveur (`tools\build-backend.ps1`), puis lancer :
    `tools\start-dev-backend.ps1 -JavaHome "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot" -LocalApp`
 3. Installer l'APK de test sur l'émulateur Android. L'application appelle `http://10.0.2.2:8080`.
@@ -23,7 +25,7 @@ Le serveur reste fermé au réseau : seul le relais est joignable. La session es
 
 **Premier agent de la base locale** : pour approuver des chauffeurs avec l'administration web, ajouter `-FounderAccount <identifiant>` au démarrage. L'identifiant est l'`accountId` renvoyé par `/api/v1/me` pour votre compte. Cela ne marche qu'une fois par base : les agents suivants sont nommés depuis l'administration (gouvernance).
 
-**Lien de test hors du Wi-Fi** : avec le serveur et l'aperçu web démarrés, lancez `tools\start-test-link.ps1`. Il crée une adresse temporaire `https://…trycloudflare.com`, gratuite et sans compte, vers l'aperçu web. Ne la donnez qu'à vos testeurs, et arrêtez-la avec Ctrl+C après l'essai. Il faut l'outil `cloudflared` 2026.10.1 de Cloudflare dans `%LOCALAPPDATA%\WAKA\tools\cloudflared-2026.10.1\cloudflared.exe` (empreinte SHA-256 vérifiée : `4d2490e7…dc891b6`). L'application accepte cette adresse seulement en https, sous trycloudflare.com, et seulement dans la version de test.
+**Lien de test hors du Wi-Fi** : avec le serveur et l'aperçu web démarrés, lancez `tools\start-test-link.ps1`. Il crée une adresse temporaire `https://…trycloudflare.com`, gratuite et sans compte, vers l'aperçu web. Ne la donnez qu'à vos testeurs, et arrêtez-la avec Ctrl+C après l'essai. Il faut l'outil `cloudflared` 2026.10.1 de Cloudflare dans `<dossier privé>\tools\cloudflared-2026.10.1\cloudflared.exe` (empreinte SHA-256 vérifiée : `4d2490e7…dc891b6`). L'application accepte cette adresse seulement en https, sous trycloudflare.com, et seulement dans la version de test.
 
 **Administration web sur ce poste** : construire `apps/admin` avec `flutter build web --release --dart-define=WAKA_API_BASE_URL=http://127.0.0.1:8091`, puis lancer `tools\serve-web-preview.py --admin`. Elle s'ouvre sur http://127.0.0.1:8091, sur ce poste seulement, jamais sur le Wi-Fi. Après le code SMS, la page affiche l'identifiant de compte à transmettre à un agent « Habilitations ».
 
@@ -41,4 +43,4 @@ Le câble doit rester branché pendant l'essai ; après un rebranchement, relanc
 
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
 
-La clé maîtresse locale est créée une seule fois dans `%LOCALAPPDATA%\WAKA\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.
+La clé maîtresse locale est créée une seule fois dans `<dossier privé>\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.

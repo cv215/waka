@@ -1,4 +1,4 @@
-param([string]$Cloudflared = (Join-Path $env:LOCALAPPDATA 'WAKA\tools\cloudflared-2026.10.1\cloudflared.exe'))
+param([string]$Cloudflared = (Join-Path (& (Join-Path $PSScriptRoot 'private-root.ps1')) 'tools\cloudflared-2026.10.1\cloudflared.exe'))
 # Lien de test temporaire (https://xxxx.trycloudflare.com) vers l'apercu web de ce poste (port 8090), pour un testeur
 # qui n'est pas sur le meme Wi-Fi. Gratuit, sans compte. Le lien change a chaque lancement et s'arrete avec Ctrl+C.
 # A lancer apres le serveur (start-dev-backend.ps1 -LocalApp) et l'apercu (start-web-preview.ps1). Donnees de test seulement.

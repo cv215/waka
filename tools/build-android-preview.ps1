@@ -1,4 +1,4 @@
-param([string]$PrivateRoot = (Join-Path $env:LOCALAPPDATA 'WAKA'),
+param([string]$PrivateRoot = (& (Join-Path $PSScriptRoot 'private-root.ps1')),
       [string]$Flutter = 'C:\src\flutter\flutter\bin\flutter.bat',
       [switch]$Phone)
 # Construit l'APK de test avec la cle "waka-carte" protegee de ce poste. Serveur local : 10.0.2.2:8080 pour l'emulateur ;
