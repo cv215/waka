@@ -218,6 +218,50 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
     if (_photos?.views == null) _photos?.refresh();
   }
 
+  /// What is wrong in each vehicle field, checked on « Continuer » and again on every change once shown. Same limits
+  /// as the server (VehicleFields): a refusal there would only say « invalid » for the whole form.
+  Map<String, String> _fieldErrors = const {};
+
+  Map<String, String> _check() {
+    final errors = <String, String>{};
+    final now = DateTime.now().year;
+    int? value(TextEditingController c) => int.tryParse(c.text.trim());
+    final year = value(_year), total = value(_total), seats = value(_seats);
+    if (_year.text.trim().isNotEmpty && (year == null || year < 1900 || year > now + 1)) {
+      errors['year'] = 'L’année s’écrit en 4 chiffres, entre 1900 et ${now + 1} (par exemple 2015).';
+    }
+    if (_total.text.trim().isNotEmpty && (total == null || total < 2 || total > 99)) {
+      errors['total'] = 'Nombre de personnes autorisées, chauffeur compris : entre 2 et 99 (souvent 5 pour une berline).';
+    }
+    if (_seats.text.trim().isNotEmpty) {
+      if (seats == null || seats < 1 || seats > 5) {
+        errors['seats'] = 'Entre 1 et 5 places : WAKA ne transporte pas plus de 5 passagers.';
+      } else if (total != null && errors['total'] == null && seats > total - 1) {
+        errors['seats'] = 'Au plus ${total - 1} : la capacité de $total compte déjà le chauffeur.';
+      }
+    }
+    final plate = _plate.text.trim().toUpperCase();
+    if (plate.isNotEmpty && !RegExp(r'^[A-Z0-9][A-Z0-9 -]{0,14}[A-Z0-9]$').hasMatch(plate)) {
+      errors['plate'] = 'Lettres et chiffres, avec espaces ou tirets au milieu, au moins 2 caractères (par exemple CE 123 AB).';
+    }
+    return errors;
+  }
+
+  /// Server field names (VehicleFields.NAMES) to the form's error keys.
+  static const _fieldOf = {'brand': 'brand', 'model': 'model', 'year': 'year', 'color': 'color', 'registration': 'plate',
+      'authorizedTotalCapacity': 'total', 'offeredPassengerSeats': 'seats', 'usageRight': 'usage'};
+
+  void _recheck() {
+    if (_fieldErrors.isEmpty) return;
+    // Keeps « À remplir » on fields still empty; a filled one loses it.
+    final controllers = {'brand': _brand, 'model': _model, 'year': _year, 'color': _color, 'plate': _plate, 'total': _total, 'seats': _seats};
+    setState(() => _fieldErrors = {
+      for (final e in _fieldErrors.entries)
+        if (e.value == 'À remplir.' && (e.key == 'usage' ? _usageRight == null : controllers[e.key]!.text.trim().isEmpty)) e.key: e.value,
+      ..._check(),
+    });
+  }
+
   String? _text(TextEditingController c) => c.text.trim().isEmpty ? null : c.text;
   int? _number(TextEditingController c) => c.text.trim().isEmpty ? null : int.tryParse(c.text.trim()) ?? -1;
 
@@ -260,6 +304,7 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       final current = _flow.application;
       final busy = _flow.busy;
       return WakaPage(
+        busy: busy,
         title: current == null ? 'Candidature chauffeur'
             : 'Chauffeur ${current.requestedCategory == 'taxi' ? 'taxi' : 'particulier'}',
         child: Column(
@@ -346,7 +391,17 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
       ],
       ...switch (_step) {
         0 => [..._vehicle(current, busy), _nav(next: busy || !_flow.canEditVehicle ? null : () async {
+            final errors = _check();
+            setState(() => _fieldErrors = errors);
+            if (errors.isNotEmpty) return;
             await _save();
+            // Saved, but some fields are still empty: say which ones instead of staying on the step without a word.
+            final missing = _flow.applicationFailure == null ? _flow.application?.missing ?? const <String>[] : const <String>[];
+            if (mounted && missing.isNotEmpty) {
+              setState(() => _fieldErrors = {
+                for (final name in missing) _fieldOf[name] ?? name: 'À remplir.',
+              });
+            }
             if (mounted && _flow.applicationFailure == null && (_flow.application?.missing.isEmpty ?? false)) setState(() => _step = 1);
           })],
         1 => [..._photoSection(), _nav(next: photosMissing == 0 ? () => setState(() => _step = 2) : null,
@@ -418,30 +473,40 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
 
   List<Widget> _vehicle(DriverApplicationSnapshot current, bool busy) {
     final editable = !busy && _flow.canEditVehicle;
-    InputDecoration label(String text) => InputDecoration(labelText: text, border: const OutlineInputBorder());
+    InputDecoration label(String text, [String? field]) => InputDecoration(labelText: text, border: const OutlineInputBorder(),
+        errorText: field == null ? null : _fieldErrors[field], errorMaxLines: 3);
     Widget gap() => const SizedBox(height: 12);
     final digits = [FilteringTextInputFormatter.digitsOnly];
+    void changed(String _) => _recheck();
     return [
-      TextField(controller: _brand, readOnly: !editable, maxLength: 40, decoration: label('Marque')),
-      TextField(controller: _model, readOnly: !editable, maxLength: 40, decoration: label('Modèle')),
-      TextField(controller: _year, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 4, decoration: label('Année')),
-      TextField(controller: _color, readOnly: !editable, maxLength: 40, decoration: label('Couleur')),
-      TextField(controller: _plate, readOnly: !editable, maxLength: 16, textCapitalization: TextCapitalization.characters, decoration: label('Immatriculation')),
+      TextField(controller: _brand, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Marque', 'brand')),
+      TextField(controller: _model, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Modèle', 'model')),
+      TextField(controller: _year, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 4,
+          onChanged: changed, decoration: label('Année', 'year')),
+      TextField(controller: _color, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Couleur', 'color')),
+      TextField(controller: _plate, readOnly: !editable, maxLength: 16, textCapitalization: TextCapitalization.characters,
+          onChanged: changed, decoration: label('Immatriculation', 'plate')),
       TextField(controller: _total, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 2,
-          decoration: label('Capacité totale autorisée (chauffeur compris)')),
+          onChanged: changed, decoration: label('Capacité totale autorisée (chauffeur compris)', 'total')),
       TextField(controller: _seats, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 1,
-          decoration: label('Places passagers proposées (5 au maximum)')),
+          onChanged: changed, decoration: label('Places passagers proposées (5 au maximum)', 'seats')),
       DropdownButtonFormField<String>(
         initialValue: _usageRight,
-        decoration: label('Droit d’utiliser le véhicule'),
+        decoration: label('Droit d’utiliser le véhicule', 'usage'),
         items: const [
           DropdownMenuItem(value: 'holder', child: Text('Je suis titulaire')),
           DropdownMenuItem(value: 'authorized_use', child: Text('J’ai un droit d’utilisation')),
         ],
-        onChanged: editable ? (value) => setState(() => _usageRight = value) : null,
+        onChanged: editable ? (value) { setState(() => _usageRight = value); _recheck(); } : null,
       ),
       gap(),
       const Text('Une déclaration : la capacité et le droit réels sont vérifiés avec les pièces.'),
+      if (_fieldErrors.isNotEmpty) Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Semantics(liveRegion: true, child: Text(
+            '${_fieldErrors.length == 1 ? 'Un champ est à corriger' : '${_fieldErrors.length} champs sont à corriger'} : regarde les messages en rouge.',
+            style: TextStyle(color: Theme.of(context).colorScheme.error))),
+      ),
     ];
   }
 

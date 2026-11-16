@@ -112,6 +112,7 @@ class _SignInPageState extends State<SignInPage> {
           challenge != null &&
           !DateTime.now().toUtc().isBefore(challenge.expiresAt);
       return WakaPage(
+        busy: _flow.busy,
         title: 'Connexion',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

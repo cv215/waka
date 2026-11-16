@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 /// Le défilement conserve les actions sur petit écran ou avec du texte agrandi.
@@ -6,17 +8,21 @@ class WakaPage extends StatelessWidget {
     required this.title,
     required this.child,
     this.actions,
+    this.busy = false,
     super.key,
   });
 
   final String title;
   final Widget child;
   final List<Widget>? actions;
+  /// An action waits for the server: a thin bar under the title, and a sentence if it lasts (see [BusyNotice]).
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title), actions: actions),
+      appBar: AppBar(title: Text(title), actions: actions,
+          bottom: busy ? const PreferredSize(preferredSize: Size.fromHeight(3), child: LinearProgressIndicator(minHeight: 3)) : null),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -24,12 +30,73 @@ class WakaPage extends StatelessWidget {
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
-              child: SizedBox(width: double.infinity, child: child),
+              child: SizedBox(width: double.infinity, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                BusyNotice(busy: busy, bar: false),
+                child,
+              ])),
             ),
           ),
         ),
       ),
     );
+  }
+}
+
+/// While an action waits for the server: a thin bar at once (unless the page draws its own), then after [after] a
+/// sentence saying it is still going, so a slow network never looks like a frozen button. Requests give up by
+/// themselves after 8 seconds and the screen then shows what went wrong.
+class BusyNotice extends StatefulWidget {
+  const BusyNotice({required this.busy, this.bar = true, this.after = const Duration(seconds: 3), super.key});
+
+  final bool busy;
+  final bool bar;
+  final Duration after;
+
+  @override
+  State<BusyNotice> createState() => _BusyNoticeState();
+}
+
+class _BusyNoticeState extends State<BusyNotice> {
+  Timer? _timer;
+  bool _slow = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _arm();
+  }
+
+  @override
+  void didUpdateWidget(BusyNotice old) {
+    super.didUpdateWidget(old);
+    if (old.busy != widget.busy) _arm();
+  }
+
+  void _arm() {
+    _timer?.cancel();
+    _slow = false;
+    if (widget.busy) _timer = Timer(widget.after, () { if (mounted) setState(() => _slow = true); });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.busy) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+      if (widget.bar) const LinearProgressIndicator(minHeight: 3),
+      if (_slow) Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Semantics(liveRegion: true, child: Text(
+          'Ça prend un peu de temps : WAKA attend la réponse du serveur. Garde l’app ouverte, rien ne sera fait en double.',
+          style: TextStyle(color: scheme.onSurfaceVariant))),
+      ),
+    ]);
   }
 }
 

@@ -89,6 +89,7 @@ class _MyDataPageState extends State<MyDataPage> {
       final last = _flow.lastRequest;
       final items = _flow.items;
       return WakaPage(
+        busy: _flow.busy,
         title: 'Mes données',
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const Text('Tu peux demander une copie de tes données ou leur suppression. WAKA te répondra après examen.'),

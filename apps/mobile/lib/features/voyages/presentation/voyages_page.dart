@@ -205,6 +205,7 @@ class _VoyagesPageState extends State<VoyagesPage> {
         ]),
       ),
       body: Column(children: [
+        BusyNotice(busy: _busy),
         if (_message != null)
           Padding(padding: const EdgeInsets.all(12), child: Semantics(liveRegion: true, child: Text(_message!))),
         Expanded(child: TabBarView(children: [_find(), _myReservations(), if (_driver) _myVoyages(), _myIncidents()])),
@@ -650,6 +651,7 @@ class _PassengersPageState extends State<PassengersPage> {
         TextField(controller: _code, keyboardType: TextInputType.number, maxLength: 6,
             decoration: const InputDecoration(labelText: 'Code du passager', border: OutlineInputBorder())),
         FilledButton(onPressed: _busy ? null : _board, child: const Text('Embarquer')),
+        BusyNotice(busy: _busy),
         if (_message != null) Padding(padding: const EdgeInsets.only(top: 12),
             child: Semantics(liveRegion: true, child: Text(_message!))),
         const Divider(height: 32),

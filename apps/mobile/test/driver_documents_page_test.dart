@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:waka_mobile/core/presentation/waka_page.dart';
 import 'package:waka_mobile/features/drivers/presentation/driver_application_page.dart';
 import 'package:waka_mobile/features/identity/application/login_flow.dart';
 
@@ -40,6 +41,47 @@ void main() {
     expect(tester.widget<FilledButton>(send).onPressed, isNull, reason: 'dossier incomplet : envoi impossible');
     await tester.pumpWidget(const SizedBox());
     login.dispose();
+  });
+
+  testWidgets('véhicule : chaque valeur impossible a son message sous le champ, rien n’est envoyé', (tester) async {
+    final login = await _show(tester, 'taxi', 'holder', step: 0);
+    Future<void> type(String label, String value) async {
+      final field = find.widgetWithText(TextField, label);
+      await tester.scrollUntilVisible(field, 200, scrollable: find.byType(Scrollable).first);
+      await tester.enterText(field, value);
+    }
+    await type('Année', '88');
+    await type('Immatriculation', 'V');
+    await type('Capacité totale autorisée (chauffeur compris)', '85');
+    await type('Places passagers proposées (5 au maximum)', '8');
+    final next = find.widgetWithText(FilledButton, 'Continuer');
+    await tester.ensureVisible(next);
+    await tester.pumpAndSettle();
+    final press = tester.widget<FilledButton>(next).onPressed;
+    expect(press, isNotNull);
+    press!();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('L’année s’écrit en 4 chiffres'), findsOneWidget);
+    expect(find.textContaining('au moins 2 caractères'), findsOneWidget);
+    expect(find.textContaining('Entre 1 et 5 places'), findsOneWidget);
+    expect(find.text('3 champs sont à corriger : regarde les messages en rouge.'), findsOneWidget,
+        reason: '85 is a possible capacity (a bus): only year, plate and seats are wrong');
+    expect(find.text('Étape 1 sur 4'), findsOneWidget, reason: 'not sent, still on the vehicle step');
+    await type('Places passagers proposées (5 au maximum)', '4');
+    await tester.pump();
+    expect(find.textContaining('Entre 1 et 5 places'), findsNothing, reason: 'the message goes as soon as the value is right');
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('action lente : barre tout de suite, phrase d’attente après 3 secondes', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: BusyNotice(busy: true))));
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.textContaining('Ça prend un peu de temps'), findsNothing);
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.textContaining('Ça prend un peu de temps'), findsOneWidget);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: BusyNotice(busy: false))));
+    expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
   testWidgets('L’écran voiture personnelle ne montre aucun titre de taxi', (tester) async {

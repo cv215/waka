@@ -112,6 +112,7 @@ class _DriverAccessPageState extends State<DriverAccessPage> {
     final view = _view;
     final theme = Theme.of(context), scheme = theme.colorScheme;
     return WakaPage(
+        busy: _busy,
       title: 'Mon accès chauffeur',
       actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : _load, icon: const Icon(Icons.refresh))],
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
