@@ -106,6 +106,7 @@ class _ReferralPageState extends State<ReferralPage> {
     final view = _view;
     final theme = Theme.of(context);
     return WakaPage(
+        busy: _busy,
       title: 'Parrainage',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (view == null && _busy) const WakaLoading(),

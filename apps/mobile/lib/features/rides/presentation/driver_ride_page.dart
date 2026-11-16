@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../../../core/presentation/waka_page.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -702,6 +703,7 @@ class _DriverRidePageState extends State<DriverRidePage> {
                 if (_online && !_carrying)
                   TextButton(onPressed: _busy ? null : _goOffline, child: const Text('Passer hors ligne')),
                 if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
+                BusyNotice(busy: _busy),
                 if (_message != null) Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(_message!, style: TextStyle(color: scheme.error)),

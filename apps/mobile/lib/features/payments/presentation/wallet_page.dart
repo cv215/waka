@@ -116,6 +116,7 @@ class _WalletPageState extends State<WalletPage> {
       Text(detail, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onPrimary.withValues(alpha: 0.75))),
     ]));
     return WakaPage(
+        busy: _busy,
       title: 'Mon argent',
       actions: [IconButton(tooltip: 'Actualiser', onPressed: _busy ? null : () => _run(_load), icon: const Icon(Icons.refresh))],
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

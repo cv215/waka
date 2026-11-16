@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../../core/presentation/waka_page.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
@@ -532,6 +533,7 @@ class _CityRidePageState extends State<CityRidePage> {
                 else if (search != null) ..._searchPanel(search)
                 else if (priced) ..._pricePanel()
                 else ..._wherePanel(),
+                BusyNotice(busy: _busy),
                 if (_message != null) Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(_message!, style: TextStyle(color: scheme.error)),

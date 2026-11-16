@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../../core/presentation/waka_page.dart';
 
 import '../../identity/application/login_flow.dart';
 import '../../identity/data/login_client.dart';
@@ -163,6 +164,7 @@ class _PayDialogState extends State<PayDialog> {
                 decoration: const InputDecoration(labelText: 'Numéro qui paie (6XXXXXXXX)', border: OutlineInputBorder())),
         ],
         if (payment != null) Semantics(liveRegion: true, child: Text(_status(payment))),
+        BusyNotice(busy: _busy),
         if (_message != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_message!)),
       ])),
       actions: [
