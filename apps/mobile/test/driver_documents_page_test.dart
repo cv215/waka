@@ -68,8 +68,10 @@ void main() {
         reason: '85 is a possible capacity (a bus): only year, plate and seats are wrong');
     expect(find.text('Étape 1 sur 4'), findsOneWidget, reason: 'not sent, still on the vehicle step');
     await type('Places passagers proposées (5 au maximum)', '4');
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.textContaining('Entre 1 et 5 places'), findsNothing, reason: 'the message goes as soon as the value is right');
+    expect(find.text('De 1 à 5, et pas plus que la capacité moins le chauffeur.'), findsOneWidget,
+        reason: 'the rule is back under the field, in grey');
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });
