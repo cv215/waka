@@ -473,26 +473,43 @@ class _DriverApplicationPageState extends State<DriverApplicationPage> {
 
   List<Widget> _vehicle(DriverApplicationSnapshot current, bool busy) {
     final editable = !busy && _flow.canEditVehicle;
-    InputDecoration label(String text, [String? field]) => InputDecoration(labelText: text, border: const OutlineInputBorder(),
-        errorText: field == null ? null : _fieldErrors[field], errorMaxLines: 3);
-    Widget gap() => const SizedBox(height: 12);
+    // Each field shows its rule underneath at all times (grey); a wrong value turns it into the red message.
+    // The character counters are hidden: the length limits stay, the rule says what matters.
+    InputDecoration label(String text, String field, String rule) => InputDecoration(labelText: text, border: const OutlineInputBorder(),
+        helperText: rule, helperMaxLines: 3, errorText: _fieldErrors[field], errorMaxLines: 3, counterText: '');
+    Widget gap() => const SizedBox(height: 14);
     final digits = [FilteringTextInputFormatter.digitsOnly];
     void changed(String _) => _recheck();
+    final nextYear = DateTime.now().year + 1;
     return [
-      TextField(controller: _brand, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Marque', 'brand')),
-      TextField(controller: _model, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Modèle', 'model')),
+      TextField(controller: _brand, readOnly: !editable, maxLength: 40, onChanged: changed,
+          decoration: label('Marque', 'brand', 'Le fabricant, par exemple Toyota.')),
+      gap(),
+      TextField(controller: _model, readOnly: !editable, maxLength: 40, onChanged: changed,
+          decoration: label('Modèle', 'model', 'Par exemple Corolla.')),
+      gap(),
       TextField(controller: _year, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 4,
-          onChanged: changed, decoration: label('Année', 'year')),
-      TextField(controller: _color, readOnly: !editable, maxLength: 40, onChanged: changed, decoration: label('Couleur', 'color')),
+          onChanged: changed, decoration: label('Année', 'year', '4 chiffres, entre 1900 et $nextYear.')),
+      gap(),
+      TextField(controller: _color, readOnly: !editable, maxLength: 40, onChanged: changed,
+          decoration: label('Couleur', 'color', 'Celle que le client verra, par exemple blanc.')),
+      gap(),
       TextField(controller: _plate, readOnly: !editable, maxLength: 16, textCapitalization: TextCapitalization.characters,
-          onChanged: changed, decoration: label('Immatriculation', 'plate')),
+          onChanged: changed, decoration: label('Immatriculation', 'plate',
+              'Lettres et chiffres, espaces ou tirets au milieu, 2 à 16 caractères (par exemple CE 123 AB).')),
+      gap(),
       TextField(controller: _total, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 2,
-          onChanged: changed, decoration: label('Capacité totale autorisée (chauffeur compris)', 'total')),
+          onChanged: changed, decoration: label('Capacité totale autorisée (chauffeur compris)', 'total',
+              'Nombre de personnes inscrit sur la carte grise, chauffeur compris : de 2 à 99.')),
+      gap(),
       TextField(controller: _seats, readOnly: !editable, keyboardType: TextInputType.number, inputFormatters: digits, maxLength: 1,
-          onChanged: changed, decoration: label('Places passagers proposées (5 au maximum)', 'seats')),
+          onChanged: changed, decoration: label('Places passagers proposées (5 au maximum)', 'seats',
+              'De 1 à 5, et pas plus que la capacité moins le chauffeur.')),
+      gap(),
       DropdownButtonFormField<String>(
         initialValue: _usageRight,
-        decoration: label('Droit d’utiliser le véhicule', 'usage'),
+        decoration: label('Droit d’utiliser le véhicule', 'usage',
+            'Titulaire : la carte grise est à ton nom. Sinon, le titulaire t’autorise à l’utiliser.'),
         items: const [
           DropdownMenuItem(value: 'holder', child: Text('Je suis titulaire')),
           DropdownMenuItem(value: 'authorized_use', child: Text('J’ai un droit d’utilisation')),
