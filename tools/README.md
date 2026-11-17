@@ -4,6 +4,8 @@ Emplacement des futurs outils reproductibles de construction et controle. Aucun 
 
 ## Essayer l'application complète sur ce poste (R14, 30 octobre 2026)
 
+**Essai complet à deux, chacun chez soi** : suivre le guide pas à pas [docs/essais/README.md](../docs/essais/README.md).
+
 **Dossier privé** de ce poste (base MySQL, outils, clés protégées par Windows, jamais dans Git) : `%USERPROFILE%\WAKA-local` s'il existe, sinon `%LOCALAPPDATA%\WAKA` (voir `tools\private-root.ps1`). Il est placé hors d'AppData : Windows range ce qu'une app empaquetée écrit sous AppData dans l'espace de cette app, et le supprime quand l'app est réinstallée.
 
 Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1). Trois services payants y sont remplacés par des stand-ins :
