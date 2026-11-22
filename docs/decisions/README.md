@@ -38,3 +38,8 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - **Fournisseur retenu : SmsPro** (Mediasystem SARL, Yaoundé), un seul compte pour MTN et Orange. Prix affichés le 22 novembre : 13 F le SMS jusqu'à 1 000, puis de moins en moins cher ; achat minimum de 500 SMS (6 500 F). Camtel et Nexttel ne sont pas couverts.
 - **Le SMS ne sert qu'au code de connexion.** Le reste passe par l'application.
 - **Aucun achat sans accord** du fondateur sur le montant. L'adaptateur est prêt et testé sans envoi réel (`backend/src/main/java/com/waka/identity/sms/smspro`).
+
+23 novembre 2026, décision du fondateur sur la durée des connexions (`SessionPolicy.mobile()`) :
+- Un code de connexion n'est demandé que sur un nouveau téléphone, après « Se déconnecter », après une réinstallation ou l'effacement des données de l'app, ou après **90 jours sans ouvrir WAKA**. Chaque utilisation repousse ces 90 jours.
+- **Pas de reconnexion annuelle obligatoire** : le fondateur la juge inutile et gênante.
+- Les agents de l'administration gardent leurs limites courtes (`AdminPolicy`) et leur application d'authentification.

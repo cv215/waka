@@ -148,7 +148,7 @@ public class LocalAppAssembly {
     }
     @Bean PersistentSessionService sessions(JdbcTemplate jdbc, DataSourceTransactionManager tx, OtpCrypto otp, Clock clock) {
         return new PersistentSessionService(jdbc, tx, new PersistedOtpProofVerifier(jdbc, otp, clock), new SessionCrypto(key("session"), random),
-                new SessionPolicy(Duration.ofDays(30), Duration.ofDays(7)), clock, new SessionRecoveryPolicy(Duration.ofMinutes(10)),
+                SessionPolicy.mobile(), clock, new SessionRecoveryPolicy(Duration.ofMinutes(10)),
                 new SessionRecoveryCrypto(key("session-recovery"), "local-1", random));
     }
     @Bean LoginService loginService(PersistentOtpService otp, PersistentSessionService sessions) { return new LoginService(otp, sessions); }
