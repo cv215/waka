@@ -31,3 +31,10 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - voyages : un passager absent est traité comme une annulation tardive (30 %) ;
 - abonnement : pas d'achat avant la première prestation ; une prestation interrompue ne déclenche ni l'essai ni la fenêtre de parrainage ; une période payée non commencée est remboursable ;
 - données : une habilitation `PRIVACY` traite les demandes. Les durées de conservation restent à qualifier juridiquement.
+
+21-22 novembre 2026, décisions du fondateur sur les SMS :
+- **Attente levée** : le SMS des codes de connexion est repris pour la mise en ligne.
+- **Orange** : les pages développeur d'Orange annoncent l'arrêt de l'API SMS Cameroun au 1er décembre 2026. Le forfait d'essai acheté vers le 16 octobre est très probablement expiré.
+- **Fournisseur retenu : SmsPro** (Mediasystem SARL, Yaoundé), un seul compte pour MTN et Orange. Prix affichés le 22 novembre : 13 F le SMS jusqu'à 1 000, puis de moins en moins cher ; achat minimum de 500 SMS (6 500 F). Camtel et Nexttel ne sont pas couverts.
+- **Le SMS ne sert qu'au code de connexion.** Le reste passe par l'application.
+- **Aucun achat sans accord** du fondateur sur le montant. L'adaptateur est prêt et testé sans envoi réel (`backend/src/main/java/com/waka/identity/sms/smspro`).

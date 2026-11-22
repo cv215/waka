@@ -43,7 +43,7 @@ $wakaStoreUrl = ([Uri]::new($wakaTruststore)).AbsoluteUri
 $wakaDatabase = if ($Profile -eq 'test') { 'waka_test' } else { 'waka_local' }
 $wakaAccount = if ($Profile -eq 'test') { 'waka_test_runner' } else { 'waka_dev' }
 $wakaJdbcUrl = 'jdbc:mysql://127.0.0.1:3306/' + $wakaDatabase + '?sslMode=VERIFY_CA&allowPublicKeyRetrieval=false&connectTimeout=5000&socketTimeout=5000&trustCertificateKeyStoreUrl=' + [Uri]::EscapeDataString($wakaStoreUrl) + '&trustCertificateKeyStorePassword=changeit&trustCertificateKeyStoreType=PKCS12'
-$wakaFapshiNames = @('WAKA_FAPSHI_COLLECT_USER', 'WAKA_FAPSHI_COLLECT_KEY', 'WAKA_FAPSHI_PAYOUT_USER', 'WAKA_FAPSHI_PAYOUT_KEY', 'WAKA_FAPSHI_WEBHOOK_SECRET', 'WAKA_GOOGLE_SERVER_KEY')
+$wakaFapshiNames = @('WAKA_FAPSHI_COLLECT_USER', 'WAKA_FAPSHI_COLLECT_KEY', 'WAKA_FAPSHI_PAYOUT_USER', 'WAKA_FAPSHI_PAYOUT_KEY', 'WAKA_FAPSHI_WEBHOOK_SECRET', 'WAKA_GOOGLE_SERVER_KEY', 'WAKA_SMSPRO_KEY', 'WAKA_SMSPRO_SENDER')
 $wakaEnvironmentNames = @('WAKA_DB_URL', 'WAKA_DB_USER', 'WAKA_DB_PASSWORD', 'WAKA_LOCAL_APP', 'WAKA_LOCAL_MASTER_KEY', 'WAKA_LOCAL_DIR',
     'WAKA_LOCAL_FOUNDER_ACCOUNT') + $wakaFapshiNames
 if ($LocalApp -and $Profile -ne 'dev') { throw 'L application complete locale ne demarre qu avec le profil dev.' }
@@ -87,6 +87,10 @@ try {
         }
         Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_FAPSHI_COLLECT_USER.dpapi')) { 'Paiements : bac a sable Fapshi' } else { 'Paiements : simules' }))
         Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_GOOGLE_SERVER_KEY.dpapi')) { 'Distances : Google (par la route)' } else { 'Distances : vol d oiseau x 1,3' }))
+        $wakaSmsPro = Join-Path $wakaSecrets 'WAKA_SMSPRO_KEY.dpapi'
+        if (-not (Test-Path -LiteralPath $wakaSmsPro)) { Write-Host 'SMS : aucun envoi, codes dans le fichier local' }
+        elseif ([Environment]::GetEnvironmentVariable('WAKA_SMSPRO_KEY', 'Process') -clike 'smspro_test_*') { Write-Host 'SMS : SmsPro en essai (rien n est envoye), codes aussi dans le fichier local' }
+        else { Write-Host 'SMS : SmsPro, vrais SMS factures' }
         Write-Host ('Codes de connexion : ' + (Join-Path $wakaAppDir 'codes-connexion-local.txt'))
     }
     & $wakaJava -jar $wakaJar "--spring.profiles.active=$Profile" "--server.port=$Port"

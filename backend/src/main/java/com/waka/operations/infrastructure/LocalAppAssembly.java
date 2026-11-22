@@ -31,6 +31,7 @@ import com.waka.identity.otp.OtpPolicy;
 import com.waka.identity.otp.PersistedOtpProofVerifier;
 import com.waka.identity.otp.PersistentOtpService;
 import com.waka.identity.otp.SmsGateway;
+import com.waka.identity.sms.smspro.SmsProSmsGateway;
 import com.waka.identity.privacy.PersistentPrivacyService;
 import com.waka.identity.privacy.PrivacyAdminService;
 import com.waka.identity.profile.PersistentProfileService;
@@ -80,8 +81,8 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 /**
  * The whole application, assembled for trying it on this computer only (profile dev, 127.0.0.1, opt-in with
- * WAKA_LOCAL_APP=on). Three stand-ins replace paid services still waiting for the founder, and are refused
- * anywhere else: login codes are written to a private local file instead of an SMS; distances are estimated
+ * WAKA_LOCAL_APP=on). Three stand-ins replace paid services until their keys are saved, and are refused
+ * anywhere else: login codes are written to a private local file unless SmsPro keys are given; distances are estimated
  * from straight lines (x 1.3) instead of a map; payments are simulated unless Fapshi sandbox keys are given.
  * Every key is derived from one private master key held outside Git, so each purpose has its own key.
  */
@@ -124,7 +125,26 @@ public class LocalAppAssembly {
 
     @Bean OtpCrypto otpCrypto() { return new OtpCrypto(key("otp:mac"), key("otp:enc"), random); }
     @Bean PersistentOtpService otpService(JdbcTemplate jdbc, DataSourceTransactionManager tx, OtpCrypto crypto, Clock clock) {
-        return new PersistentOtpService(jdbc, tx, crypto, new OtpPolicy(100), new LocalFileCodes(dir.resolve("codes-connexion-local.txt")), clock);
+        return new PersistentOtpService(jdbc, tx, crypto, new OtpPolicy(100), smsGateway(), clock);
+    }
+
+    /**
+     * SmsPro when its key and sender are saved on this computer (tools/save-smspro-key.ps1); otherwise the local file.
+     * A SmsPro test key sends nothing, so the code is also written to the local file to be able to sign in.
+     */
+    private SmsGateway smsGateway() {
+        SmsGateway file = new LocalFileCodes(dir.resolve("codes-connexion-local.txt"));
+        String key = System.getenv("WAKA_SMSPRO_KEY"), sender = System.getenv("WAKA_SMSPRO_SENDER");
+        if (key == null || key.isBlank() || sender == null || sender.isBlank()) return file;
+        char[] chars = key.strip().toCharArray();
+        SmsProSmsGateway smspro = new SmsProSmsGateway(chars, sender.strip());
+        boolean test = SmsProSmsGateway.isTestKey(chars);
+        java.util.Arrays.fill(chars, '\0');
+        if (!test) return smspro;
+        return message -> {
+            file.send(message);
+            return smspro.send(message);
+        };
     }
     @Bean PersistentSessionService sessions(JdbcTemplate jdbc, DataSourceTransactionManager tx, OtpCrypto otp, Clock clock) {
         return new PersistentSessionService(jdbc, tx, new PersistedOtpProofVerifier(jdbc, otp, clock), new SessionCrypto(key("session"), random),
@@ -287,7 +307,7 @@ public class LocalAppAssembly {
         return BigDecimal.valueOf(Math.round(6_371_000 * 2 * Math.asin(Math.sqrt(h)) * 1.3));
     }
 
-    /** Writes each login code to a private file of this computer instead of sending an SMS (SMS on hold). */
+    /** Writes each login code to a private file of this computer instead of sending an SMS. */
     static final class LocalFileCodes implements SmsGateway {
         private final Path file;
         LocalFileCodes(Path file) { this.file = file; }

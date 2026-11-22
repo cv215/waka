@@ -1,5 +1,7 @@
 # Candidat Orange SMS Cameroun — adaptateur non active
 
+**Arrêt annoncé** : Orange indique que l'API SMS Cameroun s'arrête le 1er décembre 2026. Le fournisseur retenu le 22 novembre 2026 est SmsPro (`../smspro/README.md`).
+
 Ce composant prepare gratuitement un raccordement possible. Il n'est ni un bean
 Spring, ni un service active, ni une offre commercialement retenue. Il n'existe
 aucun branchement depuis les routes de l'application ; aucune cle fournisseur

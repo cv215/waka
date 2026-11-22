@@ -43,6 +43,10 @@ Le câble doit rester branché pendant l'essai ; après un rebranchement, relanc
 
 **Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.
 
+**SMS des codes de connexion (SmsPro)** : lancer `tools\save-smspro-key.ps1`, coller la clé d'API SmsPro (jamais affichée), puis taper le nom d'expéditeur déclaré chez SmsPro (par exemple `WAKA`). Au démarrage suivant avec `-LocalApp` :
+- avec une clé d'essai `smspro_test_…`, rien ne part et rien n'est facturé ; le code s'écrit aussi dans le fichier des codes ;
+- avec une clé réelle, de **vrais SMS facturés** partent. La fenêtre du serveur affiche le mode utilisé.
+
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
 
 La clé maîtresse locale est créée une seule fois dans `<dossier privé>\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.

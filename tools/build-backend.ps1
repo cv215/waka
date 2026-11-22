@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$JavaHome,
     [Parameter(Mandatory = $true)][string]$MavenHome,
-    [string]$CacheDirectory = (Join-Path $env:LOCALAPPDATA 'WAKA\caches\maven'),
+    [string]$CacheDirectory = (Join-Path (& (Join-Path $PSScriptRoot 'private-root.ps1')) 'caches\maven'),
     [string]$SettingsFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'backend\.mvn\settings.xml'),
     [switch]$Offline
 )
