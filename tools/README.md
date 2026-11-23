@@ -43,7 +43,9 @@ Le câble doit rester branché pendant l'essai ; après un rebranchement, relanc
 
 **Clés Google Maps** : lancer `tools\save-google-maps-keys.ps1`, puis coller la clé « waka-serveur » et la clé « waka-carte » avec Ctrl+V. Au démarrage suivant avec `-LocalApp`, les distances et les temps d'approche sont calculés par la route (Google Routes, sans trafic en direct) au lieu du vol d'oiseau.
 
-**SMS des codes de connexion (SmsPro)** : lancer `tools\save-smspro-key.ps1`, coller la clé d'API SmsPro (jamais affichée), puis taper le nom d'expéditeur déclaré chez SmsPro (par exemple `WAKA`). Au démarrage suivant avec `-LocalApp` :
+**SMS des codes de connexion (Cooms, retenu le 23 novembre 2026)** : lancer `tools\save-cooms-key.ps1`, coller la clé d'API Cooms (jamais affichée), puis l'URL de la passerelle affichée dans la console Cooms (par exemple `https://gw-89.cooms.app`). Au démarrage suivant avec `-LocalApp`, de **vrais SMS** partent, pris sur le crédit Cooms. La fenêtre du serveur affiche le mode utilisé. Cooms passe avant SmsPro si les deux sont enregistrés.
+
+**SMS des codes de connexion (SmsPro, en réserve : exige un NIU)** : lancer `tools\save-smspro-key.ps1`, coller la clé d'API SmsPro (jamais affichée), puis taper le nom d'expéditeur déclaré chez SmsPro (par exemple `WAKA`). Au démarrage suivant avec `-LocalApp` :
 - avec une clé d'essai `smspro_test_…`, rien ne part et rien n'est facturé ; le code s'écrit aussi dans le fichier des codes ;
 - avec une clé réelle, de **vrais SMS facturés** partent. La fenêtre du serveur affiche le mode utilisé.
 

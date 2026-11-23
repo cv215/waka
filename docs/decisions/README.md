@@ -43,3 +43,15 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - Un code de connexion n'est demandé que sur un nouveau téléphone, après « Se déconnecter », après une réinstallation ou l'effacement des données de l'app, ou après **90 jours sans ouvrir WAKA**. Chaque utilisation repousse ces 90 jours.
 - **Pas de reconnexion annuelle obligatoire** : le fondateur la juge inutile et gênante.
 - Les agents de l'administration gardent leurs limites courtes (`AdminPolicy`) et leur application d'authentification.
+
+23 novembre 2026, demande du fondateur : **messagerie interne** (à construire après le branchement des SMS Cooms).
+- **Chauffeur et client d'une course ou d'un voyage** : fil ouvert de l'acceptation à la fin de la course, sans jamais montrer les numéros de téléphone.
+- **Support WAKA** : un fil entre le chauffeur et les agents « Assistance » de l'administration.
+- Choix prudents de l'équipe, à confirmer par le fondateur :
+  - texte seulement au lancement, 500 caractères au plus, avec des réponses rapides (« J'arrive », « Je suis là ») ;
+  - fil d'une course : on peut encore écrire 1 heure après la fin (objet oublié), puis lecture seule ;
+  - messages lus par un agent seulement dans un incident ou une demande de support, et chaque lecture est tracée ;
+  - durée de conservation à qualifier juridiquement, comme les autres données ;
+  - pas de groupe entre chauffeurs (modération trop lourde).
+
+23 novembre 2026 : **Cooms** remplace SmsPro pour les codes de connexion. SmsPro exige un NIU que le fondateur n'a pas ; Cooms demande seulement un e-mail et offre 100 SMS. Le site de Cooms n'indique ni la société ni l'adresse : c'est un risque connu, et SmsPro reste prêt dans le code. Recharges Cooms à partir de 3 000 F, seulement avec l'accord du fondateur sur le montant.

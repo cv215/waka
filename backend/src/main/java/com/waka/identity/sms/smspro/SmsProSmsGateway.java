@@ -2,26 +2,16 @@ package com.waka.identity.sms.smspro;
 
 import com.waka.identity.otp.SmsGateway;
 import com.waka.identity.otp.SmsMessage;
-import java.io.ByteArrayOutputStream;
+import com.waka.identity.sms.SmsHttp;
 import java.io.IOException;
-import java.net.Proxy;
-import java.net.ProxySelector;
-import java.net.SocketAddress;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.Flow;
-import java.util.concurrent.TimeUnit;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.json.JsonFactory;
@@ -30,6 +20,7 @@ import tools.jackson.core.json.JsonFactory;
  * SmsPro (Mediasystem SARL, Yaounde): one account and one key for MTN and Orange Cameroon (founder, 22 November 2026,
  * after Orange announced the end of its SMS Cameroon API on 1 December 2026). Contract read on 22 November 2026 from
  * https://v2.smspro.cm/docs/api: POST /api/v1/messages {to, message, from}, bearer key, 201 when accepted.
+ * Kept ready: SmsPro requires a NIU at sign-up, which the founder does not have yet (Cooms is used meanwhile).
  *
  * <p>WAKA generates and checks the code itself (PersistentOtpService); SmsPro only carries the text. A refusal that
  * SmsPro documents as "nothing created, nothing billed" (400, 401, 402, 404, 422, 429) is REJECTED. Anything else after
@@ -40,11 +31,9 @@ public final class SmsProSmsGateway implements SmsGateway, AutoCloseable {
     private static final String SEND_PATH = "/api/v1/messages";
     private static final Set<Integer> REFUSED = Set.of(400, 401, 402, 404, 422, 429);
     private static final JsonFactory JSON = new JsonFactory();
-    private static final int MAX_RESPONSE = 8192;
-    private final HttpClient http;
+    private final SmsHttp http;
     private final URI base;
     private final String sender;
-    private final Duration deadline;
     private final char[] key;
     private boolean closed;
 
@@ -55,25 +44,14 @@ public final class SmsProSmsGateway implements SmsGateway, AutoCloseable {
 
     // Bounded injection point for tests of the real HTTP client; no external property selects it.
     SmsProSmsGateway(URI base, char[] apiKey, String sender, Duration deadline) {
-        boolean localTest = base != null && "http".equals(base.getScheme())
-                && "127.0.0.1".equals(base.getHost()) && base.getPort() > 0;
-        if (base == null || (!PRODUCTION.equals(base) && !localTest)
-                || base.getRawUserInfo() != null || base.getRawQuery() != null
-                || base.getRawFragment() != null || !base.getRawPath().isEmpty()
-                || !validSender(sender) || !validKey(apiKey)
-                || deadline == null || deadline.toMillis() < 50 || deadline.compareTo(Duration.ofSeconds(8)) > 0) {
+        if (!SmsHttp.plainOrigin(base) || (!PRODUCTION.equals(base) && !SmsHttp.loopback(base))
+                || !validSender(sender) || !validKey(apiKey)) {
             throw invalid();
         }
+        try { this.http = new SmsHttp(deadline); } catch (IllegalArgumentException wrong) { throw invalid(); }
         this.key = apiKey.clone();
         this.base = base;
         this.sender = sender;
-        this.deadline = deadline;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
-                .followRedirects(HttpClient.Redirect.NEVER).version(HttpClient.Version.HTTP_1_1)
-                .proxy(new ProxySelector() {
-                    @Override public List<Proxy> select(URI uri) { return List.of(Proxy.NO_PROXY); }
-                    @Override public void connectFailed(URI uri, SocketAddress address, IOException error) { }
-                }).build();
     }
 
     /** A test key (smspro_test_...) is simulated by SmsPro: same checks, nothing sent or billed. */
@@ -120,15 +98,14 @@ public final class SmsProSmsGateway implements SmsGateway, AutoCloseable {
             String payload = "{\"to\":\"" + phone + "\",\"message\":\"Code WAKA : " + digits
                     + ". Valable 5 minutes. Ne le partagez pas.\",\"from\":\"" + sender + "\"}";
             body = payload.getBytes(StandardCharsets.US_ASCII);
-            HttpRequest request = HttpRequest.newBuilder(base.resolve(SEND_PATH)).timeout(deadline)
-                    .header("Accept", "application/json").header("Content-Type", "application/json")
+            HttpRequest request = http.request(base.resolve(SEND_PATH)).header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + new String(key))
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
             started = true;
-            HttpResponse<byte[]> response = exchange(request);
+            HttpResponse<byte[]> response = http.exchange(request);
             responseBody = response.body();
             if (REFUSED.contains(response.statusCode())) { return Submission.REJECTED; }
-            if (response.statusCode() != 201 || !json(response)) { return Submission.UNKNOWN; }
+            if (response.statusCode() != 201 || !SmsHttp.json(response)) { return Submission.UNKNOWN; }
             return accepted(responseBody) ? Submission.ACCEPTED : Submission.UNKNOWN;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
@@ -142,17 +119,6 @@ public final class SmsProSmsGateway implements SmsGateway, AutoCloseable {
             if (body != null) { Arrays.fill(body, (byte) 0); }
             if (responseBody != null) { Arrays.fill(responseBody, (byte) 0); }
         }
-    }
-
-    private HttpResponse<byte[]> exchange(HttpRequest request) throws Exception {
-        var pending = http.sendAsync(request, ignored -> new BoundedBody());
-        try { return pending.get(deadline.toMillis(), TimeUnit.MILLISECONDS); }
-        catch (Exception failure) { pending.cancel(true); throw failure; }
-    }
-
-    private static boolean json(HttpResponse<?> response) {
-        return response.headers().firstValue("Content-Type").map(s ->
-                "application/json".equalsIgnoreCase(s.split(";", 2)[0].trim())).orElse(false);
     }
 
     /** {"success": true, "message_id": "...", ...}: anything else is not proof of acceptance. */
@@ -185,48 +151,8 @@ public final class SmsProSmsGateway implements SmsGateway, AutoCloseable {
     @Override public synchronized void close() {
         closed = true;
         Arrays.fill(key, '\0');
-        http.shutdownNow();
+        http.close();
     }
 
     @Override public String toString() { return "SmsProSmsGateway[key=REDACTED]"; }
-
-    /** The deadline also covers the body; the subscription is cancelled at the first byte over the limit. */
-    private static final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
-        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
-        private final ErasableOutput output = new ErasableOutput();
-        private Flow.Subscription subscription;
-        @Override public CompletionStage<byte[]> getBody() { return result; }
-        @Override public void onSubscribe(Flow.Subscription subscription) {
-            this.subscription = subscription;
-            subscription.request(1);
-        }
-        @Override public void onNext(List<ByteBuffer> chunks) {
-            for (ByteBuffer chunk : chunks) {
-                if (output.size() + chunk.remaining() > MAX_RESPONSE) {
-                    subscription.cancel();
-                    output.erase();
-                    result.completeExceptionally(new IOException("SMS_RESPONSE_LIMIT"));
-                    return;
-                }
-                byte[] part = new byte[chunk.remaining()];
-                chunk.get(part);
-                output.writeBytes(part);
-                Arrays.fill(part, (byte) 0);
-            }
-            subscription.request(1);
-        }
-        @Override public void onError(Throwable failure) {
-            output.erase();
-            result.completeExceptionally(new IOException("SMS_HTTP_FAILED"));
-        }
-        @Override public void onComplete() {
-            byte[] bytes = output.toByteArray();
-            output.erase();
-            result.complete(bytes);
-        }
-    }
-
-    private static final class ErasableOutput extends ByteArrayOutputStream {
-        private void erase() { Arrays.fill(buf, (byte) 0); reset(); }
-    }
 }

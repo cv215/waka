@@ -31,6 +31,7 @@ import com.waka.identity.otp.OtpPolicy;
 import com.waka.identity.otp.PersistedOtpProofVerifier;
 import com.waka.identity.otp.PersistentOtpService;
 import com.waka.identity.otp.SmsGateway;
+import com.waka.identity.sms.cooms.CoomsSmsGateway;
 import com.waka.identity.sms.smspro.SmsProSmsGateway;
 import com.waka.identity.privacy.PersistentPrivacyService;
 import com.waka.identity.privacy.PrivacyAdminService;
@@ -129,11 +130,18 @@ public class LocalAppAssembly {
     }
 
     /**
-     * SmsPro when its key and sender are saved on this computer (tools/save-smspro-key.ps1); otherwise the local file.
-     * A SmsPro test key sends nothing, so the code is also written to the local file to be able to sign in.
+     * Cooms when its key and gateway are saved on this computer (tools/save-cooms-key.ps1): real SMS, nothing in the
+     * file. Otherwise SmsPro when its key and sender are saved (tools/save-smspro-key.ps1); a SmsPro test key sends
+     * nothing, so the code is also written to the local file. Otherwise the local file only.
      */
     private SmsGateway smsGateway() {
         SmsGateway file = new LocalFileCodes(dir.resolve("codes-connexion-local.txt"));
+        String cooms = System.getenv("WAKA_COOMS_KEY"), gateway = System.getenv("WAKA_COOMS_URL");
+        if (cooms != null && !cooms.isBlank() && gateway != null && !gateway.isBlank()) {
+            char[] chars = cooms.strip().toCharArray();
+            try { return new CoomsSmsGateway(java.net.URI.create(gateway.strip()), chars); }
+            finally { java.util.Arrays.fill(chars, '\0'); }
+        }
         String key = System.getenv("WAKA_SMSPRO_KEY"), sender = System.getenv("WAKA_SMSPRO_SENDER");
         if (key == null || key.isBlank() || sender == null || sender.isBlank()) return file;
         char[] chars = key.strip().toCharArray();
