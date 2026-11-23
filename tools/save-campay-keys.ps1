@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $secrets = Join-Path $PrivateRoot 'Secrets'
 $null = New-Item -ItemType Directory -Path $secrets -Force
 $asks = [ordered]@{
-    'WAKA_CAMPAY_TOKEN'       = @('le jeton d acces permanent (Permanent Access token)', '^[A-Za-z0-9._:-]{20,300}$')
+    'WAKA_CAMPAY_TOKEN'       = @('le jeton d acces permanent (Permanent Access token)', '^[!-~]{20,300}$')
     'WAKA_CAMPAY_WEBHOOK_KEY' = @('la cle de webhook (App webhook key)', '^[\x21-\x7E]{8,300}$')
 }
 foreach ($name in $asks.Keys) {
