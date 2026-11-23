@@ -60,3 +60,6 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - Contrat lu le 23 novembre dans la documentation Postman de CamPay : `collect`, `withdraw`, `transaction/{reference}`, jeton permanent, notifications signées (JWT HS256 avec la clé de webhook) et jamais renvoyées.
 - CamPay évite les doublons grâce à `external_reference` : WAKA y met son propre identifiant et, si une réponse se perd, renvoie exactement la même demande, jamais une nouvelle.
 - **À confirmer avant le passage en réel** : l'adresse de production (seule `demo.campay.net` est documentée), les frais, et les documents demandés à un particulier pour passer en réel. Un guide tiers cite le RCCM et des informations fiscales.
+- **Essai de la démo CamPay du 23 novembre 2026** (numéro de test 237677777777, sans vrai argent) :
+  - la démo accepte au plus **100 F** par paiement ; à 101 F et au-delà, elle répond 400 sans message. Une recharge WAKA commence à 500 F, donc la démo ne peut pas être essayée de bout en bout depuis l'application ;
+  - un paiement de 25 F passe de `PENDING` à `SUCCESSFUL` en moins d'une minute, mais la démo renvoie `amount: "0.00"`. WAKA n'accepte un paiement que si CamPay confirme le montant exact : un paiement sans montant confirmé est mis en vérification, jamais crédité. **À demander à CamPay** : le vrai montant est-il renvoyé en production ?
