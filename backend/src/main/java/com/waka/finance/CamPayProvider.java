@@ -65,7 +65,7 @@ public final class CamPayProvider implements PaymentProvider {
     // Bounded test seam: only the two real addresses or a local http server on 127.0.0.1.
     CamPayProvider(URI base, String token, String webhookKey, Clock clock) {
         boolean local = base != null && "http".equals(base.getScheme()) && "127.0.0.1".equals(base.getHost()) && base.getPort() > 0;
-        if (base == null || !(LIVE.equals(base) || DEMO.equals(base) || local) || token == null || !token.matches("[A-Za-z0-9]{20,200}")
+        if (base == null || !(LIVE.equals(base) || DEMO.equals(base) || local) || token == null || !token.matches("[A-Za-z0-9._:-]{20,300}")
                 || webhookKey == null || webhookKey.length() < 8 || webhookKey.length() > 300 || clock == null) {
             throw new IllegalArgumentException("CAMPAY_CONFIGURATION");
         }
