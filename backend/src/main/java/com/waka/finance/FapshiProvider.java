@@ -1,10 +1,9 @@
 package com.waka.finance;
 
-import java.io.IOException;
+import com.waka.finance.ProviderHttp.Reply;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -30,7 +29,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class FapshiProvider implements PaymentProvider {
     public static final URI LIVE = URI.create("https://live.fapshi.com"), SANDBOX = URI.create("https://sandbox.fapshi.com");
     private static final int MAX_RESPONSE = 262144;
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = ProviderHttp.JSON;
     private static final String OUR_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
     public record Credentials(String user, String key) {
@@ -62,7 +61,7 @@ public final class FapshiProvider implements PaymentProvider {
         this.collection = collection;
         this.payout = payout;
         this.webhookSecret = webhookSecret.getBytes(StandardCharsets.UTF_8);
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
+        this.http = ProviderHttp.client();
     }
 
     @Override public String name() { return "fapshi"; }
@@ -154,33 +153,12 @@ public final class FapshiProvider implements PaymentProvider {
         return new Status(state, amount.isIntegralNumber() ? Long.valueOf(amount.asLong()) : null, "XAF");
     }
 
-    private record Reply(int status, JsonNode body) {
-        boolean ok() { return status >= 200 && status < 300; }
-    }
-
     private Reply call(String method, String path, Object body, Credentials credentials) throws ProviderUnavailable {
-        try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(20))
-                    .header("Accept", "application/json").header("apiuser", credentials.user()).header("apikey", credentials.key());
-            if (body == null) {
-                request.GET();
-            } else {
-                request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body)));
-            }
-            HttpResponse<java.io.InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-            byte[] raw;
-            try (var in = response.body()) { raw = in.readNBytes(MAX_RESPONSE + 1); }
-            if (raw.length > MAX_RESPONSE) throw new ProviderUnavailable("FAPSHI_RESPONSE_TOO_LARGE");
-            JsonNode json;
-            try { json = raw.length == 0 ? JSON.createObjectNode() : JSON.readTree(raw); }
-            catch (JacksonException unreadable) { json = JSON.createObjectNode(); }
-            return new Reply(response.statusCode(), json);
-        } catch (IOException error) {
-            throw new ProviderUnavailable("FAPSHI_UNREACHABLE");
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new ProviderUnavailable("FAPSHI_INTERRUPTED");
-        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json").header("apiuser", credentials.user()).header("apikey", credentials.key());
+        if (body == null) request.GET();
+        else request.header("Content-Type", "application/json").method(method, ProviderHttp.json(body));
+        return ProviderHttp.send(http, request.build(), MAX_RESPONSE, "FAPSHI");
     }
 
     /** Fapshi expects the nine national digits (6XXXXXXXX). */

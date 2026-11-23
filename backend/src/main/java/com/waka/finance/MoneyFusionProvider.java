@@ -1,11 +1,9 @@
 package com.waka.finance;
 
-import java.io.IOException;
-import java.math.BigDecimal;
+import com.waka.finance.ProviderHttp.Reply;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -40,7 +38,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class MoneyFusionProvider implements PaymentProvider {
     public static final URI API = URI.create("https://pay.moneyfusion.net");
     private static final int MAX_RESPONSE = 262144;
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = ProviderHttp.JSON;
     private static final String UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
     private static final String TOKEN = "[0-9A-Za-z_-]{6,64}";
     /** The application's payment address: https, on a moneyfusion.net host, no query. */
@@ -72,7 +70,7 @@ public final class MoneyFusionProvider implements PaymentProvider {
         this.api = api;
         this.privateKey = privateKey;
         this.webhookUrl = webhookUrl;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
+        this.http = ProviderHttp.client();
     }
 
     private static URI checkedPayAddress(String address) {
@@ -90,8 +88,8 @@ public final class MoneyFusionProvider implements PaymentProvider {
     @Override
     public Started collect(String reference, long amountXaf, String channel, String phone, String description) throws ProviderUnavailable {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("totalPrice", positive(amountXaf));
-        body.put("article", List.of(Map.of(text(description), amountXaf)));
+        body.put("totalPrice", ProviderHttp.positive(amountXaf, "MONEYFUSION"));
+        body.put("article", List.of(Map.of(ProviderHttp.label(description, 60), amountXaf)));
         body.put("personal_Info", List.of(Map.of("wakaPayment", ours(reference))));
         body.put("numeroSend", local(phone));
         body.put("nomclient", "Client WAKA");
@@ -131,7 +129,7 @@ public final class MoneyFusionProvider implements PaymentProvider {
             case "pending", "no paid" -> State.PENDING;
             default -> throw new ProviderUnavailable("MONEYFUSION_STATUS_UNKNOWN");
         };
-        return new Status(state, wholeXaf(data.path("Montant")), "XAF");
+        return new Status(state, ProviderHttp.wholeXaf(data.path("Montant")), "XAF");
     }
 
     @Override
@@ -146,7 +144,7 @@ public final class MoneyFusionProvider implements PaymentProvider {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("countryCode", "cm");
         body.put("phone", local(phone));
-        body.put("amount", positive(amountXaf));
+        body.put("amount", ProviderHttp.positive(amountXaf, "MONEYFUSION"));
         body.put("withdraw_mode", mode);
         if (webhookUrl != null) body.put("webhook_url", webhookUrl);
         Reply reply = call(api.resolve("/api/v1/withdraw"), body, true);
@@ -177,7 +175,7 @@ public final class MoneyFusionProvider implements PaymentProvider {
             case "pending" -> State.PENDING;
             default -> throw new ProviderUnavailable("MONEYFUSION_TRANSFER_UNKNOWN");
         };
-        return new Status(state, wholeXaf(data.path("amount")), "XAF");
+        return new Status(state, ProviderHttp.wholeXaf(data.path("amount")), "XAF");
     }
 
     /**
@@ -211,45 +209,12 @@ public final class MoneyFusionProvider implements PaymentProvider {
 
     // ---- Requests ----
 
-    /** Whole francs only; a decimal or missing amount is not trusted (the payment then goes to review). */
-    static Long wholeXaf(JsonNode amount) {
-        try {
-            BigDecimal value = amount.isNumber() ? amount.decimalValue()
-                    : amount.isString() && amount.asString().matches("[0-9]{1,12}(\\.[0-9]{1,2})?") ? new BigDecimal(amount.asString()) : null;
-            if (value == null || value.signum() <= 0) return null;
-            return value.stripTrailingZeros().scale() <= 0 ? value.longValueExact() : null;
-        } catch (ArithmeticException notWhole) {
-            return null;
-        }
-    }
-
-    private record Reply(int status, JsonNode body) {
-        boolean ok() { return status >= 200 && status < 300; }
-    }
-
     private Reply call(URI address, Object body, boolean keyed) throws ProviderUnavailable {
-        try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(address).timeout(Duration.ofSeconds(20)).header("Accept", "application/json");
-            if (keyed) request.header("moneyfusion-private-key", privateKey);
-            if (body == null) {
-                request.GET();
-            } else {
-                request.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body)));
-            }
-            HttpResponse<java.io.InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-            byte[] raw;
-            try (var in = response.body()) { raw = in.readNBytes(MAX_RESPONSE + 1); }
-            if (raw.length > MAX_RESPONSE) throw new ProviderUnavailable("MONEYFUSION_RESPONSE_TOO_LARGE");
-            JsonNode json;
-            try { json = raw.length == 0 ? JSON.createObjectNode() : JSON.readTree(raw); }
-            catch (JacksonException unreadable) { json = JSON.createObjectNode(); }
-            return new Reply(response.statusCode(), json);
-        } catch (IOException error) {
-            throw new ProviderUnavailable("MONEYFUSION_UNREACHABLE");
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new ProviderUnavailable("MONEYFUSION_INTERRUPTED");
-        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(address).timeout(Duration.ofSeconds(20)).header("Accept", "application/json");
+        if (keyed) request.header("moneyfusion-private-key", privateKey);
+        if (body == null) request.GET();
+        else request.header("Content-Type", "application/json").POST(ProviderHttp.json(body));
+        return ProviderHttp.send(http, request.build(), MAX_RESPONSE, "MONEYFUSION");
     }
 
     private static String token(String reference) {
@@ -260,16 +225,6 @@ public final class MoneyFusionProvider implements PaymentProvider {
     private static String ours(String reference) {
         if (reference == null || !reference.matches(UUID)) throw new IllegalArgumentException("MONEYFUSION_REFERENCE");
         return reference;
-    }
-
-    private static long positive(long amountXaf) {
-        if (amountXaf <= 0) throw new IllegalArgumentException("MONEYFUSION_AMOUNT");
-        return amountXaf;
-    }
-
-    private static String text(String description) {
-        String clean = description == null ? "WAKA" : description.replaceAll("[\\p{Cntrl}]", " ").strip();
-        return clean.isEmpty() ? "WAKA" : clean.substring(0, Math.min(clean.length(), 60));
     }
 
     /** MoneyFusion's examples use the national number: 6XXXXXXXX for Cameroon. */

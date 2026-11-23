@@ -1,11 +1,9 @@
 package com.waka.finance;
 
-import java.io.IOException;
-import java.math.BigDecimal;
+import com.waka.finance.ProviderHttp.Reply;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -44,7 +42,7 @@ public final class CamPayProvider implements PaymentProvider {
     /** Live address to confirm in the CamPay account once it goes live; the documentation only shows the demo one. */
     public static final URI LIVE = URI.create("https://www.campay.net");
     private static final int MAX_RESPONSE = 262144;
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = ProviderHttp.JSON;
     private static final String UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
     private static final String REFERENCE = "[0-9A-Za-z-]{8,64}";
 
@@ -73,7 +71,7 @@ public final class CamPayProvider implements PaymentProvider {
         this.token = token;
         this.webhookKey = webhookKey.getBytes(StandardCharsets.UTF_8);
         this.clock = clock;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
+        this.http = ProviderHttp.client();
     }
 
     @Override public String name() { return "campay"; }
@@ -81,10 +79,10 @@ public final class CamPayProvider implements PaymentProvider {
     @Override
     public Started collect(String reference, long amountXaf, String channel, String phone, String description) throws ProviderUnavailable {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("amount", Long.toString(positive(amountXaf)));
+        body.put("amount", Long.toString(ProviderHttp.positive(amountXaf, "CAMPAY")));
         body.put("currency", "XAF");
         body.put("from", international(phone));
-        body.put("description", text(description));
+        body.put("description", ProviderHttp.label(description, 100));
         body.put("external_reference", ours(reference));
         return start("/api/collect/", body);
     }
@@ -93,9 +91,9 @@ public final class CamPayProvider implements PaymentProvider {
     @Override
     public Started send(String reference, long amountXaf, String channel, String phone, String description) throws ProviderUnavailable {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("amount", Long.toString(positive(amountXaf)));
+        body.put("amount", Long.toString(ProviderHttp.positive(amountXaf, "CAMPAY")));
         body.put("to", international(phone));
-        body.put("description", text(description));
+        body.put("description", ProviderHttp.label(description, 100));
         body.put("external_reference", ours(reference));
         return start("/api/withdraw/", body);
     }
@@ -204,63 +202,20 @@ public final class CamPayProvider implements PaymentProvider {
             default -> throw new ProviderUnavailable("CAMPAY_STATUS_UNKNOWN");
         };
         String currency = tx.path("currency").isString() ? tx.path("currency").asString() : null;
-        return new Status(state, wholeXaf(tx.path("amount")), currency);
-    }
-
-    /** CamPay writes amounts as "100" or "100.00"; anything that is not a whole number of francs is not trusted. */
-    static Long wholeXaf(JsonNode amount) {
-        try {
-            BigDecimal value = amount.isNumber() ? amount.decimalValue()
-                    : amount.isString() && amount.asString().matches("[0-9]{1,12}(\\.[0-9]{1,2})?") ? new BigDecimal(amount.asString()) : null;
-            if (value == null || value.signum() <= 0) return null;
-            return value.stripTrailingZeros().scale() <= 0 ? value.longValueExact() : null;
-        } catch (ArithmeticException notWhole) {
-            return null;
-        }
-    }
-
-    private record Reply(int status, JsonNode body) {
-        boolean ok() { return status >= 200 && status < 300; }
+        return new Status(state, ProviderHttp.wholeXaf(tx.path("amount")), currency);
     }
 
     private Reply call(String path, Object body) throws ProviderUnavailable {
-        try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(20))
-                    .header("Accept", "application/json").header("Authorization", "Token " + token);
-            if (body == null) {
-                request.GET();
-            } else {
-                request.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body)));
-            }
-            HttpResponse<java.io.InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-            byte[] raw;
-            try (var in = response.body()) { raw = in.readNBytes(MAX_RESPONSE + 1); }
-            if (raw.length > MAX_RESPONSE) throw new ProviderUnavailable("CAMPAY_RESPONSE_TOO_LARGE");
-            JsonNode json;
-            try { json = raw.length == 0 ? JSON.createObjectNode() : JSON.readTree(raw); }
-            catch (JacksonException unreadable) { json = JSON.createObjectNode(); }
-            return new Reply(response.statusCode(), json);
-        } catch (IOException error) {
-            throw new ProviderUnavailable("CAMPAY_UNREACHABLE");
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new ProviderUnavailable("CAMPAY_INTERRUPTED");
-        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json").header("Authorization", "Token " + token);
+        if (body == null) request.GET();
+        else request.header("Content-Type", "application/json").POST(ProviderHttp.json(body));
+        return ProviderHttp.send(http, request.build(), MAX_RESPONSE, "CAMPAY");
     }
 
     private static String ours(String reference) {
         if (reference == null || !reference.matches(UUID)) throw new IllegalArgumentException("CAMPAY_REFERENCE");
         return reference;
-    }
-
-    private static long positive(long amountXaf) {
-        if (amountXaf <= 0) throw new IllegalArgumentException("CAMPAY_AMOUNT");
-        return amountXaf;
-    }
-
-    private static String text(String description) {
-        String clean = description == null ? "WAKA" : description.replaceAll("[\\p{Cntrl}]", " ").strip();
-        return clean.isEmpty() ? "WAKA" : clean.substring(0, Math.min(clean.length(), 100));
     }
 
     /** CamPay expects the country code without the plus: 2376XXXXXXXX. */

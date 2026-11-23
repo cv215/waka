@@ -1,11 +1,10 @@
 package com.waka.finance;
 
-import java.io.IOException;
+import com.waka.finance.ProviderHttp.Reply;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -33,7 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class NotchPayProvider implements PaymentProvider {
     private static final URI PRODUCTION = URI.create("https://api.notchpay.co");
     private static final int MAX_RESPONSE = 65536;
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = ProviderHttp.JSON;
     private static final Set<String> DONE = Set.of("complete", "completed", "success", "successful");
     private static final Set<String> FAILED = Set.of("failed", "canceled", "cancelled", "expired", "rejected", "abandoned");
 
@@ -56,7 +55,7 @@ public final class NotchPayProvider implements PaymentProvider {
         this.publicKey = publicKey;
         this.privateKey = privateKey;
         this.hashKey = hashKey.getBytes(StandardCharsets.US_ASCII);
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
+        this.http = ProviderHttp.client();
     }
     private static boolean key(String value) { return value != null && value.matches("[A-Za-z0-9_.-]{8,200}"); }
 
@@ -137,34 +136,13 @@ public final class NotchPayProvider implements PaymentProvider {
 
     // ---- HTTP ----
 
-    private record Reply(int status, JsonNode body) {
-        boolean ok() { return status >= 200 && status < 300; }
-    }
-
     private Reply call(String method, String path, Object body, boolean grant) throws ProviderUnavailable {
-        try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(15))
-                    .header("Accept", "application/json").header("Authorization", publicKey);
-            if (grant) request.header("X-Grant", privateKey);
-            if (body == null) {
-                request.method(method, HttpRequest.BodyPublishers.noBody());
-            } else {
-                request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body)));
-            }
-            HttpResponse<java.io.InputStream> response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-            byte[] raw;
-            try (var in = response.body()) { raw = in.readNBytes(MAX_RESPONSE + 1); }
-            if (raw.length > MAX_RESPONSE) throw new ProviderUnavailable("NOTCHPAY_RESPONSE_TOO_LARGE");
-            JsonNode json;
-            try { json = raw.length == 0 ? JSON.createObjectNode() : JSON.readTree(raw); }
-            catch (JacksonException unreadable) { json = JSON.createObjectNode(); }
-            return new Reply(response.statusCode(), json);
-        } catch (IOException error) {
-            throw new ProviderUnavailable("NOTCHPAY_UNREACHABLE");
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new ProviderUnavailable("NOTCHPAY_INTERRUPTED");
-        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(15))
+                .header("Accept", "application/json").header("Authorization", publicKey);
+        if (grant) request.header("X-Grant", privateKey);
+        if (body == null) request.method(method, HttpRequest.BodyPublishers.noBody());
+        else request.header("Content-Type", "application/json").method(method, ProviderHttp.json(body));
+        return ProviderHttp.send(http, request.build(), MAX_RESPONSE, "NOTCHPAY");
     }
 
     private static Status status(Reply reply, String field) throws ProviderUnavailable {
