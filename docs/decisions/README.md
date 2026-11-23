@@ -64,6 +64,14 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
   - la démo accepte au plus **100 F** par paiement ; à 101 F et au-delà, elle répond 400 sans message. Une recharge WAKA commence à 500 F, donc la démo ne peut pas être essayée de bout en bout depuis l'application ;
   - un paiement de 25 F passe de `PENDING` à `SUCCESSFUL` en moins d'une minute, mais la démo renvoie `amount: "0.00"`. WAKA n'accepte un paiement que si CamPay confirme le montant exact : un paiement sans montant confirmé est mis en vérification, jamais crédité. **À demander à CamPay** : le vrai montant est-il renvoyé en production ?
 
+23 novembre 2026, décision du fondateur : **SasPay** devient le prestataire de paiement. MoneyFusion, CamPay, Fapshi et Notch Pay restent branchés en réserve.
+- Contrat lu le 23 novembre sur docs.saspay.me : une clé secrète (`sk_test_` en bac à sable, `sk_live_` en réel), paiement `POST /payments/softpay/` (demande sur le téléphone, ou page SasPay quand `checkout_url` est rempli, par exemple Orange Money), statut `GET /payments/{id}/verify/`, retraits `POST /payouts/initialize/`, réseaux `mtn_cm` et `orange_cm`.
+- **Mieux protégé que MoneyFusion** : clé contre les doublons (`Idempotency-Key`, WAKA y met son propre identifiant et renvoie exactement la même demande si la réponse se perd), notifications signées (HMAC-SHA256, refusées après 5 minutes), bac à sable gratuit sans papiers.
+- **Choix prudents de l'équipe, à vérifier** :
+  - WAKA demande que les frais SasPay soient pris de son côté (`DEDUCTED` pour les paiements, `ADD_ON` pour les retraits), pour que le client paie exactement le prix et que le chauffeur reçoive tout son retrait. Si le compte n'autorise pas ce choix et que le client paie plus, le paiement part en vérification, jamais crédité ;
+  - SasPay exige un e-mail client que WAKA ne collecte pas : une adresse de contact fixe, choisie par le fondateur, est envoyée ;
+  - **à vérifier avant le réel** : les frais pour le Cameroun (non publiés), si un particulier peut passer en réel (la documentation ne montre que des comptes d'entreprise, avec RCCM), et si MTN ou Orange Cameroun demandent un code à usage unique.
+
 23 novembre 2026, décision du fondateur : **MoneyFusion** remplace CamPay, car CamPay exige une entreprise immatriculée (RCCM) pour passer en réel. CamPay, Fapshi et Notch Pay restent branchés en réserve.
 - Lu le 23 novembre sur moneyfusion.net (FAQ) : un particulier peut utiliser MoneyFusion, sans entreprise. Cameroun : MTN et Orange, 3 % de frais affichés (page des tarifs). Codes de retrait lus dans `GET /api/v1/withdraw/methods` : pays `cm`, `mtn-cm`, `orange-cm`, monnaie XAF.
 - Contrat lu dans docs.moneyfusion.net : le paiement renvoie une **page de paiement** que l'application ouvre ; le statut se lit avec `paiementNotif/{token}` (`pending`, `paid`, `failure`, `no paid`) ; les retraits utilisent la clé privée `moneyfusion-private-key`.

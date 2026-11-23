@@ -303,6 +303,13 @@ public class LocalAppAssembly {
      * when its keys are given; otherwise every payment succeeds at once, for trying the screens.
      */
     private static PaymentProvider provider() {
+        // SasPay first (tools/save-saspay-keys.ps1): sandbox with an sk_test_ key, REAL money with an sk_live_ key.
+        String saspay = System.getenv("WAKA_SASPAY_KEY");
+        if (saspay != null && !saspay.isBlank()) {
+            String secret = System.getenv("WAKA_SASPAY_WEBHOOK_SECRET");
+            return new com.waka.finance.SasPayProvider(saspay.strip(), secret == null || secret.isBlank() ? null : secret.strip(),
+                    System.getenv("WAKA_SASPAY_EMAIL") == null ? null : System.getenv("WAKA_SASPAY_EMAIL").strip());
+        }
         String fusion = System.getenv("WAKA_MONEYFUSION_PAY_URL");
         if (fusion != null && !fusion.isBlank()) {
             String key = System.getenv("WAKA_MONEYFUSION_PRIVATE_KEY");

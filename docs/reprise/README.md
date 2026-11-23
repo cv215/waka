@@ -161,7 +161,8 @@ Chaque clé s'enregistre sur **son propre PC** avec le script indiqué. Elle est
 
 | Service | Rôle | État au 23 novembre 2026 | Script | Compte |
 |---|---|---|---|---|
-| **MoneyFusion** | Paiements et retraits Mobile Money (MTN, Orange), 3 % de frais | **Retenu.** Branché et testé avec un faux serveur. **Aucun mode d'essai : tout prend du vrai argent.** L'adresse IP du serveur doit être déclarée dans l'application MoneyFusion | `tools\save-moneyfusion-keys.ps1` | au nom du fondateur, en création |
+| **SasPay** | Paiements et retraits Mobile Money (MTN, Orange) | **Retenu.** Branché et testé avec un faux serveur. Bac à sable gratuit sans papiers (`sk_test_`) ; `sk_live_` = vrai argent. Frais du Cameroun et conditions pour un particulier à confirmer | `tools\save-saspay-keys.ps1` | à créer |
+| MoneyFusion | Paiements et retraits Mobile Money (MTN, Orange), 3 % de frais | En réserve. Branché et testé avec un faux serveur. **Aucun mode d'essai : tout prend du vrai argent.** L'adresse IP du serveur doit être déclarée dans l'application MoneyFusion | `tools\save-moneyfusion-keys.ps1` | au nom du fondateur, en création |
 | CamPay | Paiements (démo seulement) | En réserve : le réel exige une entreprise (RCCM) | `tools\save-campay-keys.ps1` | fondateur |
 | Fapshi | Paiements (bac à sable) | En réserve : compte réel non validé | `tools\save-fapshi-keys.ps1` | fondateur |
 | Notch Pay | Paiements | En réserve, jamais essayé en vrai | (clés dans l'environnement) | aucun |
@@ -172,7 +173,7 @@ Chaque clé s'enregistre sur **son propre PC** avec le script indiqué. Elle est
 
 Pour travailler sur ces services, deux possibilités : le fondateur donne accès à ses tableaux de bord, ou la personne qui reprend crée ses propres comptes d'essai. **Jamais d'envoi de clé par message.**
 
-L'ordre de priorité au démarrage local est : MoneyFusion, puis CamPay, puis Fapshi, puis les paiements simulés. Pour les SMS : Cooms, puis SmsPro, puis le fichier local. Le démarrage affiche le mode choisi (« Paiements : ... », « SMS : ... »).
+L'ordre de priorité au démarrage local est : SasPay, puis MoneyFusion, puis CamPay, puis Fapshi, puis les paiements simulés. Pour les SMS : Cooms, puis SmsPro, puis le fichier local. Le démarrage affiche le mode choisi (« Paiements : ... », « SMS : ... »).
 
 ---
 
@@ -180,21 +181,22 @@ L'ordre de priorité au démarrage local est : MoneyFusion, puis CamPay, puis Fa
 
 Par ordre de priorité, au 23 novembre 2026 :
 
-1. **MoneyFusion** : le fondateur finit de créer l'application, avec le nom WAKA, le logo `apps/mobile/web/icons/Icon-512.png` et l'IP du serveur, puis enregistre le lien API et la clé privée. Au **premier vrai paiement** (500 F), vérifier que le montant renvoyé (`Montant`) est bien le prix complet et non le montant après frais. Sinon, ajuster `MoneyFusionProvider.payment`. Les choix prudents à confirmer sont listés dans [docs/decisions/README.md](../decisions/README.md).
-2. **Hébergement** : le choix est en attente du fondateur. Deux pistes :
+1. **SasPay** : créer le compte bac à sable, enregistrer la clé `sk_test_` et faire un essai complet (recharge, paiement, retrait) avec les numéros d'essai. Puis demander à SasPay les frais pour le Cameroun et les conditions pour passer en réel. Au premier vrai paiement, vérifier que `debited_amount` est bien le prix exact.
+2. **MoneyFusion** (en réserve) : le fondateur finit de créer l'application, avec le nom WAKA, le logo `apps/mobile/web/icons/Icon-512.png` et l'IP du serveur, puis enregistre le lien API et la clé privée. Au **premier vrai paiement** (500 F), vérifier que le montant renvoyé (`Montant`) est bien le prix complet et non le montant après frais. Sinon, ajuster `MoneyFusionProvider.payment`. Les choix prudents à confirmer sont listés dans [docs/decisions/README.md](../decisions/README.md).
+3. **Hébergement** : le choix est en attente du fondateur. Deux pistes :
    - Oracle Cloud « Always Free » : gratuit, 2 processeurs, 12 Go, IP fixe, carte bancaire demandée pour vérification ;
    - OVHcloud VPS-1 : environ 5,40 € par mois sans engagement.
 
-   Dans les deux cas, prévoir Java, MySQL, le pare-feu, les sauvegardes et HTTPS (Cloudflare), puis déclarer l'IP chez MoneyFusion.
-3. **SMS réels** : essayer Cooms avec un vrai numéro camerounais (démarrer sans `-CodesInFile`). L'API SMS d'Orange ferme le 1er décembre 2026.
-4. **Messagerie dans l'application** (demande du fondateur), avec les réglages par défaut retenus :
+   Dans les deux cas, prévoir Java, MySQL, le pare-feu, les sauvegardes et HTTPS (Cloudflare), puis déclarer l'IP chez le prestataire de paiement.
+4. **SMS réels** : essayer Cooms avec un vrai numéro camerounais (démarrer sans `-CodesInFile`). L'API SMS d'Orange ferme le 1er décembre 2026.
+5. **Messagerie dans l'application** (demande du fondateur), avec les réglages par défaut retenus :
    - entre chauffeur et client : ouverte dès l'acceptation de la course, active jusqu'à 1 h après la fin, puis en lecture seule, sans numéros de téléphone ;
    - un fil chauffeur et support WAKA ;
    - texte seulement, 500 caractères au plus, réponses rapides.
-5. **Play Store** : compte développeur Google (25 $ une fois, accord du fondateur nécessaire), signature de l'application, fiche, **politique de confidentialité**.
-6. **Version web iPhone** en ligne, sur Cloudflare.
-7. **Loi camerounaise sur les données personnelles (2024)** : vérifier les conditions de stockage hors du Cameroun avant le lancement public.
-8. Plus tard : connexion par Google ou par code e-mail (optionnelle), deuxième serveur quand le trafic le demandera.
+6. **Play Store** : compte développeur Google (25 $ une fois, accord du fondateur nécessaire), signature de l'application, fiche, **politique de confidentialité**.
+7. **Version web iPhone** en ligne, sur Cloudflare.
+8. **Loi camerounaise sur les données personnelles (2024)** : vérifier les conditions de stockage hors du Cameroun avant le lancement public.
+9. Plus tard : connexion par Google ou par code e-mail (optionnelle), deuxième serveur quand le trafic le demandera.
 
 Le détail des décisions déjà prises et des questions encore ouvertes est dans [docs/decisions/README.md](../decisions/README.md).
 
