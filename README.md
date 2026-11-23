@@ -6,6 +6,8 @@ application de convoiturage
 Le socle Spring Boot/MySQL et Flutter Android est construit et verifie localement. La validation de format du telephone et le moteur de prix partage/VIP sont realises. Les protections OTP persistantes et un adaptateur SMS candidat sont prepares et testes sans activation de fournisseur ; aucun compte, SMS, session ou paiement reel. Voir [backend/README.md](backend/README.md) pour les procedures et leurs limites. L'application complete n'est pas encore ouverte aux utilisateurs.
 
 
+**Reprendre le projet sur un nouveau PC** : suivre le [guide de reprise](docs/reprise/README.md) (installation, lancement, règles, reste à faire).
+
 ## Organisation du projet
 
 Correction locale du 15 octobre 2026 : cette copie travaille sur cv215/waka, depot partage avec le fondateur. Historique et texte initial preserves. Les fichiers prepares ne sont pas encore publies.

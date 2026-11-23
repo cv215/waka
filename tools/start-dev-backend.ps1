@@ -17,6 +17,8 @@ $wakaJar = Join-Path $wakaRepository 'backend\target\waka-backend-0.0.1-SNAPSHOT
 $wakaJava = Join-Path $JavaHome 'bin\java.exe'
 $wakaKeytool = Join-Path $JavaHome 'bin\keytool.exe'
 $wakaPrivateHelper = Join-Path $PrivateRoot 'mysql-local\mysql-common.ps1'
+# Poste installe avec tools\mysql\install-mysql.ps1 : les outils communs du depot remplacent l'ancien helper prive.
+if (-not (Test-Path -LiteralPath $wakaPrivateHelper)) { $wakaPrivateHelper = Join-Path $PSScriptRoot 'mysql\mysql-common.ps1' }
 $wakaCa = Join-Path $PrivateRoot 'mysql-local\data\ca.pem'
 foreach ($wakaRequired in @($wakaJar, $wakaJava, $wakaKeytool, $wakaPrivateHelper, $wakaCa)) {
     if (-not (Test-Path -LiteralPath $wakaRequired -PathType Leaf)) {

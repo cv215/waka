@@ -2,6 +2,8 @@
 
 Le depot de travail est cv215/waka. Correction locale du 15 octobre 2026 : historique recu preserve ; aucune publication effectuee. Le README original est conserve et complete.
 
+**Nouvelle personne sur le projet** : commencer par le [guide de reprise](reprise/README.md).
+
 Lire les [regles](specifications/WAKA_regles_adoptees.md), les trois parcours, [ecrans](specifications/WAKA_fiches_ecrans.md), [donnees](specifications/WAKA_modele_donnees.md), [etats](specifications/WAKA_etats_et_transitions.md), [API](specifications/WAKA_contrats_api.md), [droits](specifications/WAKA_acces_et_conservation.md), puis [architecture](architecture/WAKA_architecture_minimale.md).
 
 Les sources documentaires completes, bilans, budget et Word restent hors de ce depot public. Les copies relatives conservent les regles et limites. Pendant leur revue, corriger les originaux puis reporter ici pour eviter deux references divergentes. Aucun original confidentiel ou export de production ici.

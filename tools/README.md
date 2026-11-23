@@ -13,7 +13,7 @@ Ce mode sert seulement aux essais sur ce poste (profil `dev`, adresse 127.0.0.1)
 - **Cartes** : les distances sont estimées en ligne droite, multipliées par 1,3 ;
 - **Paiements** : ils sont simulés (tout réussit), sauf si des clés de bac à sable Fapshi ont été enregistrées.
 
-1. Démarrer MySQL : `<dossier privé>\mysql-local\start-mysql.ps1`.
+1. Démarrer MySQL : `tools\mysql\start-mysql.ps1` sur un poste installé avec `tools\mysql\install-mysql.ps1` (voir le [guide de reprise](../docs/reprise/README.md)), ou `<dossier privé>\mysql-local\start-mysql.ps1` sur le poste du fondateur.
 2. Compiler le serveur (`tools\build-backend.ps1`), puis lancer :
    `tools\start-dev-backend.ps1 -JavaHome "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot" -LocalApp`
 3. Installer l'APK de test sur l'émulateur Android. L'application appelle `http://10.0.2.2:8080`.
