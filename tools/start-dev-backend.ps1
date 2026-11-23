@@ -7,7 +7,9 @@
     # paiements simules (ou bac a sable Fapshi si ses cles privees existent). Jamais pour de vrais utilisateurs.
     [switch]$LocalApp,
     # Avec -LocalApp : compte qui devient le premier agent de la base locale (toutes les fonctions, une seule fois).
-    [string]$FounderAccount
+    [string]$FounderAccount,
+    # Avec -LocalApp : aucun SMS meme si Cooms ou SmsPro sont enregistres ; les codes restent dans le fichier local.
+    [switch]$CodesInFile
 )
 $ErrorActionPreference = 'Stop'
 $wakaRepository = Split-Path -Parent $PSScriptRoot
@@ -81,6 +83,7 @@ try {
         foreach ($wakaName in $wakaFapshiNames) {
             $wakaFile = Join-Path $wakaSecrets ($wakaName + '.dpapi')
             if (-not (Test-Path -LiteralPath $wakaFile)) { continue }
+            if ($CodesInFile -and $wakaName -match '^WAKA_(COOMS|SMSPRO)_') { continue }
             $wakaPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-Content -LiteralPath $wakaFile | ConvertTo-SecureString))
             try { [Environment]::SetEnvironmentVariable($wakaName, [Runtime.InteropServices.Marshal]::PtrToStringBSTR($wakaPointer), 'Process') }
             finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($wakaPointer) }
@@ -88,7 +91,8 @@ try {
         Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_CAMPAY_TOKEN.dpapi')) { 'Paiements : CamPay (demo)' } elseif (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_FAPSHI_COLLECT_USER.dpapi')) { 'Paiements : bac a sable Fapshi' } else { 'Paiements : simules' }))
         Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_GOOGLE_SERVER_KEY.dpapi')) { 'Distances : Google (par la route)' } else { 'Distances : vol d oiseau x 1,3' }))
         $wakaSmsPro = Join-Path $wakaSecrets 'WAKA_SMSPRO_KEY.dpapi'
-        if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_COOMS_KEY.dpapi')) { Write-Host 'SMS : Cooms, vrais SMS pris sur le credit Cooms' }
+        if ($CodesInFile) { Write-Host 'SMS : aucun envoi (-CodesInFile), codes dans le fichier local' }
+        elseif (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_COOMS_KEY.dpapi')) { Write-Host 'SMS : Cooms, vrais SMS pris sur le credit Cooms' }
         elseif (-not (Test-Path -LiteralPath $wakaSmsPro)) { Write-Host 'SMS : aucun envoi, codes dans le fichier local' }
         elseif ([Environment]::GetEnvironmentVariable('WAKA_SMSPRO_KEY', 'Process') -clike 'smspro_test_*') { Write-Host 'SMS : SmsPro en essai (rien n est envoye), codes aussi dans le fichier local' }
         else { Write-Host 'SMS : SmsPro, vrais SMS factures' }
