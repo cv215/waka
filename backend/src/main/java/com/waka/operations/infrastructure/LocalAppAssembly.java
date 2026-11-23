@@ -2,6 +2,7 @@ package com.waka.operations.infrastructure;
 
 import com.waka.drivers.DriverAccessService;
 import com.waka.drivers.SubscriptionService;
+import com.waka.finance.CamPayProvider;
 import com.waka.finance.FapshiProvider;
 import com.waka.geo.GooglePlacesProvider;
 import com.waka.geo.GoogleRoutesProvider;
@@ -296,8 +297,15 @@ public class LocalAppAssembly {
         return executor;
     }
 
-    /** Fapshi sandbox when its keys are given; otherwise every payment succeeds at once, for trying the screens. */
+    /**
+     * CamPay demo when its token and webhook key are given (tools/save-campay-keys.ps1); otherwise the Fapshi sandbox
+     * when its keys are given; otherwise every payment succeeds at once, for trying the screens.
+     */
     private static PaymentProvider provider() {
+        String token = System.getenv("WAKA_CAMPAY_TOKEN");
+        if (token != null && !token.isBlank()) {
+            return new CamPayProvider(false, token.strip(), System.getenv("WAKA_CAMPAY_WEBHOOK_KEY"));
+        }
         String user = System.getenv("WAKA_FAPSHI_COLLECT_USER");
         if (user == null) return new SimulatedProvider();
         return new FapshiProvider(false, new FapshiProvider.Credentials(user, System.getenv("WAKA_FAPSHI_COLLECT_KEY")),

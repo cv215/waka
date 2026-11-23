@@ -55,3 +55,8 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
   - pas de groupe entre chauffeurs (modération trop lourde).
 
 23 novembre 2026 : **Cooms** remplace SmsPro pour les codes de connexion. SmsPro exige un NIU que le fondateur n'a pas ; Cooms demande seulement un e-mail et offre 100 SMS. Le site de Cooms n'indique ni la société ni l'adresse : c'est un risque connu, et SmsPro reste prêt dans le code. Recharges Cooms à partir de 3 000 F, seulement avec l'accord du fondateur sur le montant.
+
+23 novembre 2026, décision du fondateur : **CamPay** devient le prestataire de paiement, car Fapshi n'a pas validé le compte réel (seule la démo reste ouverte). Fapshi et Notch Pay restent branchés en réserve.
+- Contrat lu le 23 novembre dans la documentation Postman de CamPay : `collect`, `withdraw`, `transaction/{reference}`, jeton permanent, notifications signées (JWT HS256 avec la clé de webhook) et jamais renvoyées.
+- CamPay évite les doublons grâce à `external_reference` : WAKA y met son propre identifiant et, si une réponse se perd, renvoie exactement la même demande, jamais une nouvelle.
+- **À confirmer avant le passage en réel** : l'adresse de production (seule `demo.campay.net` est documentée), les frais, et les documents demandés à un particulier pour passer en réel. Un guide tiers cite le RCCM et des informations fiscales.

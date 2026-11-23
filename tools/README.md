@@ -49,6 +49,8 @@ Le câble doit rester branché pendant l'essai ; après un rebranchement, relanc
 - avec une clé d'essai `smspro_test_…`, rien ne part et rien n'est facturé ; le code s'écrit aussi dans le fichier des codes ;
 - avec une clé réelle, de **vrais SMS facturés** partent. La fenêtre du serveur affiche le mode utilisé.
 
+**Paiements CamPay (retenu le 23 novembre 2026, démo)** : sur https://demo.campay.net, créer une application, puis lancer `tools\save-campay-keys.ps1` et coller le **jeton d'accès permanent** et la **clé de webhook** de l'application. Au démarrage suivant avec `-LocalApp`, les paiements passent par la démo CamPay (aucun vrai argent). Seuls ces numéros de test sont acceptés en démo : `237677777777` (MTN, réussit), `237677777770` (MTN, échoue), `237699999999` (Orange, réussit), `237699999990` (Orange, échoue). CamPay passe avant Fapshi si les deux sont enregistrés.
+
 **Clés de bac à sable Fapshi** : lancer `tools\save-fapshi-keys.ps1` et coller chaque valeur quand elle est demandée. Les clés sont protégées par Windows pour votre compte, jamais affichées et jamais versées dans Git. Au démarrage suivant avec `-LocalApp`, les paiements passent par le bac à sable Fapshi.
 
 La clé maîtresse locale est créée une seule fois dans `<dossier privé>\Secrets\local-app-master.dpapi`. Il ne faut pas la supprimer : les données chiffrées de la base locale en dépendent.
