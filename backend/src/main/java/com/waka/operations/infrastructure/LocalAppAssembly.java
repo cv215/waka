@@ -298,10 +298,17 @@ public class LocalAppAssembly {
     }
 
     /**
-     * CamPay demo when its token and webhook key are given (tools/save-campay-keys.ps1); otherwise the Fapshi sandbox
+     * MoneyFusion (REAL money, no sandbox) when its payment address is given (tools/save-moneyfusion-keys.ps1); otherwise
+     * the CamPay demo when its token and webhook key are given (tools/save-campay-keys.ps1); otherwise the Fapshi sandbox
      * when its keys are given; otherwise every payment succeeds at once, for trying the screens.
      */
     private static PaymentProvider provider() {
+        String fusion = System.getenv("WAKA_MONEYFUSION_PAY_URL");
+        if (fusion != null && !fusion.isBlank()) {
+            String key = System.getenv("WAKA_MONEYFUSION_PRIVATE_KEY");
+            // This computer cannot be reached from outside: no notification address, pending items are looked up every 30 s.
+            return new com.waka.finance.MoneyFusionProvider(fusion.strip(), key == null || key.isBlank() ? null : key.strip(), null);
+        }
         String token = System.getenv("WAKA_CAMPAY_TOKEN");
         if (token != null && !token.isBlank()) {
             return new CamPayProvider(false, token.strip(), System.getenv("WAKA_CAMPAY_WEBHOOK_KEY"));

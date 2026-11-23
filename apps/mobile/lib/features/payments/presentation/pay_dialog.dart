@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/presentation/waka_page.dart';
 
 import '../../identity/application/login_flow.dart';
@@ -35,7 +36,7 @@ String? cameroonPhone(String input) {
 /// except for a top-up.
 class PayDialog extends StatefulWidget {
   const PayDialog({super.key, required this.login, required this.purpose, required this.amountXaf, this.targetId,
-      this.title = 'Payer', this.pollEvery = const Duration(seconds: 4)});
+      this.title = 'Payer', this.pollEvery = const Duration(seconds: 4), this.openPage});
   final LoginFlow login;
   final String purpose;
   final String? targetId;
@@ -43,6 +44,8 @@ class PayDialog extends StatefulWidget {
   final String title;
   /// Null in tests: the payer then checks by hand.
   final Duration? pollEvery;
+  /// Opens the provider's payment page; the phone's browser by default.
+  final Future<bool> Function(Uri page)? openPage;
   @override
   State<PayDialog> createState() => _PayDialogState();
 }
@@ -59,6 +62,8 @@ class _PayDialogState extends State<PayDialog> {
   bool _busy = false;
   Timer? _poll;
   int _polls = 0;
+  /// The provider's page is opened once by itself; after that, by the button.
+  String? _openedFor;
 
   bool get _topup => widget.purpose == 'topup';
 
@@ -120,6 +125,11 @@ class _PayDialogState extends State<PayDialog> {
   void _show(PaymentView payment) {
     if (!mounted) return;
     setState(() => _payment = payment);
+    final page = payment.checkoutUrl;
+    if (payment.pending && page != null && _openedFor != payment.paymentId) {
+      _openedFor = payment.paymentId;
+      _openPage(page);
+    }
     _poll?.cancel();
     final every = widget.pollEvery;
     // About two minutes of automatic checks; after that the payer checks by hand.
@@ -128,7 +138,19 @@ class _PayDialogState extends State<PayDialog> {
     }
   }
 
+  Future<void> _openPage(Uri page) async {
+    var opened = false;
+    try {
+      opened = await (widget.openPage ?? ((Uri l) => launchUrl(l, mode: LaunchMode.externalApplication)))(page);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && mounted) setState(() => _message = 'La page de paiement ne s’est pas ouverte. Touche « Ouvrir la page de paiement ».');
+  }
+
   String _status(PaymentView p) => switch (p.state) {
+    'pending' when p.checkoutUrl != null => 'Termine le paiement de ${p.chargedXaf} F sur la page MoneyFusion : choisis MTN ou Orange '
+        'puis confirme avec ton code secret Mobile Money. WAKA vérifie automatiquement…',
     'pending' => 'Confirme le paiement de ${p.chargedXaf} F sur ton téléphone avec ton code secret Mobile Money. '
         'WAKA vérifie automatiquement…',
     'succeeded' when p.applied || _topup => _topup ? 'Recharge reçue : ${p.chargedXaf} F ajoutés à ton crédit WAKA.' : 'Paiement confirmé.',
@@ -170,10 +192,12 @@ class _PayDialogState extends State<PayDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(payment), child: Text(payment == null ? 'Annuler' : 'Fermer')),
         if (payment == null) FilledButton(onPressed: _busy ? null : _pay, child: Text('Payer ${widget.amountXaf} F')),
+        if (payment != null && payment.pending && payment.checkoutUrl != null)
+          OutlinedButton(onPressed: () => _openPage(payment.checkoutUrl!), child: const Text('Ouvrir la page de paiement')),
         if (payment != null && payment.pending) FilledButton(onPressed: _busy ? null : _check, child: const Text('Vérifier')),
         // Refused or cancelled on the phone (wrong number, not enough money): nothing was taken, try again here.
         if (payment != null && payment.state == 'failed')
-          FilledButton(onPressed: _busy ? null : () => setState(() { _payment = null; _polls = 0; _key = randomLoginId(); }),
+          FilledButton(onPressed: _busy ? null : () => setState(() { _payment = null; _polls = 0; _key = randomLoginId(); _openedFor = null; }),
               child: const Text('Réessayer')),
       ],
     );

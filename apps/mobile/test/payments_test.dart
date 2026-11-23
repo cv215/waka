@@ -6,6 +6,7 @@ import 'package:waka_mobile/features/identity/data/login_models.dart';
 import 'package:waka_mobile/features/identity/data/login_store.dart';
 import 'package:waka_mobile/features/identity/data/payment_models.dart';
 import 'package:waka_mobile/features/identity/data/vehicle_photo_models.dart';
+import 'package:waka_mobile/features/payments/presentation/pay_dialog.dart';
 import 'package:waka_mobile/features/payments/presentation/wallet_page.dart';
 import 'package:waka_mobile/features/voyages/presentation/voyages_page.dart';
 
@@ -19,11 +20,12 @@ class PayFixture extends VoyageFixture implements PaymentGateway {
   final calls = <String>[];
   final payments = <String, Map<String, Object?>>{};
   String nextState = 'pending';
+  String? nextPage;
 
   Map<String, Object?> paymentJson(String id, String purpose, String? target, String method, int amount, String state, bool applied) => {
     'paymentId': id, 'purpose': purpose, 'targetId': target, 'method': method, 'chargedXaf': amount, 'creditedXaf': amount,
     'feeXaf': 0, 'state': state, 'applied': applied, 'createdAt': iso(departure), 'settledAt': state == 'pending' ? null : iso(departure),
-    'idempotentReplay': false,
+    'idempotentReplay': false, 'checkoutUrl': state == 'pending' && !(method == 'credit' || method == 'earnings') ? nextPage : null,
   };
 
   @override
@@ -41,7 +43,7 @@ class PayFixture extends VoyageFixture implements PaymentGateway {
   @override
   Future<PaymentView> payment(LoginSession s, String c, String id) async {
     calls.add('check:$id');
-    final json = {...payments[id]!, 'state': 'succeeded', 'applied': payments[id]!['purpose'] != 'topup', 'settledAt': iso(departure)};
+    final json = {...payments[id]!, 'state': 'succeeded', 'checkoutUrl': null, 'applied': payments[id]!['purpose'] != 'topup', 'settledAt': iso(departure)};
     if (json['purpose'] == 'topup') credit += json['chargedXaf'] as int;
     payments[id] = json;
     return PaymentView.parse(json);
@@ -92,8 +94,13 @@ void main() {
   test('lecture stricte : champ en trop, état inconnu ou montant négatif refusés', () {
     final ok = {'paymentId': randomLoginId(), 'purpose': 'topup', 'targetId': null, 'method': 'cm.mtn', 'chargedXaf': 5000,
       'creditedXaf': 5000, 'feeXaf': 0, 'state': 'pending', 'applied': false, 'createdAt': iso(departure), 'settledAt': null,
-      'idempotentReplay': false};
+      'idempotentReplay': false, 'checkoutUrl': null};
     expect(PaymentView.parse(ok).pending, isTrue);
+    expect(PaymentView.parse({...ok, 'checkoutUrl': 'https://payin.moneyfusion.net/payment/Tk8aZ31q/Marchand'}).checkoutUrl?.host,
+        'payin.moneyfusion.net');
+    for (final page in ['http://payin.moneyfusion.net/x', 'https://moneyfusion.net.evil.example/x', 'javascript:alert(1)', 5]) {
+      expect(() => PaymentView.parse({...ok, 'checkoutUrl': page}), throwsA(isA<PhotoProblem>()), reason: '$page');
+    }
     expect(() => PaymentView.parse({...ok, 'phone': '+237670000000'}), throwsA(isA<PhotoProblem>()));
     expect(() => PaymentView.parse({...ok, 'state': 'paid'}), throwsA(isA<PhotoProblem>()));
     expect(() => PaymentView.parse({...ok, 'chargedXaf': -1}), throwsA(isA<PhotoProblem>()));
@@ -125,6 +132,27 @@ void main() {
     await tester.tap(find.text('Fermer'));
     await settle(tester);
     expect(find.text('7000 F'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    login.dispose();
+  });
+
+  testWidgets('MoneyFusion : la page de paiement s’ouvre une fois, puis par le bouton', (tester) async {
+    final opened = <Uri>[];
+    final (login, gateway) = await open(tester, (login) => Scaffold(body: PayDialog(login: login, purpose: 'topup', amountXaf: 5000,
+        pollEvery: null, openPage: (page) async { opened.add(page); return true; })));
+    gateway.nextPage = 'https://payin.moneyfusion.net/payment/Tk8aZ31q/Marchand';
+    await tester.enterText(find.byType(TextField), '670000000');
+    await tester.tap(find.text('Payer 5000 F'));
+    await settle(tester);
+    expect(opened.map((u) => u.toString()), ['https://payin.moneyfusion.net/payment/Tk8aZ31q/Marchand']);
+    expect(find.textContaining('Termine le paiement de 5000 F sur la page MoneyFusion'), findsOneWidget);
+    await tester.tap(find.text('Ouvrir la page de paiement'));
+    await settle(tester);
+    expect(opened, hasLength(2));
+    await tester.tap(find.text('Vérifier'));
+    await settle(tester);
+    expect(find.text('Recharge reçue : 5000 F ajoutés à ton crédit WAKA.'), findsOneWidget);
+    expect(find.text('Ouvrir la page de paiement'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     login.dispose();
   });

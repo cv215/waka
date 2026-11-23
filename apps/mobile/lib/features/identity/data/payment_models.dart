@@ -29,23 +29,36 @@ String _id(Object? v) => v is String && _uuid.hasMatch(v) ? v : _bad();
 String _in(Object? v, Set<String> allowed) => v is String && allowed.contains(v) ? v : _bad();
 
 class PaymentView {
-  const PaymentView(this.paymentId, this.purpose, this.targetId, this.method, this.chargedXaf, this.state, this.applied);
+  const PaymentView(this.paymentId, this.purpose, this.targetId, this.method, this.chargedXaf, this.state, this.applied,
+      {this.checkoutUrl});
   final String paymentId, purpose, method, state;
   final String? targetId;
+  /// The provider's own payment page (MoneyFusion): the payer chooses the operator and confirms there.
+  final Uri? checkoutUrl;
   final int chargedXaf;
   final bool applied;
   bool get pending => state == 'pending';
 
   static PaymentView parse(Object? value) {
     final v = _exact(value, const {'paymentId', 'purpose', 'targetId', 'method', 'chargedXaf', 'creditedXaf', 'feeXaf', 'state',
-      'applied', 'createdAt', 'settledAt', 'idempotentReplay'});
+      'applied', 'createdAt', 'settledAt', 'idempotentReplay', 'checkoutUrl'});
     _amount(v['creditedXaf']);
     _amount(v['feeXaf']);
     _time(v['createdAt']);
     _time(v['settledAt'], required: false);
     if (v['applied'] is! bool || v['idempotentReplay'] is! bool) _bad();
     return PaymentView(_id(v['paymentId']), _in(v['purpose'], paymentPurposes), v['targetId'] == null ? null : _id(v['targetId']),
-        _in(v['method'], paymentMethods), _amount(v['chargedXaf']), _in(v['state'], paymentStates), v['applied'] as bool);
+        _in(v['method'], paymentMethods), _amount(v['chargedXaf']), _in(v['state'], paymentStates), v['applied'] as bool,
+        checkoutUrl: _page(v['checkoutUrl']));
+  }
+
+  /// Only an https page of the provider is ever opened.
+  static Uri? _page(Object? v) {
+    if (v == null) return null;
+    final uri = v is String && v.length <= 300 ? Uri.tryParse(v) : null;
+    final host = uri?.host ?? '';
+    if (uri == null || uri.scheme != 'https' || !(host == 'moneyfusion.net' || host.endsWith('.moneyfusion.net'))) _bad();
+    return uri;
   }
 }
 

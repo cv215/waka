@@ -8,8 +8,13 @@ public interface PaymentProvider {
     enum State { PENDING, SUCCEEDED, FAILED }
     /** What the provider says now; amount and currency are null when it did not say. */
     record Status(State state, Long amountXaf, String currency) { }
-    /** The provider's reference, or null when the call failed before anything was created. */
-    record Started(String reference) { }
+    /**
+     * The provider's reference, or null when the call failed before anything was created. {@code checkoutUrl} is the
+     * provider's own payment page when the payer confirms there instead of on a push to the phone (MoneyFusion).
+     */
+    record Started(String reference, String checkoutUrl) {
+        public Started(String reference) { this(reference, null); }
+    }
 
     String name();
 

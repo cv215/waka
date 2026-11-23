@@ -289,6 +289,7 @@ Pour la revue, lire d’abord R01, les exemples R03, R05, R06 et R09. La défini
 Décisions du fondateur :
 - **Prestataire Fapshi**, ouvert avec un compte de particulier en attendant l'entreprise. Notch Pay reste branché comme solution de remplacement.
 - **Mise à jour du 23 novembre 2026** : Fapshi n'a pas validé le compte réel. Le prestataire retenu est désormais **CamPay** (démo branchée). Fapshi et Notch Pay restent en réserve. Les frais de CamPay sont à confirmer : les 3 % cités plus bas sont ceux de Fapshi.
+- **Mise à jour du 23 novembre 2026 (suite)** : CamPay exige une entreprise pour le réel. Le prestataire retenu est **MoneyFusion**, ouvert aux particuliers (3 % affichés pour MTN et Orange au Cameroun). Le payeur confirme sur la page de paiement MoneyFusion. CamPay, Fapshi et Notch Pay restent en réserve.
 - **Mobile Money MTN et Orange.** Orange Money sort de l'attente ; seuls les SMS y restent.
 - **Argent conservé dans l'application**, sans passer par une banque.
 - **Frais** : WAKA supporte les frais d'encaissement, et les frais apparaissent au retrait (voir plus bas).

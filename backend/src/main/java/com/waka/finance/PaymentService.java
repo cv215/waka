@@ -41,7 +41,8 @@ public final class PaymentService {
     private static final Set<String> CHANNELS = Set.of("cm.mtn", "cm.orange"), POCKETS = Set.of("credit", "earnings");
 
     public record PaymentView(UUID paymentId, String purpose, UUID targetId, String method, int chargedXaf, int creditedXaf,
-            int feeXaf, String state, boolean applied, Instant createdAt, Instant settledAt, boolean idempotentReplay) { }
+            int feeXaf, String state, boolean applied, Instant createdAt, Instant settledAt, boolean idempotentReplay,
+            String checkoutUrl) { }
     public record WithdrawalView(UUID withdrawalId, String pocket, String method, int amountXaf, int feeXaf, String state, Instant createdAt,
             Instant settledAt, boolean idempotentReplay) { }
     public record WalletLine(Instant at, String pocket, long amountXaf, String kind) { }
@@ -130,12 +131,13 @@ public final class PaymentService {
             // Nothing is known: the payment stays pending and is looked up again by its own reference.
             started = new PaymentProvider.Started(id);
         }
-        String reference = started.reference();
+        String reference = started.reference(), page = started.checkoutUrl();
         transactions.executeWithoutResult(status -> {
             if (reference == null) {
                 jdbc.update("UPDATE payment SET state='failed',settled_at=? WHERE gate_hash=? AND id=? AND state='pending'", sql(now()), gate, id);
             } else {
-                jdbc.update("UPDATE payment SET provider=?,provider_reference=? WHERE gate_hash=? AND id=?", provider.name(), reference, gate, id);
+                jdbc.update("UPDATE payment SET provider=?,provider_reference=?,checkout_url=? WHERE gate_hash=? AND id=?",
+                        provider.name(), reference, page, gate, id);
             }
         });
         return view(id, false);
@@ -370,18 +372,20 @@ public final class PaymentService {
     }
 
     private record Row(String id, String account, String purpose, String target, long charged, long credited, long fee,
-            String state, boolean applied, String method, String reference, Instant createdAt, Instant settledAt) { }
+            String state, boolean applied, String method, String reference, Instant createdAt, Instant settledAt, String checkoutUrl) { }
     private Row map(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
         return new Row(rs.getString("id"), rs.getString("account_id"), rs.getString("purpose"), rs.getString("target_id"),
                 rs.getLong("charged_xaf"), rs.getLong("credited_xaf"), rs.getLong("fee_xaf"), rs.getString("state"), rs.getInt("applied") == 1,
                 rs.getString("method"), rs.getString("provider_reference"), instant(rs.getObject("created_at", LocalDateTime.class)),
-                instant(rs.getObject("settled_at", LocalDateTime.class)));
+                instant(rs.getObject("settled_at", LocalDateTime.class)), rs.getString("checkout_url"));
     }
     private Row row(String id) { return first(jdbc.query("SELECT * FROM payment WHERE gate_hash=? AND id=?", this::map, gate, id)); }
     private PaymentView view(String id, boolean replay) {
         Row r = row(id);
         return new PaymentView(UUID.fromString(r.id), r.purpose, r.target == null ? null : UUID.fromString(r.target), r.method,
-                (int) r.charged, (int) r.credited, (int) r.fee, r.state, r.applied, r.createdAt, r.settledAt, replay);
+                (int) r.charged, (int) r.credited, (int) r.fee, r.state, r.applied, r.createdAt, r.settledAt, replay,
+                // The provider's page is only useful while the payment waits for the payer.
+                "pending".equals(r.state) ? r.checkoutUrl : null);
     }
     private WithdrawalView withdrawalView(String id, boolean replay) {
         return jdbc.query("SELECT * FROM withdrawal WHERE gate_hash=? AND id=?", (rs, n) -> new WithdrawalView(UUID.fromString(id),

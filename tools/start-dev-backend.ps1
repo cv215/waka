@@ -4,7 +4,7 @@
     [ValidateSet('dev', 'test')][string]$Profile = 'dev',
     [ValidateRange(0, 65535)][int]$Port = 8080,
     # Application complete pour essai sur ce poste : codes de connexion dans un fichier prive, distances estimees,
-    # paiements simules (ou bac a sable Fapshi si ses cles privees existent). Jamais pour de vrais utilisateurs.
+    # paiements simules (ou MoneyFusion en vrai argent, CamPay demo, bac a sable Fapshi si leurs cles privees existent). Jamais pour de vrais utilisateurs.
     [switch]$LocalApp,
     # Avec -LocalApp : compte qui devient le premier agent de la base locale (toutes les fonctions, une seule fois).
     [string]$FounderAccount,
@@ -45,7 +45,7 @@ $wakaStoreUrl = ([Uri]::new($wakaTruststore)).AbsoluteUri
 $wakaDatabase = if ($Profile -eq 'test') { 'waka_test' } else { 'waka_local' }
 $wakaAccount = if ($Profile -eq 'test') { 'waka_test_runner' } else { 'waka_dev' }
 $wakaJdbcUrl = 'jdbc:mysql://127.0.0.1:3306/' + $wakaDatabase + '?sslMode=VERIFY_CA&allowPublicKeyRetrieval=false&connectTimeout=5000&socketTimeout=5000&trustCertificateKeyStoreUrl=' + [Uri]::EscapeDataString($wakaStoreUrl) + '&trustCertificateKeyStorePassword=changeit&trustCertificateKeyStoreType=PKCS12'
-$wakaFapshiNames = @('WAKA_FAPSHI_COLLECT_USER', 'WAKA_FAPSHI_COLLECT_KEY', 'WAKA_FAPSHI_PAYOUT_USER', 'WAKA_FAPSHI_PAYOUT_KEY', 'WAKA_FAPSHI_WEBHOOK_SECRET', 'WAKA_GOOGLE_SERVER_KEY', 'WAKA_SMSPRO_KEY', 'WAKA_SMSPRO_SENDER', 'WAKA_COOMS_KEY', 'WAKA_COOMS_URL', 'WAKA_CAMPAY_TOKEN', 'WAKA_CAMPAY_WEBHOOK_KEY')
+$wakaFapshiNames = @('WAKA_FAPSHI_COLLECT_USER', 'WAKA_FAPSHI_COLLECT_KEY', 'WAKA_FAPSHI_PAYOUT_USER', 'WAKA_FAPSHI_PAYOUT_KEY', 'WAKA_FAPSHI_WEBHOOK_SECRET', 'WAKA_GOOGLE_SERVER_KEY', 'WAKA_SMSPRO_KEY', 'WAKA_SMSPRO_SENDER', 'WAKA_COOMS_KEY', 'WAKA_COOMS_URL', 'WAKA_CAMPAY_TOKEN', 'WAKA_CAMPAY_WEBHOOK_KEY', 'WAKA_MONEYFUSION_PAY_URL', 'WAKA_MONEYFUSION_PRIVATE_KEY')
 $wakaEnvironmentNames = @('WAKA_DB_URL', 'WAKA_DB_USER', 'WAKA_DB_PASSWORD', 'WAKA_LOCAL_APP', 'WAKA_LOCAL_MASTER_KEY', 'WAKA_LOCAL_DIR',
     'WAKA_LOCAL_FOUNDER_ACCOUNT') + $wakaFapshiNames
 if ($LocalApp -and $Profile -ne 'dev') { throw 'L application complete locale ne demarre qu avec le profil dev.' }
@@ -88,7 +88,7 @@ try {
             try { [Environment]::SetEnvironmentVariable($wakaName, [Runtime.InteropServices.Marshal]::PtrToStringBSTR($wakaPointer), 'Process') }
             finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($wakaPointer) }
         }
-        Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_CAMPAY_TOKEN.dpapi')) { 'Paiements : CamPay (demo)' } elseif (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_FAPSHI_COLLECT_USER.dpapi')) { 'Paiements : bac a sable Fapshi' } else { 'Paiements : simules' }))
+        Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_MONEYFUSION_PAY_URL.dpapi')) { 'Paiements : MoneyFusion, VRAI argent (aucun mode d essai)' } elseif (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_CAMPAY_TOKEN.dpapi')) { 'Paiements : CamPay (demo)' } elseif (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_FAPSHI_COLLECT_USER.dpapi')) { 'Paiements : bac a sable Fapshi' } else { 'Paiements : simules' }))
         Write-Host ($(if (Test-Path -LiteralPath (Join-Path $wakaSecrets 'WAKA_GOOGLE_SERVER_KEY.dpapi')) { 'Distances : Google (par la route)' } else { 'Distances : vol d oiseau x 1,3' }))
         $wakaSmsPro = Join-Path $wakaSecrets 'WAKA_SMSPRO_KEY.dpapi'
         if ($CodesInFile) { Write-Host 'SMS : aucun envoi (-CodesInFile), codes dans le fichier local' }

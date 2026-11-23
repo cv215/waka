@@ -63,3 +63,13 @@ Architecture : serveur Spring Boot modulaire, Flutter mobile et administration F
 - **Essai de la démo CamPay du 23 novembre 2026** (numéro de test 237677777777, sans vrai argent) :
   - la démo accepte au plus **100 F** par paiement ; à 101 F et au-delà, elle répond 400 sans message. Une recharge WAKA commence à 500 F, donc la démo ne peut pas être essayée de bout en bout depuis l'application ;
   - un paiement de 25 F passe de `PENDING` à `SUCCESSFUL` en moins d'une minute, mais la démo renvoie `amount: "0.00"`. WAKA n'accepte un paiement que si CamPay confirme le montant exact : un paiement sans montant confirmé est mis en vérification, jamais crédité. **À demander à CamPay** : le vrai montant est-il renvoyé en production ?
+
+23 novembre 2026, décision du fondateur : **MoneyFusion** remplace CamPay, car CamPay exige une entreprise immatriculée (RCCM) pour passer en réel. CamPay, Fapshi et Notch Pay restent branchés en réserve.
+- Lu le 23 novembre sur moneyfusion.net (FAQ) : un particulier peut utiliser MoneyFusion, sans entreprise. Cameroun : MTN et Orange, 3 % de frais affichés (page des tarifs). Codes de retrait lus dans `GET /api/v1/withdraw/methods` : pays `cm`, `mtn-cm`, `orange-cm`, monnaie XAF.
+- Contrat lu dans docs.moneyfusion.net : le paiement renvoie une **page de paiement** que l'application ouvre ; le statut se lit avec `paiementNotif/{token}` (`pending`, `paid`, `failure`, `no paid`) ; les retraits utilisent la clé privée `moneyfusion-private-key`.
+- **Pas de mode d'essai** : tout essai prend du vrai argent. **Pas d'adresse IP variable** : seules les adresses déclarées dans l'application MoneyFusion sont acceptées. Le serveur de production devra avoir une IP fixe.
+- **Choix prudents de WAKA, à vérifier au premier vrai paiement** :
+  - aucune signature sur les notifications : une notification n'est qu'une raison de revérifier chez MoneyFusion ;
+  - pas de clé contre les doublons : si la réponse de création se perd, aucune page n'a été montrée, donc la recharge est notée échouée ; un retrait dont la réponse se perd reste en attente, jamais remboursé avant vérification par les finances ;
+  - `no paid` reste en attente (la page n'est peut-être pas encore utilisée), seul `failure` vaut échec ;
+  - MoneyFusion ne renvoie pas la monnaie : l'application étant camerounaise, le montant est compris en XAF. Le montant lu est `Montant` ; s'il ne correspond pas exactement au prix (par exemple s'il est donné après frais), le paiement part en vérification, jamais crédité. **À vérifier sur le premier paiement réel.**
